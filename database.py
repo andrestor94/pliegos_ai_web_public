@@ -187,7 +187,7 @@ def crear_ticket(usuario, titulo, descripcion, tipo):
 def obtener_tickets_por_usuario(usuario):
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.execute(
-            "SELECT id, titulo, descripcion, tipo, estado, fecha FROM tickets WHERE usuario = ? ORDER BY fecha DESC",
+            "SELECT id, usuario, titulo, descripcion, tipo, estado, fecha FROM tickets WHERE usuario = ? ORDER BY fecha DESC",
             (usuario,)
         )
         return cursor.fetchall()
