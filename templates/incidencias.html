@@ -96,11 +96,13 @@
                             <td>{{ ticket.tipo }}</td>
                             <td>{{ ticket.fecha_legible }}</td>
                             <td class="adjuntos">
-                                {% set prefix = ticket.usuario ~ '_' ~ ticket.fecha.replace(':', '').replace('-', '').replace(' ', '')[:14] %}
-                                {% set folder = 'static/adjuntos_incidencias' %}
-                                {% for file in os.listdir(folder) if file.startswith(prefix) %}
-                                    <a href="/static/adjuntos_incidencias/{{ file }}" download>📎 {{ file[ prefix|length + 1 : ] }}</a>
-                                {% endfor %}
+                                {% if ticket.adjuntos %}
+                                    {% for file in ticket.adjuntos %}
+                                        <a href="/static/adjuntos_incidencias/{{ file }}" download>📎 {{ file[ file.find('_', file.find('_')+1)+1: ] }}</a>
+                                    {% endfor %}
+                                {% else %}
+                                    <span class="text-muted small">-</span>
+                                {% endif %}
                             </td>
                             <td>
                                 {% if ticket.estado == 'Abierto' %}

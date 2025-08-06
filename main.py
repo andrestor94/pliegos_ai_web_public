@@ -41,6 +41,17 @@ app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="gene
 templates = Jinja2Templates(directory="templates")
 templates.env.globals['os'] = os  # Habilita el acceso a 'os' desde las plantillas Jinja2
 
+# ------------ FUNCIÓN DE ADJUNTOS PARA INCIDENCIAS ----------------
+def obtener_adjuntos_para_ticket(usuario, fecha):
+    carpeta_adjuntos = os.path.join("static", "adjuntos_incidencias")
+    prefix = f"{usuario}_{fecha.replace(':', '').replace('-', '').replace(' ', '')[:14]}"
+    adjuntos = []
+    if os.path.exists(carpeta_adjuntos):
+        for file in os.listdir(carpeta_adjuntos):
+            if file.startswith(prefix):
+                adjuntos.append(file)
+    return adjuntos
+
 # Página principal
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -123,22 +134,25 @@ async def vista_incidencias(request: Request):
         return RedirectResponse("/login")
     usuario = request.session.get("usuario")
     rol = request.session.get("rol")
-    tickets = obtener_todos_los_tickets() if rol == "admin" else obtener_tickets_por_usuario(usuario)
+    tickets_raw = obtener_todos_los_tickets() if rol == "admin" else obtener_tickets_por_usuario(usuario)
+    tickets = []
+    for t in tickets_raw:
+        fecha_legible = datetime.strptime(t[6], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M")
+        adjuntos = obtener_adjuntos_para_ticket(t[1], t[6])
+        tickets.append({
+            "id": t[0],
+            "usuario": t[1],
+            "titulo": t[2],
+            "descripcion": t[3],
+            "tipo": t[4],
+            "estado": t[5],
+            "fecha": t[6],
+            "fecha_legible": fecha_legible,
+            "adjuntos": adjuntos
+        })
     return templates.TemplateResponse("incidencias.html", {
         "request": request,
-        "tickets": [
-            {
-                "id": t[0],
-                "usuario": t[1],
-                "titulo": t[2],
-                "descripcion": t[3],
-                "tipo": t[4],
-                "estado": t[5],
-                "fecha": t[6],
-                "fecha_legible": datetime.strptime(t[6], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M"),
-            }
-            for t in tickets
-        ],
+        "tickets": tickets,
         "usuario_actual": {
             "nombre": usuario,
             "rol": rol
@@ -181,6 +195,45 @@ async def eliminar_incidencia_form(request: Request, id: int):
         return JSONResponse({"error": "Acceso denegado"}, status_code=403)
     eliminar_ticket(id)
     return RedirectResponse("/incidencias", status_code=303)
+
+# ------------------- CAMBIO DE CONTRASEÑA POR EL USUARIO -------------------
+@app.get("/cambiar-password", response_class=HTMLResponse)
+async def cambiar_password_form(request: Request):
+    if not request.session.get("usuario"):
+        return RedirectResponse("/login")
+    return templates.TemplateResponse("cambiar_password.html", {
+        "request": request,
+        "mensaje": "",
+        "error": ""
+    })
+
+@app.post("/cambiar-password", response_class=HTMLResponse)
+async def cambiar_password_submit(request: Request,
+                                 old_password: str = Form(...),
+                                 new_password: str = Form(...),
+                                 confirm_password: str = Form(...)):
+    usuario = request.session.get("usuario")
+    if not usuario:
+        return RedirectResponse("/login")
+    datos = obtener_usuario_por_email(usuario)
+    if not datos or datos[3] != old_password:
+        return templates.TemplateResponse("cambiar_password.html", {
+            "request": request,
+            "mensaje": "",
+            "error": "La contraseña actual es incorrecta."
+        })
+    if new_password != confirm_password:
+        return templates.TemplateResponse("cambiar_password.html", {
+            "request": request,
+            "mensaje": "",
+            "error": "La nueva contraseña no coincide en ambos campos."
+        })
+    actualizar_password(usuario, new_password)
+    return templates.TemplateResponse("cambiar_password.html", {
+        "request": request,
+        "mensaje": "Contraseña cambiada correctamente.",
+        "error": ""
+    })
 
 # ------------------- ADMIN -------------------
 @app.get("/admin", response_class=HTMLResponse)
