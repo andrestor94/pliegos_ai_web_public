@@ -137,6 +137,8 @@ async def vista_incidencias(request: Request):
     tickets_raw = obtener_todos_los_tickets() if rol == "admin" else obtener_tickets_por_usuario(usuario)
     tickets = []
     for t in tickets_raw:
+        if len(t) < 7:
+            continue  # Salta cualquier registro incompleto o con datos corruptos
         fecha_legible = datetime.strptime(t[6], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M")
         adjuntos = obtener_adjuntos_para_ticket(t[1], t[6])
         tickets.append({
