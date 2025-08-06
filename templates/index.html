@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Suizo Argentina - Licitaciones IA</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"/>
+  <style>
+    body { background: #f0f4ff; }
+    .container { max-width: 750px; margin-top: 60px; }
+    .card { border-radius: 20px; box-shadow: 0 5px 20px rgba(0, 0, 0, 0.05); }
+    .btn-primary, .btn-dark { border-radius: 10px; }
+    .alert { border-radius: 10px; white-space: pre-wrap; }
+    .logo { height: 35px; margin-right: 10px; }
+    .historial-card { margin-top: 20px; }
+    .historial-entry {
+      border: 1px solid #ccc;
+      padding: 12px;
+      border-radius: 12px;
+      margin-bottom: 10px;
+      background-color: #fff;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    }
+    #chatbox {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: 350px;
+      height: 450px;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 0 20px rgba(0,0,0,0.1);
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+      z-index: 1000;
+    }
+    #chatbox-header {
+      background: #0d6efd;
+      color: white;
+      padding: 10px;
+      text-align: center;
+      font-weight: bold;
+    }
+    #chat-messages {
+      flex: 1;
+      padding: 10px;
+      overflow-y: auto;
+    }
+    #chat-input {
+      border-top: 1px solid #ccc;
+      display: flex;
+    }
+    #chat-input input {
+      flex: 1;
+      padding: 10px;
+      border: none;
+      outline: none;
+    }
+    #chat-input button {
+      background: #0d6efd;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+    }
+  </style>
+</head>
+<body>
+  <nav class="navbar navbar-light bg-white shadow-sm px-4 justify-content-between">
+    <div class="d-flex align-items-center">
+      <img src="/static/logo-suizo.png" class="logo" alt="Logo Suizo" />
+      <span class="navbar-brand mb-0 h1">Suizo Argentina <b>- Licitaciones IA</b></span>
+    </div>
+    <div class="d-flex align-items-center gap-3">
+      <span id="usuario-nombre" class="text-muted small"></span>
+      <button id="admin-btn" class="btn btn-outline-primary btn-sm d-none" onclick="window.location.href='/admin'">Panel Admin</button>
+      <button class="btn btn-outline-info btn-sm" onclick="window.location.href='/incidencias'">Incidencias</button>
+      <button class="btn btn-outline-secondary btn-sm" onclick="toggleChat()">Chat OpenAI</button>
+      <button class="btn btn-outline-danger btn-sm" onclick="logout()">Cerrar sesión</button>
+    </div>
+  </nav>
+
+  <div class="container">
+    <div class="card p-4">
+      <h4><strong>Subir pliegos para análisis</strong></h4>
+      <form id="form-analyze">
+        <input type="file" id="file-hidden" class="form-control d-none" multiple>
+        <div class="mb-2">
+          <button type="button" class="btn btn-outline-secondary btn-sm" onclick="agregarArchivos()">+ Agregar archivo</button>
+        </div>
+        <ul id="lista-archivos" class="list-group mb-3"></ul>
+        <div class="d-flex gap-3">
+          <button type="button" id="analyze-btn" class="btn btn-primary">Analizar</button>
+          <button type="button" id="generate-btn" class="btn btn-dark">Generar PDF</button>
+          <button type="button" class="btn btn-outline-secondary" onclick="limpiar()">Limpiar</button>
+        </div>
+      </form>
+      <div id="result" class="mt-4"></div>
+    </div>
+
+    <div class="historial-card">
+      <h5>📚 Historial de análisis</h5>
+      <input type="text" id="search-input" class="form-control mb-3" placeholder="Buscar en el historial..."/>
+      <div id="historial-list"></div>
+    </div>
+
+    <div class="mt-4 d-flex justify-content-end">
+      <a href="/" class="btn btn-outline-secondary btn-sm">← Volver</a>
+    </div>
+  </div>
+
+  <!-- Chat -->
+  <div id="chatbox">
+    <div id="chatbox-header">Chat con OpenAI</div>
+    <div id="chat-messages"></div>
+    <div id="chat-input">
+      <input type="text" id="chat-text" placeholder="Escribe tu pregunta...">
+      <button onclick="enviarChat()">Enviar</button>
+    </div>
+  </div>
+
+  <script>
+    let resumenGlobal = "";
+    let ultimoPDF = "";
+    let archivosSeleccionados = [];
+
+    async function getUsuario() {
+      const res = await fetch("/usuario-actual");
+      const data = await res.json();
+      document.getElementById("usuario-nombre").textContent = `👤 ${data.usuario}`;
+      if (data.rol && data.rol.toLowerCase() === "admin") {
+        document.getElementById("admin-btn").classList.remove("d-none");
+      }
+    }
+
+    function agregarArchivos() {
+      const input = document.getElementById("file-hidden");
+      input.value = "";
+      input.onchange = () => {
+        for (const archivo of input.files) {
+          archivosSeleccionados.push(archivo);
+        }
+        actualizarListaArchivos();
+      };
+      input.click();
+    }
+
+    function actualizarListaArchivos() {
+      const lista = document.getElementById("lista-archivos");
+      lista.innerHTML = "";
+      archivosSeleccionados.forEach((archivo, index) => {
+        const li = document.createElement("li");
+        li.className = "list-group-item d-flex justify-content-between align-items-center";
+        li.textContent = archivo.name;
+        const btn = document.createElement("button");
+        btn.className = "btn btn-sm btn-outline-danger";
+        btn.textContent = "Eliminar";
+        btn.onclick = () => {
+          archivosSeleccionados.splice(index, 1);
+          actualizarListaArchivos();
+        };
+        li.appendChild(btn);
+        lista.appendChild(li);
+      });
+    }
+
+    document.getElementById("analyze-btn").addEventListener("click", async () => {
+      if (!archivosSeleccionados.length) {
+        document.getElementById("result").innerHTML =
+          '<div class="alert alert-danger">❌ Por favor, selecciona al menos un archivo.</div>';
+        return;
+      }
+
+      const formData = new FormData();
+      archivosSeleccionados.forEach(file => {
+        formData.append("archivos", file);
+      });
+
+      document.getElementById("result").innerHTML = '<div class="alert alert-info">⏳ Analizando pliegos...</div>';
+
+      const response = await fetch("/analizar-pliego", {
+        method: "POST",
+        body: formData
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        resumenGlobal = data.resumen;
+        ultimoPDF = data.pdf;
+        document.getElementById("result").innerHTML =
+          `<div class="alert alert-success"><strong>✅ Análisis completo.</strong><br><br>${resumenGlobal}</div>`;
+        await loadHistorial();
+      } else {
+        document.getElementById("result").innerHTML =
+          `<div class="alert alert-danger">❌ ${data.error}</div>`;
+      }
+    });
+
+    document.getElementById("generate-btn").addEventListener("click", () => {
+      if (!ultimoPDF) {
+        document.getElementById("result").innerHTML =
+          '<div class="alert alert-danger">❌ Primero debes analizar un pliego.</div>';
+        return;
+      }
+      window.location.href = `/descargar/${ultimoPDF}`;
+    });
+
+    async function loadHistorial() {
+      const response = await fetch("/historial");
+      const historial = await response.json();
+      const container = document.getElementById("historial-list");
+      container.innerHTML = "";
+
+      historial.forEach(entry => {
+        const fechaFormateada = entry.fecha_legible || "Fecha inválida";
+        const div = document.createElement("div");
+        div.className = "historial-entry";
+        div.innerHTML = `
+          <div><strong>📄 Archivo:</strong> ${entry.nombre_archivo}</div>
+          <div><strong>🕓 Fecha:</strong> ${fechaFormateada}</div>
+          <div><strong>👤 Usuario:</strong> ${entry.usuario}</div>
+          <div class="d-flex gap-2 mt-2">
+            <a href="/descargar/${entry.ruta_pdf.split('/').pop()}" class="btn btn-sm btn-success">Descargar PDF</a>
+            <button class="btn btn-sm btn-outline-danger" onclick="eliminar('${entry.timestamp}')">Eliminar</button>
+          </div>`;
+        container.appendChild(div);
+      });
+    }
+
+    async function eliminar(timestamp) {
+      await fetch(`/eliminar/${timestamp}`, { method: "DELETE" });
+      await loadHistorial();
+    }
+
+    function limpiar() {
+      archivosSeleccionados = [];
+      document.getElementById("result").innerHTML = "";
+      document.getElementById("lista-archivos").innerHTML = "";
+      resumenGlobal = "";
+      ultimoPDF = "";
+    }
+
+    function toggleChat() {
+      const chatbox = document.getElementById("chatbox");
+      chatbox.style.display = chatbox.style.display === "flex" ? "none" : "flex";
+    }
+
+    async function enviarChat() {
+      const input = document.getElementById("chat-text");
+      const message = input.value.trim();
+      if (!message) return;
+
+      const chat = document.getElementById("chat-messages");
+      chat.innerHTML += `<div><b>Tú:</b> ${message}</div>`;
+      input.value = "";
+
+      const res = await fetch("/chat-openai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mensaje: message })
+      });
+
+      const data = await res.json();
+      chat.innerHTML += `<div><b>IA:</b> ${data.respuesta}</div>`;
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    document.getElementById("chat-text").addEventListener("keydown", e => {
+      if (e.key === "Enter") enviarChat();
+    });
+
+    function logout() {
+      fetch("/logout", { method: "POST" }).then(() => {
+        window.location.href = "/login";
+      });
+    }
+
+    document.getElementById("search-input").addEventListener("input", function () {
+      const search = this.value.toLowerCase();
+      document.querySelectorAll(".historial-entry").forEach(entry => {
+        const text = entry.textContent.toLowerCase();
+        entry.style.display = text.includes(search) ? "block" : "none";
+      });
+    });
+
+    window.onload = () => {
+      getUsuario();
+      loadHistorial();
+    };
+  </script>
+</body>
+</html>
