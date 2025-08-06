@@ -1,8 +1,11 @@
-
 fastapi
 uvicorn
 openai
 python-multipart
 jinja2
 xhtml2pdf
+itsdangerous
+pymupdf
+reportlab
+python-dotenv
 
