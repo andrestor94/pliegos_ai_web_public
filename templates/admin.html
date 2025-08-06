@@ -6,9 +6,112 @@
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
   <style>
-    body { background-color: #f8f9fa; }
+    :root {
+      --color-azul: #044369;
+      --color-azul-sec: #0d6efd;
+      --color-gris: #eceff4;
+      --color-gris-medio: #c8d0df;
+      --color-gris-oscuro: #354151;
+      --color-verde: #1b7b5a;
+      --color-rojo: #c62828;
+    }
+    body { background: #f0f4ff; }
     .container { max-width: 1000px; margin-top: 40px; }
-    .badge { font-size: 0.9em; }
+    .card { border-radius: 18px; border: none; box-shadow: 0 4px 24px rgba(4,67,105,0.09);}
+    h2 { color: var(--color-azul); font-weight: 700;}
+    .card-title { color: var(--color-azul-sec); font-weight: 600; }
+    .badge {
+      font-size: 0.94em;
+      border-radius: 7px;
+      padding: 5px 15px;
+      letter-spacing: 0.5px;
+    }
+    .badge.bg-secondary {
+      background: #e3ecf5 !important;
+      color: var(--color-azul) !important;
+      border: 1px solid #b6d1ea;
+      font-weight: 600;
+    }
+    .badge.bg-success {
+      background: #1b7b5a !important;
+      color: #fff !important;
+      font-weight: 500;
+    }
+    .badge.bg-inactivo {
+      background: #b2becd !important;
+      color: #495466 !important;
+      font-weight: 500;
+    }
+    .btn {
+      border-radius: 7px !important;
+      font-weight: 500;
+      transition: background 0.14s, color 0.14s, border 0.14s;
+    }
+    .btn-primary {
+      background: var(--color-azul) !important;
+      border: none !important;
+      color: #fff !important;
+    }
+    .btn-primary:hover { background: #022a47 !important;}
+    .btn-outline-secondary {
+      border-color: var(--color-azul) !important;
+      color: var(--color-azul) !important;
+      background: transparent !important;
+    }
+    .btn-outline-secondary:hover, .btn-outline-secondary:focus {
+      background: var(--color-azul) !important;
+      color: #fff !important;
+    }
+    .btn-outline-danger {
+      border-color: var(--color-rojo) !important;
+      color: var(--color-rojo) !important;
+      background: transparent !important;
+    }
+    .btn-outline-danger:hover {
+      background: var(--color-rojo) !important;
+      color: #fff !important;
+    }
+    .btn-outline-dark {
+      border-color: var(--color-gris-oscuro) !important;
+      color: var(--color-gris-oscuro) !important;
+      background: transparent !important;
+    }
+    .btn-outline-dark:hover {
+      background: var(--color-gris-oscuro) !important;
+      color: #fff !important;
+    }
+    .btn-action {
+      background: #e3ecf5;
+      color: var(--color-azul);
+      border: 1px solid #b6d1ea;
+    }
+    .btn-action:hover {
+      background: var(--color-azul);
+      color: #fff;
+      border: 1px solid var(--color-azul);
+    }
+    .btn-warning {
+      background: #fff7e6 !important;
+      color: #b37d14 !important;
+      border: 1px solid #ffe0b2 !important;
+    }
+    .btn-warning:hover {
+      background: #ffcc80 !important;
+      color: #7f5b0a !important;
+      border: 1px solid #ffb300 !important;
+    }
+    .form-control, .form-select {
+      border-radius: 7px !important;
+      border-color: var(--color-gris-medio) !important;
+    }
+    .table th, .table td { vertical-align: middle; border-bottom: 1.5px solid #e9eef5 !important; }
+    .table thead { background: #f3f8fc; }
+    .table { border-radius: 12px; overflow: hidden;}
+    .table-responsive { border-radius: 12px;}
+    .d-flex.gap-2 > * { min-width: 112px; }
+    @media (max-width: 1000px) {
+      .container { max-width: 99vw; }
+    }
   </style>
 </head>
 <body>
@@ -48,7 +151,7 @@
     <div class="card-body">
       <h5 class="card-title">Usuarios registrados</h5>
       <table class="table table-hover align-middle">
-        <thead class="table-light">
+        <thead>
           <tr>
             <th>Nombre</th>
             <th>Email</th>
@@ -73,19 +176,24 @@
     const res = await axios.get("/admin/usuarios");
     res.data.forEach(usuario => {
       const tr = document.createElement("tr");
-
       tr.innerHTML = `
         <td>${usuario.nombre}</td>
         <td>${usuario.email}</td>
-        <td><span class="badge bg-secondary">${usuario.rol}</span></td>
-        <td><span class="badge bg-${usuario.activo ? 'success' : 'secondary'}">${usuario.activo ? 'Activo' : 'Inactivo'}</span></td>
+        <td>
+          <span class="badge bg-secondary">${usuario.rol}</span>
+        </td>
+        <td>
+          <span class="badge ${usuario.activo ? 'bg-success' : 'bg-inactivo'}">
+            ${usuario.activo ? 'Activo' : 'Inactivo'}
+          </span>
+        </td>
         <td class="d-flex gap-2">
-          <button class="btn btn-sm btn-${usuario.activo ? 'warning' : 'success'}" onclick="${usuario.activo
+          <button class="btn btn-sm btn-action" onclick="${usuario.activo
         ? `desactivarUsuario('${usuario.email}')`
         : `activarUsuario('${usuario.email}')`}">
             ${usuario.activo ? '⛔ Desactivar' : '🟢 Activar'}
           </button>
-          <button class="btn btn-sm btn-warning" onclick="blanquearPassword('${usuario.email}')">🔑 Blanquear contraseña</button>
+          <button class="btn btn-sm btn-outline-dark" onclick="blanquearPassword('${usuario.email}')">🔑 Blanquear contraseña</button>
           <button class="btn btn-sm btn-outline-danger" onclick="eliminarUsuario('${usuario.email}')">🗑️ Eliminar</button>
         </td>
       `;
@@ -134,4 +242,3 @@
 </script>
 </body>
 </html>
-

@@ -5,26 +5,105 @@
     <title>Gestión de incidencias</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background-color: #f8f9fa; }
+        :root {
+            --color-azul: #044369;
+            --color-azul-sec: #0d6efd;
+            --color-gris: #eceff4;
+            --color-gris-medio: #c8d0df;
+            --color-gris-oscuro: #354151;
+            --color-verde: #1b7b5a;
+            --color-rojo: #c62828;
+        }
+        body { background: #f0f4ff; }
         .container { max-width: 900px; margin-top: 40px; }
-        .badge { font-size: 0.9em; }
-
+        .card { border-radius: 18px; border: none; box-shadow: 0 4px 24px rgba(4,67,105,0.09);}
+        h2 { color: var(--color-azul); font-weight: 700;}
+        .badge {
+            font-size: 0.93em;
+            border-radius: 7px;
+            padding: 6px 14px;
+        }
+        .badge.bg-warning {
+            background: #e3ecf5 !important;
+            color: var(--color-azul) !important;
+            font-weight: 600;
+            border: 1px solid #b6d1ea;
+        }
+        .badge.bg-success {
+            background: #1b7b5a !important;
+            color: #fff !important;
+            font-weight: 500;
+        }
+        .btn {
+            border-radius: 7px !important;
+            font-weight: 500;
+            transition: background 0.14s, color 0.14s, border 0.14s;
+        }
+        .btn-primary {
+            background: var(--color-azul) !important;
+            border: none !important;
+            color: #fff !important;
+        }
+        .btn-primary:hover { background: #022a47 !important;}
+        .btn-outline-secondary {
+            border-color: var(--color-azul) !important;
+            color: var(--color-azul) !important;
+            background: transparent !important;
+        }
+        .btn-outline-secondary:hover, .btn-outline-secondary:focus {
+            background: var(--color-azul) !important;
+            color: #fff !important;
+        }
+        .btn-outline-dark {
+            border-color: var(--color-gris-oscuro) !important;
+            color: var(--color-gris-oscuro) !important;
+            background: transparent !important;
+        }
+        .btn-outline-dark:hover {
+            background: var(--color-gris-oscuro) !important;
+            color: #fff !important;
+        }
+        .btn-outline-success {
+            border-color: var(--color-verde) !important;
+            color: var(--color-verde) !important;
+            background: transparent !important;
+        }
+        .btn-outline-success:hover {
+            background: var(--color-verde) !important;
+            color: #fff !important;
+        }
+        .btn-outline-danger {
+            border-color: var(--color-rojo) !important;
+            color: var(--color-rojo) !important;
+            background: transparent !important;
+        }
+        .btn-outline-danger:hover {
+            background: var(--color-rojo) !important;
+            color: #fff !important;
+        }
+        .form-control, .form-select {
+            border-radius: 7px !important;
+            border-color: var(--color-gris-medio) !important;
+        }
         .adjuntos {
             max-width: 120px;
             word-wrap: break-word;
             overflow-wrap: break-word;
         }
-
         .adjuntos a {
             display: block;
-            font-size: 0.85em;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            font-size: 0.9em;
+            color: var(--color-azul-sec);
+            text-decoration: underline dotted;
         }
-
-        .table td, .table th {
-            vertical-align: middle;
+        .adjuntos a:hover { color: var(--color-azul); }
+        .table th, .table td { vertical-align: middle; border-bottom: 1.5px solid #e9eef5 !important; }
+        .table thead { background: #f3f8fc; }
+        .table { border-radius: 12px; overflow: hidden;}
+        .table-responsive { border-radius: 12px;}
+        .d-flex.gap-2 > * { min-width: 84px; }
+        @media (max-width: 900px) {
+            .container { max-width: 99vw; }
         }
     </style>
 </head>
@@ -70,10 +149,10 @@
     <!-- Lista de incidencias -->
     <div class="card shadow-sm">
         <div class="card-body">
-            <h5 class="mb-3">📋 Incidencias registradas</h5>
+            <h5 class="mb-3" style="color:var(--color-azul);font-weight:700;">📋 Incidencias registradas</h5>
             <div class="table-responsive">
                 <table class="table table-hover align-middle" style="table-layout: fixed;">
-                    <thead class="table-light">
+                    <thead>
                         <tr>
                             <th style="width: 5%;">ID</th>
                             <th style="width: 15%;">Usuario</th>

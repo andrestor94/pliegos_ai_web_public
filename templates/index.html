@@ -6,20 +6,88 @@
   <title>Suizo Argentina - Licitaciones IA</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"/>
   <style>
+    :root {
+      --color-azul: #044369;
+      --color-azul-sec: #0d6efd;
+      --color-gris: #eceff4;
+      --color-gris-medio: #c8d0df;
+      --color-gris-oscuro: #354151;
+      --color-verde: #198754;
+      --color-rojo: #c62828;
+    }
     body { background: #f0f4ff; }
     .container { max-width: 750px; margin-top: 60px; }
-    .card { border-radius: 20px; box-shadow: 0 5px 20px rgba(0, 0, 0, 0.05); }
-    .btn-primary, .btn-dark { border-radius: 10px; }
-    .alert { border-radius: 10px; white-space: pre-wrap; }
+    .card { border-radius: 20px; box-shadow: 0 5px 24px rgba(4,67,105,0.07); border: none; }
     .logo { height: 35px; margin-right: 10px; }
-    .historial-card { margin-top: 20px; }
+    .navbar {
+      border-bottom: 1.5px solid var(--color-azul-sec, #0d6efd);
+      background: #fff !important;
+      box-shadow: 0 2px 8px rgba(4,67,105,0.05);
+    }
+    .navbar-brand { color: var(--color-azul) !important; font-weight: 600;}
+    .historial-card { margin-top: 28px; }
     .historial-entry {
-      border: 1px solid #ccc;
-      padding: 12px;
-      border-radius: 12px;
+      border: 1px solid var(--color-gris-medio);
+      padding: 13px 18px;
+      border-radius: 14px;
       margin-bottom: 10px;
-      background-color: #fff;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+      background: #fff;
+      transition: border .15s;
+      box-shadow: 0 2px 8px rgba(4,67,105,0.05);
+    }
+    .historial-entry:hover {
+      border: 1.5px solid var(--color-azul);
+    }
+    .btn {
+      border-radius: 8px !important;
+      transition: background 0.18s, color 0.18s, border 0.18s;
+      font-weight: 500;
+    }
+    .btn-primary, .btn-dark {
+      background: var(--color-azul) !important;
+      border: none !important;
+      color: #fff !important;
+    }
+    .btn-primary:hover, .btn-dark:hover {
+      background: #022a47 !important;
+    }
+    .btn-outline-secondary {
+      border-color: var(--color-azul) !important;
+      color: var(--color-azul) !important;
+      background: transparent !important;
+    }
+    .btn-outline-secondary:hover, .btn-outline-secondary:focus {
+      background: var(--color-azul) !important;
+      color: #fff !important;
+    }
+    .btn-outline-dark {
+      border-color: var(--color-gris-oscuro) !important;
+      color: var(--color-gris-oscuro) !important;
+      background: transparent !important;
+    }
+    .btn-outline-dark:hover {
+      background: var(--color-gris-oscuro) !important;
+      color: #fff !important;
+    }
+    .btn-success {
+      background: var(--color-verde) !important;
+      border: none !important;
+    }
+    .btn-outline-danger {
+      border-color: var(--color-rojo) !important;
+      color: var(--color-rojo) !important;
+      background: transparent !important;
+    }
+    .btn-outline-danger:hover {
+      background: var(--color-rojo) !important;
+      color: #fff !important;
+    }
+    .alert {
+      border-radius: 10px; 
+      white-space: pre-wrap;
+      font-size: 1em;
+      border: none;
+      box-shadow: 0 2px 6px rgba(4,67,105,0.07);
     }
     #chatbox {
       position: fixed;
@@ -27,28 +95,32 @@
       right: 20px;
       width: 350px;
       height: 450px;
-      border-radius: 12px;
+      border-radius: 16px;
       background: #fff;
-      box-shadow: 0 0 20px rgba(0,0,0,0.1);
+      box-shadow: 0 0 20px rgba(4,67,105,0.12);
       display: none;
       flex-direction: column;
       overflow: hidden;
       z-index: 1000;
+      border: 1.5px solid var(--color-azul);
     }
     #chatbox-header {
-      background: #0d6efd;
+      background: var(--color-azul);
       color: white;
       padding: 10px;
       text-align: center;
       font-weight: bold;
+      font-size: 1.09em;
+      letter-spacing: 0.03em;
     }
     #chat-messages {
       flex: 1;
-      padding: 10px;
+      padding: 12px 14px;
       overflow-y: auto;
+      background: #f7fbff;
     }
     #chat-input {
-      border-top: 1px solid #ccc;
+      border-top: 1px solid #e2e5ec;
       display: flex;
     }
     #chat-input input {
@@ -56,25 +128,52 @@
       padding: 10px;
       border: none;
       outline: none;
+      font-size: 1em;
     }
     #chat-input button {
-      background: #0d6efd;
+      background: var(--color-azul);
       color: white;
       border: none;
-      padding: 10px 15px;
+      padding: 10px 16px;
+      border-radius: 0 0 12px 0;
+    }
+    .form-control, .form-select {
+      border-radius: 8px !important;
+      border-color: var(--color-gris-medio) !important;
+    }
+    .d-flex.gap-3 > * {
+      min-width: 110px;
+    }
+    #usuario-nombre {
+      font-weight: 600;
+      color: var(--color-azul) !important;
+    }
+    .list-group-item {
+      border-radius: 6px !important;
+    }
+    .navbar .btn {
+      margin-left: 6px;
+    }
+    .navbar .btn:last-child {
+      margin-right: 0;
+    }
+    /* Responsive tweaks */
+    @media (max-width: 700px) {
+      .container { max-width: 98vw; }
+      #chatbox { right: 5vw; width: 94vw; }
     }
   </style>
 </head>
 <body>
-  <nav class="navbar navbar-light bg-white shadow-sm px-4 justify-content-between">
+  <nav class="navbar navbar-light shadow-sm px-4 justify-content-between">
     <div class="d-flex align-items-center">
       <img src="/static/logo-suizo.png" class="logo" alt="Logo Suizo" />
       <span class="navbar-brand mb-0 h1">Suizo Argentina <b>- Licitaciones IA</b></span>
     </div>
     <div class="d-flex align-items-center gap-3">
-      <span id="usuario-nombre" class="text-muted small"></span>
-      <button id="admin-btn" class="btn btn-outline-primary btn-sm d-none" onclick="window.location.href='/admin'">Panel Admin</button>
-      <button class="btn btn-outline-info btn-sm" onclick="window.location.href='/incidencias'">Incidencias</button>
+      <span id="usuario-nombre" class="small"></span>
+      <button id="admin-btn" class="btn btn-outline-secondary btn-sm d-none" onclick="window.location.href='/admin'">Panel Admin</button>
+      <button class="btn btn-outline-secondary btn-sm" onclick="window.location.href='/incidencias'">Incidencias</button>
       <a href="/cambiar-password" class="btn btn-outline-dark btn-sm">Cambiar contraseña</a>
       <button class="btn btn-outline-secondary btn-sm" onclick="toggleChat()">Chat OpenAI</button>
       <button class="btn btn-outline-danger btn-sm" onclick="logout()">Cerrar sesión</button>
@@ -83,7 +182,7 @@
 
   <div class="container">
     <div class="card p-4">
-      <h4><strong>Subir pliegos para análisis</strong></h4>
+      <h4 class="mb-4" style="color:var(--color-azul);"><strong>Subir pliegos para análisis</strong></h4>
       <form id="form-analyze">
         <input type="file" id="file-hidden" class="form-control d-none" multiple>
         <div class="mb-2">
@@ -100,7 +199,7 @@
     </div>
 
     <div class="historial-card">
-      <h5>📚 Historial de análisis</h5>
+      <h5 style="color:var(--color-azul);font-weight:700;">📚 Historial de análisis</h5>
       <input type="text" id="search-input" class="form-control mb-3" placeholder="Buscar en el historial..."/>
       <div id="historial-list"></div>
     </div>
@@ -221,7 +320,7 @@
           <div><strong>🕓 Fecha:</strong> ${fechaFormateada}</div>
           <div><strong>👤 Usuario:</strong> ${entry.usuario}</div>
           <div class="d-flex gap-2 mt-2">
-            <a href="/descargar/${entry.ruta_pdf.split('/').pop()}" class="btn btn-sm btn-success">Descargar PDF</a>
+            <a href="/descargar/${entry.ruta_pdf.split('/').pop()}" class="btn btn-sm btn-primary">Descargar PDF</a>
             <button class="btn btn-sm btn-outline-danger" onclick="eliminar('${entry.timestamp}')">Eliminar</button>
           </div>`;
         container.appendChild(div);
