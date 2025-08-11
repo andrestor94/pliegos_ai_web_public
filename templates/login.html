@@ -1,51 +1,206 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Login - Suizo Argentina</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+  <!-- Bootstrap & Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
+
   <style>
-    body {
-      background: #f0f4ff;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
+    :root{
+      --color-azul:#044369;
+      --color-azul-sec:#0d6efd;
+      --color-gris:#eceff4;
+      --color-gris-medio:#c8d0df;
+      --color-gris-oscuro:#354151;
+      --bg:#f6f8ff;
+      --card:#ffffff;
+      --ink:#0a0a0a;
+      --primary:#2f6adf;
+      --primary-ink:#ffffff;
+      --shadow:0 10px 30px rgba(0,0,0,.08);
+      --radius:18px;
     }
-    .login-card {
-      padding: 40px;
-      border-radius: 20px;
-      box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
-      background: #fff;
-      max-width: 400px;
-      width: 100%;
+
+    body{
+      background:linear-gradient(180deg,#f6f8ff 0%, #eef3ff 100%);
+      min-height:100vh; display:grid; place-items:center; color:var(--ink);
     }
-    .login-card img {
-      width: 120px;
-      margin-bottom: 20px;
+
+    .login-wrap{
+      width:min(420px, 92vw);
     }
-    .form-control {
-      border-radius: 10px;
+    .brand{
+      display:flex; align-items:center; justify-content:center; gap:.6rem; margin-bottom:10px; color:var(--color-azul);
+      font-weight:700; letter-spacing:.2px;
     }
-    .btn-primary {
-      border-radius: 10px;
+    .brand img{ height:40px; }
+    .login-card{
+      background:var(--card); border:none; border-radius:var(--radius); box-shadow:var(--shadow);
     }
+    .login-card .card-body{ padding:28px; }
+    .form-control{ border-radius:12px; border-color:var(--color-gris-medio)!important; }
+    .input-group-text{ background:#fff; border-color:var(--color-gris-medio)!important; border-radius:0 12px 12px 0; cursor:pointer; }
+    .btn-primary{
+      background:var(--color-azul)!important; border:none!important; border-radius:12px!important; padding:.65rem 1rem;
+    }
+    .btn-primary:hover{ background:#022a47!important; }
+    .muted{ color:#6b7280; }
+    .link{ color:var(--color-azul-sec); text-decoration:none; }
+    .link:hover{ text-decoration:underline; }
+
+    .caps-hint{ display:none; color:#b45309; font-size:.9rem; }
+    .caps-hint.show{ display:block; }
+
+    .foot{ text-align:center; color:#6b7280; font-size:.85rem; margin-top:12px; }
+    .toast-container{ position:fixed; right:16px; bottom:16px; z-index:1200; }
+    .toast{ border-radius:12px; box-shadow:var(--shadow); }
+    .toast-header{ border-bottom:none; }
   </style>
 </head>
 <body>
-  <div class="login-card text-center">
-    <img src="/static/logo-suizo.png" alt="Logo Suizo Argentina" />
-    <h4 class="mb-4">Inicio de sesión</h4>
-    <form method="post" action="/login">
-      <div class="mb-3">
-        <input type="text" class="form-control" name="email" placeholder="Correo electrónico" required />
+
+  <div class="login-wrap">
+    <div class="brand">
+      <img src="/static/logo-suizo.png" alt="Logo Suizo"/>
+      <span>Suizo Argentina <b>- Licitaciones IA</b></span>
+    </div>
+
+    <!-- Mensajes del backend -->
+    {% if mensaje %}
+      <div class="alert alert-success mb-3" role="alert">{{ mensaje }}</div>
+    {% endif %}
+    {% if error %}
+      <div class="alert alert-danger mb-3" role="alert">{{ error }}</div>
+    {% endif %}
+
+    <div class="card login-card">
+      <div class="card-body">
+        <h4 class="mb-3 text-center" style="color:var(--color-azul);">Inicio de sesión</h4>
+        <form id="loginForm" method="post" action="/login" novalidate>
+          <div class="mb-3">
+            <label class="form-label" for="email">Correo electrónico</label>
+            <input type="email" class="form-control" id="email" name="email" placeholder="usuario@suizo.com" required autocomplete="username" inputmode="email">
+            <div class="invalid-feedback">Ingresá un email válido.</div>
+          </div>
+
+          <div class="mb-1">
+            <label class="form-label" for="password">Contraseña</label>
+            <div class="input-group">
+              <input type="password" class="form-control" id="password" name="password" placeholder="••••••••" required autocomplete="current-password">
+              <span class="input-group-text" onclick="toggleVis(this)" title="Mostrar/ocultar">
+                <i class="bi bi-eye"></i>
+              </span>
+              <div class="invalid-feedback">Ingresá tu contraseña.</div>
+            </div>
+          </div>
+          <div id="capsHint" class="caps-hint mb-2"><i class="bi bi-exclamation-triangle"></i> Bloq Mayús está activado.</div>
+
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="remember" name="remember">
+              <label class="form-check-label" for="remember">Recordarme</label>
+            </div>
+            <a class="link small" href="/cambiar-password">Cambiar contraseña</a>
+          </div>
+
+          <button id="loginBtn" type="submit" class="btn btn-primary w-100">
+            <span class="btn-text">Ingresar</span>
+            <span class="spinner-border spinner-border-sm ms-2 d-none" role="status" aria-hidden="true"></span>
+          </button>
+        </form>
       </div>
-      <div class="mb-3">
-        <input type="password" class="form-control" name="password" placeholder="Contraseña" required />
-      </div>
-      <button type="submit" class="btn btn-primary w-100">Ingresar</button>
-    </form>
+    </div>
+
+    <div class="foot">© <span id="yy"></span> Suizo Argentina</div>
   </div>
+
+  <!-- Toasts -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Año footer
+    document.getElementById('yy').textContent = new Date().getFullYear();
+
+    // Mostrar/ocultar contraseña
+    function toggleVis(el){
+      const input = document.getElementById('password');
+      const isPass = input.type === 'password';
+      input.type = isPass ? 'text' : 'password';
+      el.querySelector('i').className = isPass ? 'bi bi-eye-slash' : 'bi bi-eye';
+      input.focus();
+    }
+
+    // Detector de Bloq Mayús
+    const capsHint = document.getElementById('capsHint');
+    document.getElementById('password').addEventListener('keyup', (e)=>{
+      const caps = e.getModifierState && e.getModifierState('CapsLock');
+      capsHint.classList.toggle('show', !!caps);
+    });
+
+    // Click en Enter en email pasa a password
+    document.getElementById('email').addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('password').focus(); }
+    });
+
+    // Validación + evitar doble submit
+    const form = document.getElementById('loginForm');
+    const btn = document.getElementById('loginBtn');
+    form.addEventListener('submit', (e)=>{
+      if(!form.checkValidity()){
+        e.preventDefault();
+        e.stopPropagation();
+        form.classList.add('was-validated');
+        return;
+      }
+      // bloquear múltiples envíos
+      btn.disabled = true;
+      btn.querySelector('.btn-text').textContent = 'Ingresando...';
+      btn.querySelector('.spinner-border').classList.remove('d-none');
+    });
+
+    // Toast helper
+    function showToast({title='Aviso', body='', icon='info', delay=3500}={}){
+      const cont = document.getElementById('toastContainer');
+      const el = document.createElement('div');
+      el.className = 'toast align-items-center';
+      el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
+      el.innerHTML = `
+        <div class="toast-header">
+          <i class="bi bi-${icon} me-1"></i>
+          <strong class="me-auto">${title}</strong>
+          <small>Ahora</small>
+          <button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
+        </div>
+        <div class="toast-body">${body}</div>
+      `;
+      cont.appendChild(el);
+      const t = new bootstrap.Toast(el, { delay });
+      t.show();
+      el.addEventListener('hidden.bs.toast', ()=> el.remove());
+    }
+
+    // Mensajes por querystring: ?logout=1, ?expired=1, ?error=mensaje
+    (function checkQueryToasts(){
+      const p = new URLSearchParams(location.search);
+      if (p.get('logout') === '1')  showToast({title:'Sesión cerrada', body:'Cerraste sesión correctamente.', icon:'box-arrow-right'});
+      if (p.get('expired') === '1') showToast({title:'Sesión expirada', body:'Ingresá nuevamente.', icon:'hourglass-split'});
+      if (p.get('needlogin') === '1') showToast({title:'Acceso requerido', body:'Iniciá sesión para continuar.', icon:'lock'});
+      if (p.get('error'))           showToast({title:'Error', body: p.get('error'), icon:'exclamation-triangle'});
+    })();
+
+    // Autocompleta dominio corporativo al tipear espacio (opcional, simple UX)
+    const email = document.getElementById('email');
+    email.addEventListener('blur', ()=>{
+      const v = email.value.trim();
+      if(v && !v.includes('@') && v.indexOf(' ') === -1){
+        email.value = v + '@suizo.com';
+      }
+    });
+  </script>
 </body>
 </html>

@@ -2,246 +2,474 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Panel de Administración</title>
+
+  <!-- Bootstrap & Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
+  <!-- Axios -->
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+
   <style>
-    :root {
-      --color-azul: #044369;
-      --color-azul-sec: #0d6efd;
-      --color-gris: #eceff4;
-      --color-gris-medio: #c8d0df;
-      --color-gris-oscuro: #354151;
-      --color-verde: #1b7b5a;
-      --color-rojo: #c62828;
+    :root{
+      --color-azul:#044369;
+      --color-azul-sec:#0d6efd;
+      --color-gris:#eceff4;
+      --color-gris-medio:#c8d0df;
+      --color-gris-oscuro:#354151;
+      --color-verde:#1b7b5a;
+      --color-rojo:#c62828;
+
+      --bg:#f6f8ff;
+      --card:#ffffff;
+      --ink:#0a0a0a;
+      --primary:#2f6adf;
+      --primary-ink:#ffffff;
+      --ring:rgba(47,106,223,.35);
+      --shadow:0 10px 30px rgba(0,0,0,.06);
+      --radius:16px;
     }
-    body { background: #f0f4ff; }
-    .container { max-width: 1000px; margin-top: 40px; }
-    .card { border-radius: 18px; border: none; box-shadow: 0 4px 24px rgba(4,67,105,0.09);}
-    h2 { color: var(--color-azul); font-weight: 700;}
-    .card-title { color: var(--color-azul-sec); font-weight: 600; }
-    .badge {
-      font-size: 0.94em;
-      border-radius: 7px;
-      padding: 5px 15px;
-      letter-spacing: 0.5px;
+
+    body{ background:var(--bg); color:var(--ink); }
+    .container{ max-width: 1100px; margin-top:56px; }
+
+    /* Navbar + Offcanvas */
+    .navbar-wrap{ background:#fff; border-bottom:1.5px solid var(--color-azul-sec); box-shadow:0 2px 8px rgba(4,67,105,0.05); }
+    .navbar-brand{ color:var(--color-azul)!important; font-weight:600; }
+    .logo{ height:32px; margin-right:8px; }
+    .btn-solid{
+      background:var(--primary); color:var(--primary-ink); border:0; padding:.5rem .85rem; border-radius:12px;
+      transition:transform .08s ease, box-shadow .2s ease; box-shadow:0 6px 16px rgba(47,106,223,.25);
     }
-    .badge.bg-secondary {
-      background: #e3ecf5 !important;
-      color: var(--color-azul) !important;
-      border: 1px solid #b6d1ea;
-      font-weight: 600;
+    .btn-solid:hover{ transform:translateY(-1px); }
+    .btn-ghost{
+      background:transparent; border:1px solid #e5e7eb; padding:.5rem .8rem; border-radius:12px;
     }
-    .badge.bg-success {
-      background: #1b7b5a !important;
-      color: #fff !important;
-      font-weight: 500;
+    .btn-ghost:hover{ background:#f3f4f6; }
+    .navbar-toggler-icon{
+      display:inline-block; width:1.5rem; height:1.5rem;
+      background-image:url("data:image/svg+xml,%3csvg viewBox='0 0 30 30' xmlns='http://www.w3.org/2000/svg'%3e%3cpath stroke='rgba(0,0,0,.7)' stroke-width='2' stroke-linecap='round' stroke-miterlimit='10' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+      background-repeat:no-repeat; background-position:center;
     }
-    .badge.bg-inactivo {
-      background: #b2becd !important;
-      color: #495466 !important;
-      font-weight: 500;
+    .offcanvas{ border-radius:0 var(--radius) var(--radius) 0; }
+    .offcanvas .nav-link-mobile{
+      display:flex; align-items:center; gap:.6rem; padding:.7rem .8rem; border-radius:12px; color:var(--ink); text-decoration:none;
     }
-    .btn {
-      border-radius: 7px !important;
-      font-weight: 500;
-      transition: background 0.14s, color 0.14s, border 0.14s;
+    .offcanvas .nav-link-mobile:hover{ background:#f3f4f6; }
+    .offcanvas .nav-link-mobile.active{ background:#e8efff; color:#1e40af; }
+
+    /* Tarjetas y tipografía */
+    .card{ border-radius:18px; border:none; box-shadow:0 4px 24px rgba(4,67,105,0.09); background:var(--card); }
+    h2{ color:var(--color-azul); font-weight:700; }
+    .card-title{ color:var(--color-azul-sec); font-weight:600; }
+
+    /* Badges */
+    .badge{ font-size:.94em; border-radius:7px; padding:5px 15px; letter-spacing:.5px; }
+    .badge.bg-secondary{ background:#e3ecf5!important; color:var(--color-azul)!important; border:1px solid #b6d1ea; font-weight:600; }
+    .badge.bg-success{ background:#1b7b5a!important; color:#fff!important; font-weight:500; }
+    .badge.bg-inactivo{ background:#b2becd!important; color:#495466!important; font-weight:500; }
+
+    /* Botones y campos */
+    .btn{ border-radius:7px!important; font-weight:500; }
+    .btn-primary{ background:var(--color-azul)!important; border:none!important; color:#fff!important; }
+    .btn-primary:hover{ background:#022a47!important; }
+    .btn-outline-secondary{ border-color:var(--color-azul)!important; color:var(--color-azul)!important; }
+    .btn-outline-secondary:hover{ background:var(--color-azul)!important; color:#fff!important; }
+    .btn-outline-danger{ border-color:var(--color-rojo)!important; color:var(--color-rojo)!important; }
+    .btn-outline-danger:hover{ background:var(--color-rojo)!important; color:#fff!important; }
+    .btn-outline-dark{ border-color:var(--color-gris-oscuro)!important; color:var(--color-gris-oscuro)!important; }
+    .btn-outline-dark:hover{ background:var(--color-gris-oscuro)!important; color:#fff!important; }
+    .btn-action{ background:#e3ecf5; color:var(--color-azul); border:1px solid #b6d1ea; }
+    .btn-action:hover{ background:var(--color-azul); color:#fff; border:1px solid var(--color-azul); }
+    .btn-warning{ background:#fff7e6!important; color:#b37d14!important; border:1px solid #ffe0b2!important; }
+    .btn-warning:hover{ background:#ffcc80!important; color:#7f5b0a!important; border:1px solid #ffb300!important; }
+    .form-control, .form-select{ border-radius:7px!important; border-color:var(--color-gris-medio)!important; }
+
+    /* Tabla */
+    .table thead{ background:#f3f8fc; }
+    .table th, .table td{ vertical-align:middle; border-bottom:1.5px solid #e9eef5!important; }
+    .table-responsive{ border-radius:12px; overflow:hidden; }
+
+    /* Chat flotante */
+    #chatbox{
+      position:fixed; bottom:20px; right:20px; width:350px; height:450px; border-radius:16px; background:#fff;
+      box-shadow:0 0 20px rgba(4,67,105,0.12); display:none; flex-direction:column; overflow:hidden; z-index:1000;
+      border:1.5px solid var(--color-azul);
     }
-    .btn-primary {
-      background: var(--color-azul) !important;
-      border: none !important;
-      color: #fff !important;
+    #chatbox-header{
+      background:var(--color-azul); color:#fff; padding:10px; font-weight:600; font-size:1.05em; letter-spacing:.03em;
+      display:flex; align-items:center; justify-content:space-between;
     }
-    .btn-primary:hover { background: #022a47 !important;}
-    .btn-outline-secondary {
-      border-color: var(--color-azul) !important;
-      color: var(--color-azul) !important;
-      background: transparent !important;
+    #chat-messages{ flex:1; padding:12px 14px; overflow-y:auto; background:#f7fbff; }
+    #chat-input{ border-top:1px solid #e2e5ec; display:flex; }
+    #chat-input input{ flex:1; padding:10px; border:none; outline:none; font-size:1em; }
+    #chat-input button{ background:var(--color-azul); color:#fff; border:none; padding:10px 16px; border-radius:0 0 12px 0; }
+    #chat-fab{
+      position:fixed; right:20px; bottom:20px; z-index:999; display:none;
+      border-radius:999px; padding:.6rem .9rem; box-shadow:0 8px 18px rgba(4,67,105,0.18);
     }
-    .btn-outline-secondary:hover, .btn-outline-secondary:focus {
-      background: var(--color-azul) !important;
-      color: #fff !important;
+
+    /* Notificaciones */
+    #notif-fab{
+      position:fixed; right:20px; bottom:88px; z-index:999; border-radius:999px; padding:.55rem .75rem;
+      box-shadow:0 8px 18px rgba(4,67,105,0.18); background:#fff; border:1px solid #e5e7eb;
     }
-    .btn-outline-danger {
-      border-color: var(--color-rojo) !important;
-      color: var(--color-rojo) !important;
-      background: transparent !important;
+    #notif-badge{ transform: translate(20%, -40%); }
+    #notif-panel{
+      position:fixed; right:20px; bottom:148px; width:320px; max-height:50vh; overflow:auto; z-index:1000; background:#fff;
+      border:1px solid #e5e7eb; border-radius:14px; box-shadow:0 12px 28px rgba(0,0,0,.12); display:none;
     }
-    .btn-outline-danger:hover {
-      background: var(--color-rojo) !important;
-      color: #fff !important;
-    }
-    .btn-outline-dark {
-      border-color: var(--color-gris-oscuro) !important;
-      color: var(--color-gris-oscuro) !important;
-      background: transparent !important;
-    }
-    .btn-outline-dark:hover {
-      background: var(--color-gris-oscuro) !important;
-      color: #fff !important;
-    }
-    .btn-action {
-      background: #e3ecf5;
-      color: var(--color-azul);
-      border: 1px solid #b6d1ea;
-    }
-    .btn-action:hover {
-      background: var(--color-azul);
-      color: #fff;
-      border: 1px solid var(--color-azul);
-    }
-    .btn-warning {
-      background: #fff7e6 !important;
-      color: #b37d14 !important;
-      border: 1px solid #ffe0b2 !important;
-    }
-    .btn-warning:hover {
-      background: #ffcc80 !important;
-      color: #7f5b0a !important;
-      border: 1px solid #ffb300 !important;
-    }
-    .form-control, .form-select {
-      border-radius: 7px !important;
-      border-color: var(--color-gris-medio) !important;
-    }
-    .table th, .table td { vertical-align: middle; border-bottom: 1.5px solid #e9eef5 !important; }
-    .table thead { background: #f3f8fc; }
-    .table { border-radius: 12px; overflow: hidden;}
-    .table-responsive { border-radius: 12px;}
-    .d-flex.gap-2 > * { min-width: 112px; }
-    @media (max-width: 1000px) {
-      .container { max-width: 99vw; }
+
+    /* Toasts */
+    .toast-container{ position: fixed; right: 16px; bottom: 16px; z-index: 1200; }
+    .toast{ border-radius:12px; box-shadow:var(--shadow); }
+    .toast-header{ border-bottom:none; }
+    .toast .bi{ margin-right:.4rem; }
+
+    @media (max-width: 1000px){ .container{ max-width: 98vw; } }
+    @media (max-width: 700px){
+      #chatbox{ right:5vw; width:94vw; height:60vh; }
+      #notif-panel{ right:5vw; width:90vw; }
     }
   </style>
 </head>
 <body>
-<div class="container">
-  <div class="d-flex justify-content-between align-items-center mb-4">
-    <h2 class="mb-0">👤 Panel de Administración de Usuarios</h2>
-    <div class="d-flex gap-2">
-      <a href="/auditoria" class="btn btn-warning btn-sm">📋 Ver Auditoría</a>
-      <a href="/" class="btn btn-outline-secondary btn-sm">← Volver</a>
+
+  <!-- ====== Header / Navbar ====== -->
+  <header class="navbar-wrap sticky-top">
+    <nav class="navbar navbar-expand-lg px-3">
+      <button class="btn-ghost d-lg-none me-2" type="button" data-bs-toggle="offcanvas" data-bs-target="#menuOffcanvas" aria-controls="menuOffcanvas" aria-label="Abrir menú">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+
+      <a class="navbar-brand d-flex align-items-center" href="/">
+        <img src="/static/logo-suizo.png" class="logo" alt="Logo Suizo"/>
+        <span>Suizo Argentina <b>- Licitaciones IA</b></span>
+      </a>
+
+      <div class="ms-auto d-none d-lg-flex align-items-center gap-2">
+        <span id="usuario-nombre" class="small me-2"></span>
+        <a href="/chat" class="btn-ghost">💬 Chat interno</a>
+        <button class="btn-ghost" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Chat OpenAI</button>
+        <a href="/calendario" class="btn-ghost">Calendario</a>
+        <a href="/incidencias" class="btn-ghost">Incidencias</a>
+        <a href="/cambiar-password" class="btn-ghost">Cambiar contraseña</a>
+        <a href="/admin" class="btn-ghost" id="admin-link-desktop">Panel Admin</a>
+        <button class="btn-ghost text-danger" onclick="logout()"><i class="bi bi-box-arrow-right"></i> Salir</button>
+      </div>
+    </nav>
+  </header>
+
+  <!-- ====== Offcanvas (móvil) ====== -->
+  <div class="offcanvas offcanvas-start" tabindex="-1" id="menuOffcanvas" aria-labelledby="menuOffcanvasLabel">
+    <div class="offcanvas-header">
+      <h5 id="menuOffcanvasLabel" class="m-0">Menú</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Cerrar"></button>
+    </div>
+    <div class="offcanvas-body d-flex flex-column gap-2">
+      <div class="mb-2"><div id="usuario-nombre-mobile" class="small text-muted"></div></div>
+
+      <a class="nav-link-mobile" href="/"><i class="bi bi-house"></i> Inicio</a>
+      <a class="nav-link-mobile" href="/historia"><i class="bi bi-clock-history"></i> Historial</a>
+      <a class="nav-link-mobile" href="/chat"><i class="bi bi-chat-dots"></i> Chat interno</a>
+      <a class="nav-link-mobile" href="/calendario"><i class="bi bi-calendar-event"></i> Calendario</a>
+      <a class="nav-link-mobile" href="/incidencias"><i class="bi bi-bug"></i> Incidencias</a>
+      <a class="nav-link-mobile" href="/cambiar-password"><i class="bi bi-key"></i> Cambiar contraseña</a>
+      <a class="nav-link-mobile" id="admin-link-mobile" href="/admin"><i class="bi bi-gear"></i> Administración</a>
+
+      <button class="btn-solid mt-3" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Abrir Chat OpenAI</button>
+
+      <div class="mt-auto pt-3 border-top">
+        <button class="nav-link-mobile text-danger" onclick="logout()"><i class="bi bi-box-arrow-right"></i> Salir</button>
+      </div>
     </div>
   </div>
 
-  <!-- Crear usuario -->
-  <div class="card shadow-sm mb-4">
-    <div class="card-body">
-      <h5 class="card-title">Crear nuevo usuario</h5>
-      <form id="crearUsuarioForm" class="row g-3">
-        <div class="col-md-4">
-          <input type="text" class="form-control" placeholder="Nombre" id="nombre" required />
+  <!-- ====== Contenido ====== -->
+  <main class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h2 class="mb-0">👤 Panel de Administración de Usuarios</h2>
+      <div class="d-flex gap-2">
+        <a href="/auditoria" class="btn btn-warning btn-sm">📋 Ver Auditoría</a>
+        <a href="/" class="btn btn-outline-secondary btn-sm">← Volver</a>
+      </div>
+    </div>
+
+    <!-- Crear usuario -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
+        <h5 class="card-title">Crear nuevo usuario</h5>
+        <form id="crearUsuarioForm" class="row g-3">
+          <div class="col-md-4">
+            <input type="text" class="form-control" placeholder="Nombre" id="nombre" required />
+          </div>
+          <div class="col-md-4">
+            <input type="email" class="form-control" placeholder="Email" id="email" required />
+          </div>
+          <div class="col-md-3">
+            <select class="form-select" id="rol">
+              <option value="usuario">Usuario</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </div>
+          <div class="col-md-1 d-grid">
+            <button type="submit" class="btn btn-primary">➕</button>
+          </div>
+        </form>
+        <div id="mensaje" class="mt-3"></div>
+      </div>
+    </div>
+
+    <!-- Lista de usuarios -->
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="card-title">Usuarios registrados</h5>
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Email</th>
+                <th>Rol</th>
+                <th>Estado</th>
+                <th style="min-width:290px">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tablaUsuarios">
+              <!-- Se llenará dinámicamente -->
+            </tbody>
+          </table>
         </div>
-        <div class="col-md-4">
-          <input type="email" class="form-control" placeholder="Email" id="email" required />
-        </div>
-        <div class="col-md-3">
-          <select class="form-select" id="rol">
-            <option value="usuario">Usuario</option>
-            <option value="admin">Administrador</option>
-          </select>
-        </div>
-        <div class="col-md-1 d-grid">
-          <button type="submit" class="btn btn-primary">➕</button>
-        </div>
-      </form>
-      <div id="mensaje" class="mt-3"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ====== Chat flotante con OpenAI ====== -->
+  <div id="chatbox" aria-live="polite">
+    <div id="chatbox-header">
+      <span>Chat con OpenAI</span>
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-sm btn-light" title="Minimizar" onclick="minimizeChat()" style="border-radius:8px;">
+          <i class="bi bi-dash-lg"></i>
+        </button>
+        <button class="btn btn-sm btn-light" title="Cerrar" onclick="closeChat()" style="border-radius:8px;">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+    </div>
+    <div id="chat-messages"></div>
+    <div id="chat-input">
+      <input type="text" id="chat-text" placeholder="Escribe tu pregunta...">
+      <button onclick="enviarChat()">Enviar</button>
+    </div>
+  </div>
+  <button id="chat-fab" class="btn btn-solid" onclick="expandChat()">
+    <i class="bi bi-robot"></i> Chat IA
+  </button>
+
+  <!-- ===== Notificaciones (campanita + panel) ===== -->
+  <button id="notif-fab" class="btn" title="Notificaciones" onclick="toggleNotifPanel()">
+    <i class="bi bi-bell"></i>
+    <span id="notif-badge" class="badge text-bg-danger rounded-pill" style="display:none;">0</span>
+  </button>
+  <div id="notif-panel" class="small">
+    <div class="p-2 border-bottom d-flex align-items-center justify-content-between">
+      <strong>Notificaciones</strong>
+      <button class="btn btn-sm btn-ghost" onclick="markAllAsRead()">Marcar leídas</button>
+    </div>
+    <div id="notif-list"></div>
+    <div class="p-2 text-center">
+      <a href="/notificaciones" class="small">Ver todas</a>
     </div>
   </div>
 
-  <!-- Lista de usuarios -->
-  <div class="card shadow-sm">
-    <div class="card-body">
-      <h5 class="card-title">Usuarios registrados</h5>
-      <table class="table table-hover align-middle">
-        <thead>
-          <tr>
-            <th>Nombre</th>
-            <th>Email</th>
-            <th>Rol</th>
-            <th>Estado</th>
-            <th>Acciones</th>
-          </tr>
-        </thead>
-        <tbody id="tablaUsuarios">
-          <!-- Se llenará dinámicamente -->
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
+  <!-- Toasts -->
+  <div class="toast-container" id="toastContainer"></div>
 
-<script>
-  async function cargarUsuarios() {
-    const tabla = document.getElementById("tablaUsuarios");
-    tabla.innerHTML = "";
+  <!-- ====== JS ====== -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    /* ====== Usuario / Navbar ====== */
+    async function getUsuario() {
+      try{
+        const res = await fetch("/usuario-actual");
+        const data = await res.json();
+        document.getElementById("usuario-nombre").textContent = `👤 ${data.usuario}`;
+        const mobileName = document.getElementById("usuario-nombre-mobile");
+        if (mobileName) mobileName.textContent = `👤 ${data.usuario}`;
 
-    const res = await axios.get("/admin/usuarios");
-    res.data.forEach(usuario => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${usuario.nombre}</td>
-        <td>${usuario.email}</td>
-        <td>
-          <span class="badge bg-secondary">${usuario.rol}</span>
-        </td>
-        <td>
-          <span class="badge ${usuario.activo ? 'bg-success' : 'bg-inactivo'}">
-            ${usuario.activo ? 'Activo' : 'Inactivo'}
-          </span>
-        </td>
-        <td class="d-flex gap-2">
-          <button class="btn btn-sm btn-action" onclick="${usuario.activo
-        ? `desactivarUsuario('${usuario.email}')`
-        : `activarUsuario('${usuario.email}')`}">
-            ${usuario.activo ? '⛔ Desactivar' : '🟢 Activar'}
-          </button>
-          <button class="btn btn-sm btn-outline-dark" onclick="blanquearPassword('${usuario.email}')">🔑 Blanquear contraseña</button>
-          <button class="btn btn-sm btn-outline-danger" onclick="eliminarUsuario('${usuario.email}')">🗑️ Eliminar</button>
-        </td>
-      `;
-      tabla.appendChild(tr);
+        // Mostrar enlaces admin si corresponde
+        if (data.rol && data.rol.toLowerCase() === "admin") {
+          document.getElementById("admin-link-desktop")?.classList.remove("d-none");
+          document.getElementById("admin-link-mobile")?.classList.remove("d-none");
+        }
+      }catch(e){ console.error(e); }
+    }
+
+    // Cerrar offcanvas al hacer click en un link/botón interno
+    document.addEventListener('click', (e) => {
+      const link = e.target.closest('.offcanvas .nav-link-mobile, .offcanvas .btn, .offcanvas .dropdown-item');
+      if (!link) return;
+      const offcanvasEl = document.getElementById('menuOffcanvas');
+      if (!offcanvasEl) return;
+      const offcanvas = bootstrap.Offcanvas.getInstance(offcanvasEl);
+      if (offcanvas) offcanvas.hide();
     });
-  }
 
-  document.getElementById("crearUsuarioForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const nombre = document.getElementById("nombre").value;
-    const email = document.getElementById("email").value;
-    const rol = document.getElementById("rol").value;
-
-    try {
-      const res = await axios.post("/admin/crear-usuario", { nombre, email, rol });
-      document.getElementById("mensaje").innerHTML = `<div class="alert alert-success">${res.data.mensaje}</div>`;
-      cargarUsuarios();
-    } catch (err) {
-      document.getElementById("mensaje").innerHTML = `<div class="alert alert-danger">${err.response.data.error}</div>`;
+    function logout() {
+      fetch("/logout", { method: "POST" }).then(() => window.location.href = "/login");
     }
-  });
 
-  async function blanquearPassword(email) {
-    await axios.post("/admin/blanquear-password", { email });
-    alert("Contraseña blanqueada a 1234");
-  }
+    /* ====== CRUD Usuarios ====== */
+    async function cargarUsuarios() {
+      const tabla = document.getElementById("tablaUsuarios");
+      tabla.innerHTML = "";
 
-  async function desactivarUsuario(email) {
-    await axios.post("/admin/desactivar-usuario", { email });
-    cargarUsuarios();
-  }
-
-  async function activarUsuario(email) {
-    await axios.post("/admin/activar-usuario", { email });
-    cargarUsuarios();
-  }
-
-  async function eliminarUsuario(email) {
-    if (confirm("¿Estás seguro de eliminar este usuario?")) {
-      await axios.post("/admin/eliminar-usuario", { email });
-      cargarUsuarios();
+      const res = await axios.get("/admin/usuarios");
+      res.data.forEach(usuario => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${usuario.nombre}</td>
+          <td>${usuario.email}</td>
+          <td><span class="badge bg-secondary">${usuario.rol}</span></td>
+          <td><span class="badge ${usuario.activo ? 'bg-success' : 'bg-inactivo'}">${usuario.activo ? 'Activo' : 'Inactivo'}</span></td>
+          <td class="d-flex flex-wrap gap-2">
+            <button class="btn btn-sm btn-action" onclick="${usuario.activo ? `desactivarUsuario('${usuario.email}')` : `activarUsuario('${usuario.email}')`}">
+              ${usuario.activo ? '⛔ Desactivar' : '🟢 Activar'}
+            </button>
+            <button class="btn btn-sm btn-outline-dark" onclick="blanquearPassword('${usuario.email}')">🔑 Blanquear contraseña</button>
+            <button class="btn btn-sm btn-outline-danger" onclick="eliminarUsuario('${usuario.email}')">🗑️ Eliminar</button>
+          </td>
+        `;
+        tabla.appendChild(tr);
+      });
     }
-  }
 
-  cargarUsuarios();
-</script>
+    document.getElementById("crearUsuarioForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const nombre = document.getElementById("nombre").value;
+      const email = document.getElementById("email").value;
+      const rol = document.getElementById("rol").value;
+
+      try {
+        const res = await axios.post("/admin/crear-usuario", { nombre, email, rol });
+        document.getElementById("mensaje").innerHTML = `<div class="alert alert-success">${res.data.mensaje}</div>`;
+        document.getElementById("crearUsuarioForm").reset();
+        cargarUsuarios();
+        showToast({title:'Usuario creado', body:email, icon:'check2-circle'});
+      } catch (err) {
+        const msg = err?.response?.data?.error || "Error al crear el usuario";
+        document.getElementById("mensaje").innerHTML = `<div class="alert alert-danger">${msg}</div>`;
+        showToast({title:'Error', body:msg, icon:'exclamation-triangle'});
+      }
+    });
+
+    async function blanquearPassword(email) {
+      await axios.post("/admin/blanquear-password", { email });
+      showToast({title:'Password blanqueado', body:`Usuario: ${email}`, icon:'key'});
+      alert("Contraseña blanqueada a 1234");
+    }
+    async function desactivarUsuario(email) { await axios.post("/admin/desactivar-usuario", { email }); cargarUsuarios(); showToast({title:'Usuario desactivado', body:email, icon:'person-dash'}); }
+    async function activarUsuario(email)   { await axios.post("/admin/activar-usuario",   { email }); cargarUsuarios(); showToast({title:'Usuario activado',   body:email, icon:'person-check'}); }
+    async function eliminarUsuario(email)  {
+      if (confirm("¿Estás seguro de eliminar este usuario?")) {
+        await axios.post("/admin/eliminar-usuario", { email });
+        cargarUsuarios();
+        showToast({title:'Usuario eliminado', body:email, icon:'trash'});
+      }
+    }
+
+    /* ====== Chat flotante: estado persistente ====== */
+    const CHAT_STATE_KEY = 'chatboxState'; // 'open' | 'min' | 'closed'
+    function applyChatState(){
+      const state = localStorage.getItem(CHAT_STATE_KEY) || 'closed';
+      const box = document.getElementById('chatbox');
+      const fab = document.getElementById('chat-fab');
+      if (state === 'open'){ box.style.display='flex'; fab.style.display='none'; }
+      else if (state === 'min'){ box.style.display='none'; fab.style.display='inline-flex'; }
+      else { box.style.display='none'; fab.style.display='none'; }
+    }
+    function openChatAndExpand(){ localStorage.setItem(CHAT_STATE_KEY,'open'); applyChatState(); }
+    function closeChat(){ localStorage.setItem(CHAT_STATE_KEY,'closed'); applyChatState(); }
+    function minimizeChat(){ localStorage.setItem(CHAT_STATE_KEY,'min'); applyChatState(); }
+    function expandChat(){ localStorage.setItem(CHAT_STATE_KEY,'open'); applyChatState(); }
+
+    async function enviarChat() {
+      const input = document.getElementById("chat-text");
+      const message = input.value.trim();
+      if (!message) return;
+
+      const chat = document.getElementById("chat-messages");
+      chat.innerHTML += `<div><b>Tú:</b> ${message}</div>`;
+      input.value = "";
+
+      const res = await fetch("/chat-openai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mensaje: message })
+      });
+      const data = await res.json();
+      chat.innerHTML += `<div><b>IA:</b> ${data.respuesta}</div>`;
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === "Enter" && document.activeElement?.id === "chat-text") enviarChat();
+    });
+
+    /* ===== Notificaciones ===== */
+    function showToast({title="Aviso", body="", icon="info"}){
+      const container=document.getElementById('toastContainer'); if(!container) return;
+      const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
+      el.innerHTML=`<div class="toast-header">
+        <i class="bi bi-${icon} me-1"></i>
+        <strong class="me-auto">${title}</strong>
+        <small>Ahora</small>
+        <button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
+      </div><div class="toast-body">${body}</div>`;
+      container.appendChild(el); const t=new bootstrap.Toast(el,{delay:3000}); t.show(); el.addEventListener('hidden.bs.toast',()=>el.remove());
+    }
+
+    let notifOpen=false;
+    function toggleNotifPanel(){ notifOpen=!notifOpen; const p=document.getElementById('notif-panel'); if(p) p.style.display = notifOpen ? 'block':'none'; }
+    function renderBadge(n){ const b=document.getElementById('notif-badge'); if(!b) return; if(n>0){ b.style.display='inline-block'; b.textContent=n; } else { b.style.display='none'; } }
+    function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    function renderNotifs(items){
+      const list=document.getElementById('notif-list'); if(!list) return; list.innerHTML='';
+      if(!items?.length){ list.innerHTML='<div class="p-3 text-muted">Sin notificaciones</div>'; return; }
+      items.forEach(n=>{
+        const div=document.createElement('div'); div.className='item '+(!n.leida?'unread':''); div.style.padding='10px 12px'; div.style.borderBottom='1px solid #f0f2f5';
+        div.innerHTML=`<div style="font-weight:600">${escapeHtml(n.titulo||'Notificación')}</div>
+                       <div class="small">${escapeHtml(n.cuerpo||'')}</div>
+                       <div class="small text-muted">${escapeHtml(n.fecha_legible||'')}</div>`;
+        list.appendChild(div);
+      });
+    }
+    async function fetchNotifs(){
+      try{
+        const r=await fetch('/notificaciones?limit=20'); if(!r.ok) return;
+        const data=await r.json();
+        renderNotifs(data.items||[]);
+        renderBadge(data.total_unread||0);
+      }catch(e){}
+    }
+    async function markAllAsRead(){
+      try{
+        await fetch('/notificaciones/marcar-leidas',{method:'POST'});
+        await fetchNotifs();
+        showToast({title:'Notificaciones', body:'Marcadas como leídas', icon:'check2-circle'});
+      }catch(e){}
+    }
+
+    /* ====== Init ====== */
+    window.onload = () => {
+      getUsuario();
+      cargarUsuarios();
+      applyChatState();
+      fetchNotifs();
+      setInterval(fetchNotifs, 30000); // polling cada 30s
+    };
+  </script>
 </body>
 </html>
