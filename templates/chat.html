@@ -86,6 +86,9 @@
       </div>
       <div class="chat-input">
         <input id="inputMsg" type="text" class="form-control" placeholder="Escribe un mensaje..." />
+        <!-- Adjuntos -->
+        <input id="inputFile" type="file" style="display:none" />
+        <button id="btnAdjunto" class="btn btn-outline-secondary" title="Adjuntar archivo">📎</button>
         <button id="btnEnviar" class="btn btn-primary">Enviar</button>
       </div>
     </div>
@@ -156,6 +159,7 @@
     setActiveHilo(con);
   }
 
+  // ===== Render mensajes + adjuntos =====
   function renderMensajes(mensajes){
     const body = document.getElementById('chatBody');
     body.innerHTML = '';
@@ -166,10 +170,34 @@
     mensajes.forEach(m=>{
       const div = document.createElement('div');
       div.className = 'msg' + (m.de === yo ? ' you' : '');
-      div.innerHTML = `
-        <div class="meta">${escapeHtml(m.de)} • ${m.fecha}</div>
-        <div class="txt">${escapeHtml(m.texto)}</div>
-      `;
+      const meta = `<div class="meta">${escapeHtml(m.de)} • ${m.fecha}</div>`;
+      const txt  = m.texto ? `<div class="txt">${escapeHtml(m.texto)}</div>` : '';
+      // Adjuntos
+      let adj = '';
+      if (m.adjuntos && m.adjuntos.length){
+        adj = '<div class="mt-2">';
+        m.adjuntos.forEach(a=>{
+          const url = `/chat/adjunto/${encodeURIComponent(a.filename)}`;
+          const isImg = /\.(png|jpg|jpeg|gif|webp)$/i.test(a.filename);
+          if(isImg){
+            adj += `
+              <div class="mb-2">
+                <a href="${url}" target="_blank" rel="noopener">
+                  <img src="${url}" alt="${escapeHtml(a.original)}" style="max-width:220px; border-radius:10px; display:block;">
+                </a>
+                <small class="text-muted">${escapeHtml(a.original)}${a.size ? ' • ' + Math.round(a.size/1024) + ' KB' : ''}</small>
+              </div>`;
+          }else{
+            adj += `
+              <div class="mb-1">
+                📎 <a href="${url}" target="_blank" rel="noopener">${escapeHtml(a.original)}</a>
+                ${a.size ? `<small class="text-muted"> • ${Math.round(a.size/1024)} KB</small>` : ''}
+              </div>`;
+          }
+        });
+        adj += '</div>';
+      }
+      div.innerHTML = meta + txt + adj;
       body.appendChild(div);
     });
     body.scrollTop = body.scrollHeight;
@@ -283,6 +311,35 @@
       alert('No se pudo enviar el mensaje.');
     }
   }
+
+  // ===== Adjuntos =====
+  const $file = document.getElementById('inputFile');
+  document.getElementById('btnAdjunto').onclick = ()=> $file.click();
+
+  $file.addEventListener('change', async ()=>{
+    const f = $file.files[0];
+    if(!f) return;
+    if(!con){ alert('Elegí un contacto antes de adjuntar.'); $file.value=''; return; }
+    try{
+      const fd = new FormData();
+      fd.append('para', con);
+      const texto = (document.getElementById('inputMsg').value || '').trim(); // opcional
+      fd.append('texto', texto);
+      fd.append('archivo', f);
+      const resp = await fetch('/chat/enviar-archivo', { method:'POST', body: fd });
+      if(!resp.ok){
+        const msg = (await resp.json().catch(()=>({}))).error || 'No se pudo enviar el adjunto.';
+        throw new Error(msg);
+      }
+      document.getElementById('inputMsg').value = '';
+      $file.value = '';
+      await cargarMensajes();
+      await cargarHilos();
+    }catch(e){
+      console.error(e);
+      alert(e.message || 'No se pudo enviar el adjunto.');
+    }
+  });
 
   async function abrirChat(email){
     try{

@@ -58,6 +58,7 @@ def _get_conn():
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=5000;")  # 5s de espera
+        conn.execute("PRAGMA foreign_keys=ON;")
     except Exception:
         pass
     return conn
@@ -96,6 +97,7 @@ def inicializar_bd():
     crear_tabla_tickets()
     crear_tabla_mensajes()       # 👈 chat interno
     crear_tabla_hilos_ocultos()  # 👈 gestión de hilos ocultos
+    crear_tabla_adjuntos()       # 👈 adjuntos de mensajes
 
 def crear_tabla_usuarios():
     with _get_conn() as conn:
@@ -174,6 +176,26 @@ def crear_tabla_hilos_ocultos():
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_hilos_ocultos_owner
             ON hilos_ocultos (owner_email, otro_email)
+        """)
+
+# ---------- NUEVO: tabla para adjuntos de mensajes ------------------------
+def crear_tabla_adjuntos():
+    with _get_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS mensajes_adjuntos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mensaje_id INTEGER NOT NULL,
+                filename   TEXT NOT NULL,   -- nombre seguro en disco
+                original   TEXT NOT NULL,   -- nombre original subido
+                mime       TEXT,
+                size       INTEGER,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (mensaje_id) REFERENCES mensajes(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_adjuntos_msg
+            ON mensajes_adjuntos (mensaje_id)
         """)
 
 # ============================== Usuarios ==================================
@@ -512,8 +534,30 @@ def obtener_hilos_para(email: str):
                     resultado.append(h)
         return resultado
 
+# ---------- NUEVO: helpers de adjuntos -----------------------------------
+def guardar_adjunto(mensaje_id: int, filename: str, original: str, mime: str = None, size: int = None):
+    """Guarda metadatos del adjunto asociado a un mensaje."""
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _get_conn() as conn:
+        cur = conn.execute(
+            """INSERT INTO mensajes_adjuntos (mensaje_id, filename, original, mime, size, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (mensaje_id, filename, original, mime, size, created_at)
+        )
+        return cur.lastrowid
+
+def obtener_adjuntos_por_mensaje(mensaje_id: int):
+    """Devuelve lista de adjuntos (dicts) para un mensaje."""
+    with _get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            "SELECT id, filename, original, mime, size, created_at FROM mensajes_adjuntos WHERE mensaje_id = ?",
+            (mensaje_id,)
+        )
+        return [dict(r) for r in cur.fetchall()]
+
 def obtener_mensajes_entre(a: str, b: str, limit: int = 100):
-    """Mensajes entre dos emails (ascendente por tiempo)."""
+    """Mensajes entre dos emails (ascendente por tiempo) + adjuntos por cada mensaje."""
     with _get_conn() as conn:
         cur = conn.execute("""
             SELECT id, de_email, para_email, texto, leido, fecha
@@ -525,12 +569,19 @@ def obtener_mensajes_entre(a: str, b: str, limit: int = 100):
         """, (a, b, b, a, limit))
         rows = cur.fetchall()
     rows = list(reversed(rows))  # devolver en orden cronológico (asc)
-    return [
-        {
-            "id": r[0], "de": r[1], "para": r[2],
-            "texto": r[3], "leido": bool(r[4]), "fecha": r[5]
-        } for r in rows
-    ]
+
+    mensajes = []
+    for r in rows:
+        mensajes.append({
+            "id": r[0],
+            "de": r[1],
+            "para": r[2],
+            "texto": r[3],
+            "leido": bool(r[4]),
+            "fecha": r[5],
+            "adjuntos": obtener_adjuntos_por_mensaje(r[0])  # 👈 incluye adjuntos
+        })
+    return mensajes
 
 def marcar_mensajes_leidos(de_email: str, para_email: str):
     """Marca como leídos todos los mensajes entrantes de 'de_email' hacia 'para_email'."""

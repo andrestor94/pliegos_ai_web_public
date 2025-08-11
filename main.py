@@ -35,7 +35,9 @@ from database import (
     enviar_mensaje, obtener_hilos_para, obtener_mensajes_entre,
     marcar_mensajes_leidos, contar_no_leidos,
     # Hilos ocultos
-    ocultar_hilo, restaurar_hilo
+    ocultar_hilo, restaurar_hilo,
+    # 👇 Adjuntos
+    guardar_adjunto
 )
 
 # ORM (audit_logs)
@@ -46,16 +48,21 @@ app = FastAPI(middleware=[
     Middleware(SessionMiddleware, secret_key="clave_secreta_super_segura")
 ])
 
-# Inicializa BD SQLite (usuarios, historial, tickets, mensajes, hilos_ocultos)
+# Inicializa BD SQLite (usuarios, historial, tickets, mensajes, hilos_ocultos, adjuntos)
 inicializar_bd()
 # Inicializa ORM (audit_logs) según DATABASE_URL
 inicializar_bd_orm()
 
+# Static
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="generated_pdfs")
 
 templates = Jinja2Templates(directory="templates")
 templates.env.globals['os'] = os
+
+# ================== Archivos de chat (adjuntos) ==================
+CHAT_ATTACH_DIR = os.path.join("static", "chat_adjuntos")
+os.makedirs(CHAT_ATTACH_DIR, exist_ok=True)
 
 # ================== Helpers ==================
 def _actor_info(request: Request):
@@ -273,7 +280,7 @@ async def crear_usuario_api(request: Request):
         nombre = data.get("nombre")
         email = data.get("email")
         rol = data.get("rol")
-        if not nombre or not email or not rol:
+        if not nombre o r not email or not rol:
             return JSONResponse({"error": "Faltan campos: nombre, email, rol"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
         agregar_usuario(nombre, email, "1234", rol, actor_user_id=actor_user_id, ip=ip)
@@ -413,6 +420,64 @@ async def chat_enviar(request: Request):
         print("❌ Error chat_enviar:", repr(e))
         return JSONResponse({"error": "No se pudo enviar el mensaje"}, status_code=500)
 
+# ---- NUEVO: enviar mensaje con archivo -----------------------------------
+@app.post("/chat/enviar-archivo")
+async def chat_enviar_archivo(
+    request: Request,
+    para: str = Form(...),
+    texto: str = Form(default=""),
+    archivo: UploadFile = File(...)
+):
+    """
+    Envía un mensaje con adjunto (1 archivo). Guarda el archivo y registra metadatos.
+    """
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+
+    de = request.session.get("usuario")
+
+    # Validaciones
+    MAX_MB = 20
+    ALLOW_EXT = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".txt", ".csv", ".xlsx"}
+    orig = archivo.filename or "archivo"
+    name, ext = os.path.splitext(orig.lower())
+    if ext not in ALLOW_EXT:
+        return JSONResponse({"error": f"Tipo de archivo no permitido: {ext}"}, status_code=400)
+    contents = await archivo.read()
+    if len(contents) > MAX_MB * 1024 * 1024:
+        return JSONResponse({"error": f"Archivo supera {MAX_MB} MB"}, status_code=400)
+
+    # Nombre seguro
+    ts = datetime.now().strftime("%Y%m%d%H%M%S")
+    safe_base = "".join(c for c in name if c.isalnum() or c in ("-", "_"))[:50] or "file"
+    safe_name = f"{ts}_{de.replace('@','_at_')}_{safe_base}{ext}"
+    path = os.path.join(CHAT_ATTACH_DIR, safe_name)
+    with open(path, "wb") as f:
+        f.write(contents)
+
+    # Crear mensaje (texto opcional)
+    actor_user_id, ip = _actor_info(request)
+    msg_id = enviar_mensaje(de_email=de, para_email=para, texto=texto or "", actor_user_id=actor_user_id, ip=ip)
+
+    # Guardar metadatos del adjunto
+    guardar_adjunto(
+        mensaje_id=msg_id,
+        filename=safe_name,
+        original=orig,
+        mime=archivo.content_type or "",
+        size=len(contents)
+    )
+
+    return JSONResponse({"ok": True, "id": msg_id})
+
+# ---- NUEVO: servir adjunto por nombre ------------------------------------
+@app.get("/chat/adjunto/{filename}")
+async def chat_adjunto(filename: str):
+    path = os.path.join(CHAT_ATTACH_DIR, filename)
+    if not os.path.isfile(path):
+        return JSONResponse({"error": "No encontrado"}, status_code=404)
+    return FileResponse(path)
+
 @app.get("/chat/hilos")
 async def chat_hilos(request: Request):
     if not request.session.get("usuario"):
@@ -467,7 +532,7 @@ async def chat_no_leidos(request: Request):
         print("❌ Error chat_no_leidos:", repr(e))
         return JSONResponse({"error": "No se pudo obtener el conteo"}, status_code=500)
 
-# ---- NUEVO: ocultar / restaurar / abrir hilos ----------------------------
+# ---- Hilos: ocultar / restaurar / abrir ----------------------------------
 @app.post("/chat/ocultar")
 async def chat_ocultar(request: Request):
     """‘Eliminar chat’: oculta el hilo para el usuario actual (no borra mensajes)."""
