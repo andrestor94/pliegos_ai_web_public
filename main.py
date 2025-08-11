@@ -1,6 +1,7 @@
 import os
 import sqlite3
-from fastapi import FastAPI, Request, Form, UploadFile, File
+from typing import List, Optional
+from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -36,7 +37,7 @@ from database import (
     marcar_mensajes_leidos, contar_no_leidos,
     # Hilos ocultos
     ocultar_hilo, restaurar_hilo,
-    # 👇 Adjuntos
+    # Adjuntos (chat)
     guardar_adjunto
 )
 
@@ -64,6 +65,14 @@ templates.env.globals['os'] = os
 CHAT_ATTACH_DIR = os.path.join("static", "chat_adjuntos")
 os.makedirs(CHAT_ATTACH_DIR, exist_ok=True)
 
+# Límites y validaciones para adjuntos del chat (alineados con el front)
+CHAT_ALLOWED_EXT = {
+    ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+    ".txt", ".csv", ".xlsx", ".xls", ".docx", ".doc", ".pptx"
+}
+CHAT_MAX_FILES = 10
+CHAT_MAX_TOTAL_MB = 50
+
 # ================== Helpers ==================
 def _actor_info(request: Request):
     email = request.session.get("usuario")
@@ -71,6 +80,39 @@ def _actor_info(request: Request):
     actor_user_id = row[0] if row else None
     ip = request.client.host if request.client else None
     return actor_user_id, ip
+
+def _safe_basename(name: str) -> str:
+    base = os.path.splitext(name or "archivo")[0]
+    base = "".join(c for c in base if c.isalnum() or c in ("-", "_", "."))
+    base = base[:50] or "file"
+    return base
+
+async def _save_upload_stream(upload: UploadFile, dst_path: str) -> int:
+    """Guarda el UploadFile en disco por chunks. Devuelve tamaño en bytes."""
+    size = 0
+    with open(dst_path, "wb") as f:
+        while True:
+            chunk = await upload.read(1024 * 1024)  # 1MB
+            if not chunk:
+                break
+            size += len(chunk)
+            f.write(chunk)
+    await upload.seek(0)
+    return size
+
+def _validate_ext(filename: str):
+    ext = os.path.splitext(filename or "")[1].lower()
+    if ext not in CHAT_ALLOWED_EXT:
+        raise HTTPException(status_code=400, detail=f"Tipo de archivo no permitido: {ext}")
+
+# --- Config pública para el front (límites de adjuntos) ---
+@app.get("/chat/config")
+async def chat_config():
+    return {
+        "allowed_ext": sorted(list({e.lstrip(".").lower() for e in CHAT_ALLOWED_EXT})),
+        "max_files": CHAT_MAX_FILES,
+        "max_total_mb": CHAT_MAX_TOTAL_MB
+    }
 
 # ================== Rutas base ==================
 @app.get("/", response_class=HTMLResponse)
@@ -102,7 +144,7 @@ async def logout(request: Request):
 
 # ================== Análisis ==================
 @app.post("/analizar-pliego")
-async def analizar_pliego(request: Request, archivos: list[UploadFile] = File(...)):
+async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
     usuario = request.session.get("usuario", "Anónimo")
     texto_total = ""
     for archivo in archivos:
@@ -188,7 +230,7 @@ async def crear_incidencia_form(
     titulo: str = Form(...),
     descripcion: str = Form(...),
     tipo: str = Form(...),
-    archivos: list[UploadFile] = File(default=[])
+    archivos: List[UploadFile] = File(default=[])
 ):
     usuario = request.session.get("usuario", "Anónimo")
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -280,7 +322,6 @@ async def crear_usuario_api(request: Request):
         nombre = data.get("nombre")
         email = data.get("email")
         rol = data.get("rol")
-        # 🛠️ Fix SyntaxError
         if not nombre or not email or not rol:
             return JSONResponse({"error": "Faltan campos: nombre, email, rol"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
@@ -421,7 +462,67 @@ async def chat_enviar(request: Request):
         print("❌ Error chat_enviar:", repr(e))
         return JSONResponse({"error": "No se pudo enviar el mensaje"}, status_code=500)
 
-# ---- NUEVO: enviar mensaje con archivo -----------------------------------
+# ---- NUEVO: enviar mensaje con múltiples archivos -------------------------
+@app.post("/chat/enviar-archivos")
+async def chat_enviar_archivos(
+    request: Request,
+    para: str = Form(...),
+    texto: str = Form(default=""),
+    archivos: List[UploadFile] = File(default=[])
+):
+    """Envía un mensaje con 0..N adjuntos. Guarda cada archivo y registra metadatos."""
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+
+    de = request.session.get("usuario")
+
+    files = [a for a in archivos if a and a.filename]
+    if len(files) > CHAT_MAX_FILES:
+        return JSONResponse({"error": f"Máximo {CHAT_MAX_FILES} archivos por mensaje"}, status_code=400)
+
+    actor_user_id, ip = _actor_info(request)
+    try:
+        msg_id = enviar_mensaje(de_email=de, para_email=para, texto=texto or "", actor_user_id=actor_user_id, ip=ip)
+    except Exception as e:
+        print("❌ Error creando mensaje:", repr(e))
+        return JSONResponse({"error": "No se pudo crear el mensaje"}, status_code=500)
+
+    ts = datetime.now().strftime("%Y%m%d%H%M%S")
+    total_bytes = 0
+
+    for i, archivo in enumerate(files, start=1):
+        orig = archivo.filename
+        _validate_ext(orig)
+
+        ext = os.path.splitext(orig)[1].lower()
+        base = _safe_basename(orig)
+        safe_name = f"{ts}_{de.replace('@','_at_')}_{i:02d}_{base}{ext}"
+        path = os.path.join(CHAT_ATTACH_DIR, safe_name)
+
+        written = await _save_upload_stream(archivo, path)
+        total_bytes += written
+        if (total_bytes / (1024 * 1024)) > CHAT_MAX_TOTAL_MB:
+            try:
+                os.remove(path)
+            except:
+                pass
+            return JSONResponse({"error": f"Tamaño total supera {CHAT_MAX_TOTAL_MB} MB"}, status_code=400)
+
+        try:
+            guardar_adjunto(
+                mensaje_id=msg_id,
+                filename=safe_name,
+                original=orig,
+                mime=archivo.content_type or "",
+                size=written
+            )
+        except Exception as e:
+            print("❌ Error guardar_adjunto:", repr(e))
+            # Continuamos; se podría informar un warning al front.
+
+    return JSONResponse({"ok": True, "id": msg_id})
+
+# ---- Compat: enviar mensaje con 1 archivo (reusa la lógica nueva) ---------
 @app.post("/chat/enviar-archivo")
 async def chat_enviar_archivo(
     request: Request,
@@ -429,49 +530,13 @@ async def chat_enviar_archivo(
     texto: str = Form(default=""),
     archivo: UploadFile = File(...)
 ):
-    """
-    Envía un mensaje con adjunto (1 archivo). Guarda el archivo y registra metadatos.
-    """
+    """Compat: 1 archivo. Internamente llama a /chat/enviar-archivos."""
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
+    archivos = [archivo] if archivo and archivo.filename else []
+    return await chat_enviar_archivos(request, para=para, texto=texto, archivos=archivos)
 
-    de = request.session.get("usuario")
-
-    # Validaciones
-    MAX_MB = 20
-    ALLOW_EXT = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".txt", ".csv", ".xlsx"}
-    orig = archivo.filename or "archivo"
-    name, ext = os.path.splitext(orig.lower())
-    if ext not in ALLOW_EXT:
-        return JSONResponse({"error": f"Tipo de archivo no permitido: {ext}"}, status_code=400)
-    contents = await archivo.read()
-    if len(contents) > MAX_MB * 1024 * 1024:
-        return JSONResponse({"error": f"Archivo supera {MAX_MB} MB"}, status_code=400)
-
-    # Nombre seguro
-    ts = datetime.now().strftime("%Y%m%d%H%M%S")
-    safe_base = "".join(c for c in name if c.isalnum() or c in ("-", "_"))[:50] or "file"
-    safe_name = f"{ts}_{de.replace('@','_at_')}_{safe_base}{ext}"
-    path = os.path.join(CHAT_ATTACH_DIR, safe_name)
-    with open(path, "wb") as f:
-        f.write(contents)
-
-    # Crear mensaje (texto opcional)
-    actor_user_id, ip = _actor_info(request)
-    msg_id = enviar_mensaje(de_email=de, para_email=para, texto=texto or "", actor_user_id=actor_user_id, ip=ip)
-
-    # Guardar metadatos del adjunto
-    guardar_adjunto(
-        mensaje_id=msg_id,
-        filename=safe_name,
-        original=orig,
-        mime=archivo.content_type or "",
-        size=len(contents)
-    )
-
-    return JSONResponse({"ok": True, "id": msg_id})
-
-# ---- NUEVO: servir adjunto por nombre ------------------------------------
+# ---- Servir adjunto por nombre --------------------------------------------
 @app.get("/chat/adjunto/{filename}")
 async def chat_adjunto(filename: str):
     path = os.path.join(CHAT_ATTACH_DIR, filename)

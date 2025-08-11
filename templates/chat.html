@@ -30,8 +30,8 @@
     .msg { max-width: 70%; margin-bottom:10px; padding:10px 12px; border-radius:12px; background:#fff; box-shadow: 0 2px 8px rgba(0,0,0,.04);}
     .msg.you { margin-left:auto; background:#dff0ff;}
     .msg .meta{ font-size:12px; color:#666; margin-bottom:4px;}
-    .chat-input { border-top:1px solid var(--gris); padding:10px; background:#fff; display:flex; gap:8px; }
-    .chat-input input { border-radius:10px; }
+    .chat-input { border-top:1px solid var(--gris); padding:10px; background:#fff; display:flex; gap:8px; align-items:flex-start; }
+    .chat-input input[type="text"] { border-radius:10px; }
     .chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; background:#eef5ff; border-radius:999px; font-size:14px;}
     .empty { color:#667; padding:16px; }
     @media (max-width: 900px){ .chat-wrap{ grid-template-columns: 1fr; } }
@@ -44,6 +44,16 @@
     .auto-li.active, .auto-li:hover{ background:#f3f4f6; }
     /* Badge no leídos */
     .badge-pill{ border-radius:999px; }
+    /* Adjuntos múltiples */
+    .dz{ flex:1; min-height:42px; border:1px dashed #b9c6d8; border-radius:10px; background:#fafcff; padding:8px 10px; color:#51647a; display:flex; align-items:center; gap:8px; cursor:pointer; }
+    .dz.dragover{ background:#eef6ff; border-color:#85aee6; }
+    .chips{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; padding:0 12px 8px; }
+    .chip-file{ display:inline-flex; align-items:center; gap:8px; padding:5px 8px; background:#eef5ff; border-radius:999px; font-size:12px; }
+    .chip-file button{ border:none; background:transparent; line-height:1; font-size:14px; }
+    .chip-thumb{ width:26px; height:26px; border-radius:6px; object-fit:cover; background:#fff; border:1px solid #dbe3ee; }
+    .muted{ color:#6b7280; }
+    .btn-icon{ display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; border-radius:10px; }
+    .totals{ font-size:12px; color:#6b7280; padding:0 12px 10px; }
   </style>
 </head>
 <body>
@@ -84,13 +94,21 @@
       <div id="chatBody" class="chat-body">
         <div class="empty">Seleccioná una conversación o creá una nueva desde la izquierda.</div>
       </div>
+
+      <!-- Input + adjuntos -->
       <div class="chat-input">
         <input id="inputMsg" type="text" class="form-control" placeholder="Escribe un mensaje..." />
-        <!-- Adjuntos -->
-        <input id="inputFile" type="file" style="display:none" />
-        <button id="btnAdjunto" class="btn btn-outline-secondary" title="Adjuntar archivo">📎</button>
+
+        <!-- Dropzone + input multiple -->
+        <div id="drop" class="dz" title="Clic o arrastrá archivos">
+          <span id="dzHint">📎 Adjuntar…</span>
+          <input id="inputFiles" type="file" multiple style="display:none" />
+        </div>
+        <button id="btnPick" class="btn btn-outline-secondary btn-icon" title="Elegir archivos">📎</button>
         <button id="btnEnviar" class="btn btn-primary">Enviar</button>
       </div>
+      <div id="chips" class="chips"></div>
+      <div id="totals" class="totals"></div>
     </div>
   </div>
 </div>
@@ -101,6 +119,39 @@
   let con = null; // email del contacto seleccionado
   let refresco = null;
   let refrescoNoLeidos = null;
+
+  // === Config (se carga desde backend) ===
+  let CONFIG = {
+    allowed_ext: ['pdf','png','jpg','jpeg','gif','webp','txt','csv','xlsx','xls','docx','doc','pptx'],
+    max_files: 10,
+    max_total_mb: 50
+  };
+
+  async function cargarConfig(){
+    try{
+      const r = await fetch('/chat/config');
+      if(r.ok){
+        const cfg = await r.json();
+        if(cfg && Array.isArray(cfg.allowed_ext)){
+          CONFIG = cfg;
+        }
+      }
+    }catch(_){}
+    // hint dinámico
+    const hint = document.getElementById('dzHint');
+    hint.innerHTML = `📎 Adjuntar… <span class="muted">(máx. ${CONFIG.max_files} archivos / ${CONFIG.max_total_mb} MB totales)</span>`;
+  }
+
+  function extPermitida(name){
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    return CONFIG.allowed_ext.includes(ext);
+  }
+  function isImage(name){
+    return /\.(png|jpg|jpeg|gif|webp)$/i.test(name);
+  }
+
+  // === Estado de selección de archivos ===
+  let selectedFiles = []; // Array<File>
 
   // --- Utils fetch ---
   async function getJSON(url){
@@ -147,9 +198,7 @@
         </div>
         <button class="btn-del" title="Eliminar chat (ocultar)" aria-label="Eliminar">🗑</button>
       `;
-      // abrir hilo al hacer click en el área de info
       div.querySelector('.info').onclick = () => abrirChat(h.con);
-      // ocultar hilo con el botón
       div.querySelector('.btn-del').onclick = async (ev) => {
         ev.stopPropagation();
         await ocultar(h.con);
@@ -285,8 +334,8 @@
     try{
       const data = await getJSON(`/chat/mensajes?con=${encodeURIComponent(con)}`);
       renderMensajes(data.mensajes || []);
-      await marcarLeidos(con);   // marcar leídos después de mostrar
-      await cargarNoLeidos();    // refrescar badge global
+      await marcarLeidos(con);
+      await cargarNoLeidos();
     }catch(e){
       console.error(e);
       alert('No se pudieron cargar los mensajes.');
@@ -300,50 +349,159 @@
       alert('Elegí un contacto o buscá uno con @.');
       return;
     }
+    // Si hay archivos seleccionados, enviamos todo por /chat/enviar-archivos
+    if(selectedFiles.length){
+      await enviarArchivos(texto);
+      return;
+    }
     if(!texto) return;
     try{
       await postJSON('/chat/enviar', { para: con, texto });
       input.value = '';
       await cargarMensajes();
-      await cargarHilos(); // actualizar orden
+      await cargarHilos();
     }catch(e){
       console.error(e);
       alert('No se pudo enviar el mensaje.');
     }
   }
 
-  // ===== Adjuntos =====
-  const $file = document.getElementById('inputFile');
-  document.getElementById('btnAdjunto').onclick = ()=> $file.click();
+  // ====== Adjuntos múltiples ======
+  const $files = document.getElementById('inputFiles');
+  const $drop  = document.getElementById('drop');
+  const $chips = document.getElementById('chips');
+  const $btnPick = document.getElementById('btnPick');
+  const $totals = document.getElementById('totals');
 
-  $file.addEventListener('change', async ()=>{
-    const f = $file.files[0];
-    if(!f) return;
-    if(!con){ alert('Elegí un contacto antes de adjuntar.'); $file.value=''; return; }
-    try{
-      const fd = new FormData();
-      fd.append('para', con);
-      const texto = (document.getElementById('inputMsg').value || '').trim(); // opcional
-      fd.append('texto', texto);
-      fd.append('archivo', f);
-      const resp = await fetch('/chat/enviar-archivo', { method:'POST', body: fd });
-      if(!resp.ok){
-        const msg = (await resp.json().catch(()=>({}))).error || 'No se pudo enviar el adjunto.';
-        throw new Error(msg);
+  $btnPick.onclick = () => $files.click();
+  $drop.onclick = () => $files.click();
+
+  // Drag & Drop
+  ;['dragenter','dragover'].forEach(ev=>{
+    $drop.addEventListener(ev, e=>{ e.preventDefault(); e.stopPropagation(); $drop.classList.add('dragover'); });
+  });
+  ;['dragleave','drop'].forEach(ev=>{
+    $drop.addEventListener(ev, e=>{ e.preventDefault(); e.stopPropagation(); $drop.classList.remove('dragover'); });
+  });
+  $drop.addEventListener('drop', (e)=>{
+    const files = [...(e.dataTransfer?.files || [])];
+    if(!files.length) return;
+    addFiles(files);
+  });
+
+  // Input change
+  $files.addEventListener('change', ()=>{
+    addFiles([...( $files.files || [] )]);
+    // reset input para permitir volver a seleccionar los mismos nombres
+    $files.value = '';
+  });
+
+  function addFiles(files){
+    for(const f of files){
+      if(!extPermitida(f.name)){
+        alert(`Tipo no permitido: ${f.name}`);
+        continue;
       }
+      if(selectedFiles.length >= CONFIG.max_files){
+        alert(`Máximo ${CONFIG.max_files} archivos por mensaje.`);
+        break;
+      }
+      selectedFiles.push(f);
+    }
+    // Validar peso total
+    limitTotal();
+    renderChips();
+    renderTotals();
+  }
+
+  function limitTotal(){
+    const maxBytes = CONFIG.max_total_mb*1024*1024;
+    while(selectedFiles.reduce((a,b)=>a+b.size,0) > maxBytes){
+      selectedFiles.pop(); // quita el último agregado
+    }
+  }
+
+  function renderTotals(){
+    if(!selectedFiles.length){ $totals.textContent = ''; return; }
+    const total = selectedFiles.reduce((a,b)=>a+b.size,0);
+    const mb = (total/1024/1024);
+    $totals.textContent = `Archivos seleccionados: ${selectedFiles.length} • Total: ${mb.toFixed(2)} MB (límite ${CONFIG.max_total_mb} MB)`;
+  }
+
+  function renderChips(){
+    $chips.innerHTML = '';
+    if(!selectedFiles.length) return;
+    selectedFiles.forEach((f, idx)=>{
+      const chip = document.createElement('span');
+      chip.className = 'chip-file';
+      // mini preview si es imagen
+      if(isImage(f.name)){
+        const img = document.createElement('img');
+        img.className = 'chip-thumb';
+        img.alt = f.name;
+        // genera thumbnail con FileReader
+        const fr = new FileReader();
+        fr.onload = e => { img.src = e.target.result; };
+        fr.readAsDataURL(f);
+        chip.appendChild(img);
+      }
+      const label = document.createElement('span');
+      label.innerHTML = `${escapeHtml(f.name)} <small class="muted">${Math.round(f.size/1024)} KB</small>`;
+      const btn = document.createElement('button');
+      btn.title = 'Quitar';
+      btn.setAttribute('aria-label','Quitar');
+      btn.innerHTML = '&times;';
+      btn.onclick = ()=>{
+        selectedFiles.splice(idx,1);
+        renderChips();
+        renderTotals();
+      };
+      chip.appendChild(label);
+      chip.appendChild(btn);
+      $chips.appendChild(chip);
+    });
+  }
+
+  async function enviarArchivos(texto){
+    if(!con){ alert('Elegí un contacto antes de enviar.'); return; }
+    const fd = new FormData();
+    fd.append('para', con);
+    fd.append('texto', texto || '');
+    selectedFiles.forEach(f => fd.append('archivos', f));
+
+    toggleSending(true);
+    try{
+      const resp = await fetch('/chat/enviar-archivos', { method:'POST', body: fd });
+      if(!resp.ok){
+        let msg = '';
+        try{ msg = (await resp.json()).error || ''; }catch(_){}
+        if(!msg){ try{ msg = await resp.text(); }catch(_){ } }
+        throw new Error(msg || 'No se pudo enviar los adjuntos.');
+      }
+      // limpiar estado
+      selectedFiles = [];
+      renderChips();
+      renderTotals();
       document.getElementById('inputMsg').value = '';
-      $file.value = '';
       await cargarMensajes();
       await cargarHilos();
     }catch(e){
       console.error(e);
-      alert(e.message || 'No se pudo enviar el adjunto.');
+      alert(e.message || 'No se pudo enviar los adjuntos.');
+    }finally{
+      toggleSending(false);
     }
-  });
+  }
+
+  function toggleSending(sending){
+    const btn = document.getElementById('btnEnviar');
+    btn.disabled = sending;
+    btn.textContent = sending ? 'Enviando…' : 'Enviar';
+  }
 
   async function abrirChat(email){
     try{
-      await postJSON('/chat/abrir', { con: email }); // restaura si estaba oculto
+      await postJSON('/chat/abrir', { con: email });
       con = email;
       document.getElementById('conEmail').textContent = con;
       setActiveHilo(con);
@@ -363,7 +521,6 @@
     try{
       await postJSON('/chat/ocultar', { con: email });
       if(con === email){
-        // salimos del hilo activo
         con = null;
         document.getElementById('conEmail').textContent = '—';
         document.getElementById('chatBody').innerHTML = '<div class="empty">Seleccioná una conversación o creá una nueva desde la izquierda.</div>';
@@ -407,7 +564,7 @@
   }
   function iniciarAutoNoLeidos(){
     if(refrescoNoLeidos) clearInterval(refrescoNoLeidos);
-    refrescoNoLeidos = setInterval(cargarNoLeidos, 10000); // cada 10s
+    refrescoNoLeidos = setInterval(cargarNoLeidos, 10000);
   }
 
   // --- Eventos ---
@@ -423,6 +580,7 @@
 
   // --- Init ---
   (async ()=>{
+    await cargarConfig();   // <- primero límites desde backend
     await cargarYo();
     await cargarHilos();
     await cargarNoLeidos();
