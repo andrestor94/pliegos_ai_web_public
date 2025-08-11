@@ -23,7 +23,7 @@ from database import (
     listar_usuarios, actualizar_password, cambiar_estado_usuario,
     crear_ticket, obtener_tickets_por_usuario, obtener_todos_los_tickets,
     actualizar_estado_ticket, eliminar_ticket,
-    obtener_historial_completo
+    obtener_historial_completo, obtener_auditoria, borrar_usuario  # ⬅️ borrar_usuario
 )
 
 # Inicialización de BD
@@ -40,6 +40,14 @@ app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="gene
 
 templates = Jinja2Templates(directory="templates")
 templates.env.globals['os'] = os  # Habilita el acceso a 'os' desde las plantillas Jinja2
+
+# ---- Helpers actor/IP ----
+def _actor_info(request: Request):
+    email = request.session.get("usuario")
+    row = obtener_usuario_por_email(email) if email else None
+    actor_user_id = row[0] if row else None
+    ip = request.client.host if request.client else None
+    return actor_user_id, ip
 
 # ------------ FUNCIÓN DE ADJUNTOS PARA INCIDENCIAS ----------------
 def obtener_adjuntos_para_ticket(usuario, fecha):
@@ -138,7 +146,7 @@ async def vista_incidencias(request: Request):
     tickets = []
     for t in tickets_raw:
         if len(t) < 7:
-            continue  # Salta cualquier registro incompleto o con datos corruptos
+            continue
         fecha_legible = datetime.strptime(t[6], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M")
         adjuntos = obtener_adjuntos_para_ticket(t[1], t[6])
         tickets.append({
@@ -155,10 +163,7 @@ async def vista_incidencias(request: Request):
     return templates.TemplateResponse("incidencias.html", {
         "request": request,
         "tickets": tickets,
-        "usuario_actual": {
-            "nombre": usuario,
-            "rol": rol
-        }
+        "usuario_actual": {"nombre": usuario, "rol": rol}
     })
 
 @app.post("/incidencias")
@@ -172,7 +177,8 @@ async def crear_incidencia_form(
     usuario = request.session.get("usuario", "Anónimo")
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
 
-    crear_ticket(usuario, titulo, descripcion, tipo)
+    actor_user_id, ip = _actor_info(request)
+    crear_ticket(usuario, titulo, descripcion, tipo, actor_user_id=actor_user_id, ip=ip)
 
     carpeta_adjuntos = os.path.join("static", "adjuntos_incidencias")
     os.makedirs(carpeta_adjuntos, exist_ok=True)
@@ -188,14 +194,16 @@ async def crear_incidencia_form(
 
 @app.post("/incidencias/cerrar/{id}")
 async def cerrar_incidencia_form(request: Request, id: int):
-    actualizar_estado_ticket(id, "Cerrado")
+    actor_user_id, ip = _actor_info(request)
+    actualizar_estado_ticket(id, "Cerrado", actor_user_id=actor_user_id, ip=ip)
     return RedirectResponse("/incidencias", status_code=303)
 
 @app.post("/incidencias/eliminar/{id}")
 async def eliminar_incidencia_form(request: Request, id: int):
     if request.session.get("rol") != "admin":
         return JSONResponse({"error": "Acceso denegado"}, status_code=403)
-    eliminar_ticket(id)
+    actor_user_id, ip = _actor_info(request)
+    eliminar_ticket(id, actor_user_id=actor_user_id, ip=ip)
     return RedirectResponse("/incidencias", status_code=303)
 
 # ------------------- CAMBIO DE CONTRASEÑA POR EL USUARIO -------------------
@@ -203,11 +211,7 @@ async def eliminar_incidencia_form(request: Request, id: int):
 async def cambiar_password_form(request: Request):
     if not request.session.get("usuario"):
         return RedirectResponse("/login")
-    return templates.TemplateResponse("cambiar_password.html", {
-        "request": request,
-        "mensaje": "",
-        "error": ""
-    })
+    return templates.TemplateResponse("cambiar_password.html", {"request": request, "mensaje": "", "error": ""})
 
 @app.post("/cambiar-password", response_class=HTMLResponse)
 async def cambiar_password_submit(request: Request,
@@ -220,21 +224,16 @@ async def cambiar_password_submit(request: Request,
     datos = obtener_usuario_por_email(usuario)
     if not datos or datos[3] != old_password:
         return templates.TemplateResponse("cambiar_password.html", {
-            "request": request,
-            "mensaje": "",
-            "error": "La contraseña actual es incorrecta."
+            "request": request, "mensaje": "", "error": "La contraseña actual es incorrecta."
         })
     if new_password != confirm_password:
         return templates.TemplateResponse("cambiar_password.html", {
-            "request": request,
-            "mensaje": "",
-            "error": "La nueva contraseña no coincide en ambos campos."
+            "request": request, "mensaje": "", "error": "La nueva contraseña no coincide en ambos campos."
         })
-    actualizar_password(usuario, new_password)
+    actor_user_id, ip = _actor_info(request)
+    actualizar_password(usuario, new_password, actor_user_id=actor_user_id, ip=ip)
     return templates.TemplateResponse("cambiar_password.html", {
-        "request": request,
-        "mensaje": "Contraseña cambiada correctamente.",
-        "error": ""
+        "request": request, "mensaje": "Contraseña cambiada correctamente.", "error": ""
     })
 
 # ------------------- ADMIN -------------------
@@ -244,44 +243,58 @@ async def vista_admin(request: Request):
         return RedirectResponse("/")
     return templates.TemplateResponse("admin.html", {"request": request})
 
+# 📋 Auditoría
+@app.get("/auditoria", response_class=HTMLResponse)
+async def ver_auditoria(request: Request):
+    if request.session.get("rol") != "admin":
+        return RedirectResponse("/")
+    logs = obtener_auditoria()
+    return templates.TemplateResponse("auditoria.html", {"request": request, "logs": logs})
+
 @app.get("/admin/usuarios")
 async def listar_usuarios_api():
     return JSONResponse(listar_usuarios())
 
 @app.post("/admin/crear-usuario")
-async def crear_usuario_api(data: dict):
+async def crear_usuario_api(request: Request, data: dict):
     try:
-        agregar_usuario(data["nombre"], data["email"], "1234", data["rol"])
+        actor_user_id, ip = _actor_info(request)
+        agregar_usuario(data["nombre"], data["email"], "1234", data["rol"], actor_user_id=actor_user_id, ip=ip)
         return JSONResponse({"mensaje": "Usuario creado correctamente con contraseña: 1234"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
 @app.post("/admin/blanquear-password")
-async def blanquear_password(data: dict):
+async def blanquear_password(request: Request, data: dict):
     try:
-        actualizar_password(data["email"], "1234")
+        actor_user_id, ip = _actor_info(request)
+        actualizar_password(data["email"], "1234", actor_user_id=actor_user_id, ip=ip)
         return JSONResponse({"mensaje": "Contraseña blanqueada a 1234"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
 @app.post("/admin/desactivar-usuario")
-async def desactivar_usuario(data: dict):
-    cambiar_estado_usuario(data["email"], 0)
+async def desactivar_usuario(request: Request, data: dict):
+    actor_user_id, ip = _actor_info(request)
+    cambiar_estado_usuario(data["email"], 0, actor_user_id=actor_user_id, ip=ip)
     return JSONResponse({"mensaje": "Usuario desactivado"})
 
 @app.post("/admin/activar-usuario")
-async def activar_usuario(data: dict):
-    cambiar_estado_usuario(data["email"], 1)
+async def activar_usuario(request: Request, data: dict):
+    actor_user_id, ip = _actor_info(request)
+    cambiar_estado_usuario(data["email"], 1, actor_user_id=actor_user_id, ip=ip)
     return JSONResponse({"mensaje": "Usuario activado"})
 
 @app.post("/admin/eliminar-usuario")
-async def eliminar_usuario(data: dict):
+async def eliminar_usuario(request: Request, data: dict):
     try:
-        conn = sqlite3.connect("usuarios.db")
-        conn.execute("DELETE FROM usuarios WHERE email = ?", (data["email"],))
-        conn.commit()
-        conn.close()
-        return JSONResponse({"mensaje": "Usuario eliminado correctamente"})
+        if request.session.get("rol") != "admin":
+            return JSONResponse({"error": "Acceso denegado"}, status_code=403)
+        actor_user_id, ip = _actor_info(request)
+        ok = borrar_usuario(data["email"], actor_user_id=actor_user_id, ip=ip, soft=True)  # soft delete + auditoría
+        if not ok:
+            return JSONResponse({"error": "Usuario no encontrado"}, status_code=404)
+        return JSONResponse({"mensaje": "Usuario eliminado (soft delete)."})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
@@ -293,11 +306,7 @@ async def chat_openai(request: Request):
     usuario_actual = request.session.get("usuario", "Desconocido")
 
     historial = obtener_historial_completo()
-
-    ultimo_analisis_usuario = next(
-        (h for h in historial if h["usuario"] == usuario_actual and h["resumen"]),
-        None
-    )
+    ultimo_analisis_usuario = next((h for h in historial if h["usuario"] == usuario_actual and h["resumen"]), None)
 
     if ultimo_analisis_usuario:
         ultimo_resumen = f"""
@@ -316,7 +325,5 @@ async def chat_openai(request: Request):
     ])
 
     contexto = f"{ultimo_resumen}\n\n📚 Historial completo:\n{contexto_general}"
-
     respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
-
     return JSONResponse({"respuesta": respuesta})
