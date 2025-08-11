@@ -23,7 +23,9 @@ from database import (
     listar_usuarios, actualizar_password, cambiar_estado_usuario,
     crear_ticket, obtener_todos_los_tickets, obtener_tickets_por_usuario,
     actualizar_estado_ticket, eliminar_ticket,
-    obtener_historial_completo, obtener_auditoria, borrar_usuario
+    obtener_historial_completo, obtener_auditoria, borrar_usuario,
+    # 👇 Chat interno
+    enviar_mensaje, obtener_hilos_para, obtener_mensajes_entre
 )
 
 # 👇 crear/verificar tablas ORM (audit_logs) al iniciar
@@ -378,3 +380,59 @@ async def chat_openai(request: Request):
     respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
 
     return JSONResponse({"respuesta": respuesta})
+
+# ------------------- CHAT INTERNO (API) -------------------
+
+@app.post("/chat/enviar")
+async def chat_enviar(request: Request):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+
+    data = await request.json()
+    para = data.get("para")
+    texto = data.get("texto", "").strip()
+
+    if not para or not texto:
+        return JSONResponse({"error": "Faltan campos: para, texto"}, status_code=400)
+
+    de = request.session.get("usuario")
+    actor_user_id, ip = _actor_info(request)
+
+    try:
+        msg_id = enviar_mensaje(de_email=de, para_email=para, texto=texto,
+                                actor_user_id=actor_user_id, ip=ip)
+        return JSONResponse({"ok": True, "id": msg_id})
+    except Exception as e:
+        print("❌ Error chat_enviar:", repr(e))
+        return JSONResponse({"error": "No se pudo enviar el mensaje"}, status_code=500)
+
+
+@app.get("/chat/hilos")
+async def chat_hilos(request: Request):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+
+    yo = request.session.get("usuario")
+    try:
+        hilos = obtener_hilos_para(yo)
+        return JSONResponse({"hilos": hilos})
+    except Exception as e:
+        print("❌ Error chat_hilos:", repr(e))
+        return JSONResponse({"error": "No se pudieron obtener los hilos"}, status_code=500)
+
+
+@app.get("/chat/mensajes")
+async def chat_mensajes(request: Request, con: str, limit: int = 100):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+
+    yo = request.session.get("usuario")
+    if not con:
+        return JSONResponse({"error": "Falta parámetro 'con' (email del contacto)"}, status_code=400)
+
+    try:
+        mensajes = obtener_mensajes_entre(yo, con, limit=limit)
+        return JSONResponse({"entre": [yo, con], "mensajes": mensajes})
+    except Exception as e:
+        print("❌ Error chat_mensajes:", repr(e))
+        return JSONResponse({"error": "No se pudieron obtener los mensajes"}, status_code=500)
