@@ -1,13 +1,43 @@
 import sqlite3
 import re
-from datetime import datetime
-from db_orm import SessionLocal, AuditLog, Usuario  # Usuario para join en auditoría
+import time
 import json
+from datetime import datetime
+from db_orm import SessionLocal, AuditLog, Usuario  # para auditoría y join con email/nombre
 
 DB_PATH = "usuarios.db"
 
-# 🔹 Auditoría
+# ---------------------- Conexión robusta SQLite ----------------------
+def _get_conn():
+    """
+    Conexión SQLite con WAL y busy_timeout para reducir 'database is locked'.
+    """
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")  # 5s de espera
+    except Exception:
+        pass
+    return conn
+
+def _with_retry(callable_fn, retries=5, base_delay=0.15):
+    """
+    Reintenta operaciones si SQLite está bloqueada.
+    """
+    for i in range(retries):
+        try:
+            return callable_fn()
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e).lower() and i < retries - 1:
+                time.sleep(base_delay * (i + 1))
+                continue
+            raise
+
+# --------------------------- Auditoría ORM ---------------------------
 def registrar_auditoria(actor_user_id, action, entity, entity_id, before=None, after=None, ip=None):
+    """
+    Inserta en audit_logs (SQLAlchemy). Funciona con SQLite local o Postgres (Render).
+    """
     with SessionLocal() as session:
         log = AuditLog(
             actor_user_id=actor_user_id,
@@ -21,14 +51,14 @@ def registrar_auditoria(actor_user_id, action, entity, entity_id, before=None, a
         session.add(log)
         session.commit()
 
-# 🔧 Inicialización BD (sqlite)
+# ---------------------- Inicialización de Tablas ----------------------
 def inicializar_bd():
     crear_tabla_usuarios()
     crear_tabla_historial()
     crear_tabla_tickets()
 
 def crear_tabla_usuarios():
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         conn.execute('''
             CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,7 +71,7 @@ def crear_tabla_usuarios():
         ''')
 
 def crear_tabla_historial():
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         conn.execute('''
             CREATE TABLE IF NOT EXISTS historial (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,7 +84,7 @@ def crear_tabla_historial():
         ''')
 
 def crear_tabla_tickets():
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         conn.execute('''
             CREATE TABLE IF NOT EXISTS tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,27 +97,29 @@ def crear_tabla_tickets():
             )
         ''')
 
-# 👤 Usuarios
+# --------------------------- Gestión Usuarios ---------------------------
 def agregar_usuario(nombre, email, password, rol="usuario", actor_user_id=None, ip=None):
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _get_conn() as conn:
             cursor = conn.execute(
                 "INSERT INTO usuarios (nombre, email, password, rol) VALUES (?, ?, ?, ?)",
                 (nombre, email, password, rol)
             )
             new_id = cursor.lastrowid
-        registrar_auditoria(actor_user_id, "CREATE_USER", "usuarios", new_id,
-                            after={"nombre": nombre, "email": email, "rol": rol, "activo": True}, ip=ip)
+        registrar_auditoria(
+            actor_user_id, "CREATE_USER", "usuarios", new_id,
+            after={"nombre": nombre, "email": email, "rol": rol, "activo": True}, ip=ip
+        )
     except sqlite3.IntegrityError:
         print(f"⚠️ El usuario con email {email} ya existe.")
 
 def obtener_usuario_por_email(email):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         cursor = conn.execute("SELECT * FROM usuarios WHERE email = ?", (email,))
         return cursor.fetchone()
 
 def listar_usuarios():
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         cursor = conn.execute("SELECT id, nombre, email, rol, activo FROM usuarios")
         usuarios = []
         for row in cursor.fetchall():
@@ -101,46 +133,59 @@ def listar_usuarios():
         return usuarios
 
 def actualizar_password(email, nueva_password, actor_user_id=None, ip=None):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         before = obtener_usuario_por_email(email)
         conn.execute("UPDATE usuarios SET password = ? WHERE email = ?", (nueva_password, email))
         after = obtener_usuario_por_email(email)
     if before:
-        registrar_auditoria(actor_user_id, "UPDATE_PASSWORD", "usuarios", before[0],
-                            before={"email": before[2]}, after={"email": after[2]}, ip=ip)
+        registrar_auditoria(
+            actor_user_id, "UPDATE_PASSWORD", "usuarios", before[0],
+            before={"email": before[2]}, after={"email": after[2]}, ip=ip
+        )
 
 def cambiar_estado_usuario(email, activo, actor_user_id=None, ip=None):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         before = obtener_usuario_por_email(email)
         conn.execute("UPDATE usuarios SET activo = ? WHERE email = ?", (activo, email))
         after = obtener_usuario_por_email(email)
     if before:
-        registrar_auditoria(actor_user_id, "TOGGLE_USER_ACTIVE", "usuarios", before[0],
-                            before={"activo": bool(before[5])}, after={"activo": bool(after[5])}, ip=ip)
+        registrar_auditoria(
+            actor_user_id, "TOGGLE_USER_ACTIVE", "usuarios", before[0],
+            before={"activo": bool(before[5])}, after={"activo": bool(after[5])}, ip=ip
+        )
 
 def borrar_usuario(email, actor_user_id=None, ip=None, soft=True):
     """
-    Soft delete por defecto: activo=0 y rol='borrado'.
+    Soft delete por defecto (activo=0, rol='borrado').
     Hard delete si soft=False.
+    Usa conexión con timeout y reintentos para evitar 'database is locked'.
     """
-    with sqlite3.connect(DB_PATH) as conn:
-        before = obtener_usuario_por_email(email)
-        if not before:
-            return False
-        user_id = before[0]
-        if soft:
-            conn.execute("UPDATE usuarios SET activo = 0, rol = 'borrado' WHERE email = ?", (email,))
-            after = obtener_usuario_por_email(email)
-            registrar_auditoria(actor_user_id, "SOFT_DELETE_USER", "usuarios", user_id,
-                                before={"email": before[2], "rol": before[4], "activo": bool(before[5])},
-                                after={"email": after[2], "rol": after[4], "activo": bool(after[5])}, ip=ip)
-        else:
-            conn.execute("DELETE FROM usuarios WHERE email = ?", (email,))
-            registrar_auditoria(actor_user_id, "HARD_DELETE_USER", "usuarios", user_id,
-                                before={"email": before[2], "rol": before[4], "activo": bool(before[5])}, ip=ip)
-    return True
+    def _op():
+        with _get_conn() as conn:
+            before = obtener_usuario_por_email(email)
+            if not before:
+                return False
+            user_id = before[0]
+            if soft:
+                conn.execute("UPDATE usuarios SET activo = 0, rol = 'borrado' WHERE email = ?", (email,))
+                after = obtener_usuario_por_email(email)
+                registrar_auditoria(
+                    actor_user_id, "SOFT_DELETE_USER", "usuarios", user_id,
+                    before={"email": before[2], "rol": before[4], "activo": bool(before[5])},
+                    after={"email": after[2], "rol": after[4], "activo": bool(after[5])},
+                    ip=ip
+                )
+            else:
+                conn.execute("DELETE FROM usuarios WHERE email = ?", (email,))
+                registrar_auditoria(
+                    actor_user_id, "HARD_DELETE_USER", "usuarios", user_id,
+                    before={"email": before[2], "rol": before[4], "activo": bool(before[5])}, ip=ip
+                )
+        return True
 
-# 📄 Historial
+    return _with_retry(_op)
+
+# --------------------------- Historial ---------------------------
 def guardar_en_historial(timestamp, usuario, nombre_archivo, ruta_pdf, resumen_texto=""):
     try:
         match = re.search(r"(\d{14})", timestamp)
@@ -148,7 +193,7 @@ def guardar_en_historial(timestamp, usuario, nombre_archivo, ruta_pdf, resumen_t
             timestamp = match.group(1)
         else:
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        with sqlite3.connect(DB_PATH) as conn:
+        with _get_conn() as conn:
             conn.execute('''
                 INSERT INTO historial (timestamp, usuario, nombre_archivo, ruta_pdf, resumen_texto)
                 VALUES (?, ?, ?, ?, ?)
@@ -157,7 +202,7 @@ def guardar_en_historial(timestamp, usuario, nombre_archivo, ruta_pdf, resumen_t
         print(f"❌ Error al guardar en historial: {e}")
 
 def obtener_historial():
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         cursor = conn.execute('''
             SELECT id, timestamp, usuario, nombre_archivo, ruta_pdf
             FROM historial
@@ -180,7 +225,7 @@ def obtener_historial():
         return historial
 
 def obtener_historial_completo():
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         cursor = conn.execute('''
             SELECT timestamp, usuario, nombre_archivo, resumen_texto
             FROM historial
@@ -202,38 +247,41 @@ def obtener_historial_completo():
         return historial
 
 def eliminar_del_historial(timestamp):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         cursor = conn.execute("SELECT COUNT(*) FROM historial WHERE timestamp = ?", (timestamp,))
         if cursor.fetchone()[0]:
             conn.execute("DELETE FROM historial WHERE timestamp = ?", (timestamp,))
 
-# 🧹 Limpieza opcional
 def limpiar_historial_invalido():
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         cursor = conn.execute("SELECT id, timestamp FROM historial")
         ids_invalidos = []
-        for id_, timestamp in cursor.fetchall():
+        for id_, ts in cursor.fetchall():
             try:
-                datetime.strptime(timestamp, "%Y%m%d%H%M%S")
+                datetime.strptime(ts, "%Y%m%d%H%M%S")
             except (ValueError, TypeError):
                 ids_invalidos.append(id_)
         for id_ in ids_invalidos:
             conn.execute("DELETE FROM historial WHERE id = ?", (id_,))
+        print(f"🧹 Registros eliminados: {len(ids_invalidos)}")
 
-# 🎫 Tickets
+# --------------------------- Tickets ---------------------------
 def crear_ticket(usuario, titulo, descripcion, tipo, actor_user_id=None, ip=None):
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         cursor = conn.execute(
             "INSERT INTO tickets (usuario, titulo, descripcion, tipo, fecha) VALUES (?, ?, ?, ?, ?)",
             (usuario, titulo, descripcion, tipo, fecha)
         )
         new_id = cursor.lastrowid
-    registrar_auditoria(actor_user_id, "CREATE_TICKET", "tickets", new_id,
-                        after={"usuario": usuario, "titulo": titulo, "descripcion": descripcion, "tipo": tipo, "estado": "Abierto"}, ip=ip)
+    registrar_auditoria(
+        actor_user_id, "CREATE_TICKET", "tickets", new_id,
+        after={"usuario": usuario, "titulo": titulo, "descripcion": descripcion, "tipo": tipo, "estado": "Abierto"},
+        ip=ip
+    )
 
 def obtener_tickets_por_usuario(usuario):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         cursor = conn.execute(
             "SELECT id, usuario, titulo, descripcion, tipo, estado, fecha FROM tickets WHERE usuario = ? ORDER BY fecha DESC",
             (usuario,)
@@ -241,27 +289,29 @@ def obtener_tickets_por_usuario(usuario):
         return cursor.fetchall()
 
 def obtener_todos_los_tickets():
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         cursor = conn.execute(
             "SELECT id, usuario, titulo, descripcion, tipo, estado, fecha FROM tickets ORDER BY fecha DESC"
         )
         return cursor.fetchall()
 
 def actualizar_estado_ticket(ticket_id, nuevo_estado, actor_user_id=None, ip=None):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         cursor = conn.execute("SELECT usuario, titulo, estado FROM tickets WHERE id = ?", (ticket_id,))
         before = cursor.fetchone()
         conn.execute("UPDATE tickets SET estado = ? WHERE id = ?", (nuevo_estado, ticket_id))
     if before:
-        registrar_auditoria(actor_user_id, "UPDATE_TICKET_STATE", "tickets", ticket_id,
-                            before={"estado": before[2]}, after={"estado": nuevo_estado}, ip=ip)
+        registrar_auditoria(
+            actor_user_id, "UPDATE_TICKET_STATE", "tickets", ticket_id,
+            before={"estado": before[2]}, after={"estado": nuevo_estado}, ip=ip
+        )
 
 def agregar_ticket(timestamp, usuario, titulo, descripcion, actor_user_id=None, ip=None):
     tipo = "General"
     crear_ticket(usuario, titulo, descripcion, tipo, actor_user_id=actor_user_id, ip=ip)
 
 def obtener_tickets():
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         cursor = conn.execute('''
             SELECT id, usuario, titulo, descripcion, tipo, estado, fecha 
             FROM tickets 
@@ -284,16 +334,21 @@ def marcar_ticket_resuelto(ticket_id, actor_user_id=None, ip=None):
     actualizar_estado_ticket(ticket_id, "Resuelto", actor_user_id=actor_user_id, ip=ip)
 
 def eliminar_ticket(ticket_id, actor_user_id=None, ip=None):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         cursor = conn.execute("SELECT usuario, titulo FROM tickets WHERE id = ?", (ticket_id,))
         before = cursor.fetchone()
         conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
     if before:
-        registrar_auditoria(actor_user_id, "DELETE_TICKET", "tickets", ticket_id,
-                            before={"usuario": before[0], "titulo": before[1]}, ip=ip)
+        registrar_auditoria(
+            actor_user_id, "DELETE_TICKET", "tickets", ticket_id,
+            before={"usuario": before[0], "titulo": before[1]}, ip=ip
+        )
 
-# 📋 Auditoría (con email/nombre)
+# --------------------------- Consultar Auditoría ---------------------------
 def obtener_auditoria(limit=50):
+    """
+    Devuelve las últimas acciones de audit_logs, con email/nombre si existe el usuario.
+    """
     with SessionLocal() as session:
         logs = (
             session.query(AuditLog, Usuario)
