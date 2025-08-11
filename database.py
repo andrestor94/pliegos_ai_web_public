@@ -16,7 +16,6 @@ from db_orm import SessionLocal, AuditLog, Usuario  # auditoría y join con emai
 DB_PATH = "usuarios.db"
 
 # ====================== Configuración de zona horaria ======================
-# Puedes cambiarlo por la que prefieras o definir APP_TIMEZONE en Render.
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "America/Argentina/Buenos_Aires")
 
 ACCION_ES = {
@@ -29,6 +28,8 @@ ACCION_ES = {
     "UPDATE_TICKET_STATE": "Cambiar estado de ticket",
     "DELETE_TICKET": "Eliminar ticket",
     "SEND_MESSAGE": "Enviar mensaje",  # 👈 chat interno
+    "HIDE_THREAD": "Ocultar conversación",
+    "UNHIDE_THREAD": "Restaurar conversación",
 }
 
 def _accion_es(codigo: str) -> str:
@@ -93,7 +94,8 @@ def inicializar_bd():
     crear_tabla_usuarios()
     crear_tabla_historial()
     crear_tabla_tickets()
-    crear_tabla_mensajes()  # 👈 chat interno
+    crear_tabla_mensajes()       # 👈 chat interno
+    crear_tabla_hilos_ocultos()  # 👈 gestión de hilos ocultos
 
 def crear_tabla_usuarios():
     with _get_conn() as conn:
@@ -157,6 +159,23 @@ def crear_tabla_mensajes():
             ON mensajes (fecha)
         """)
 
+def crear_tabla_hilos_ocultos():
+    """Registra hilos ocultos por usuario (no borra mensajes)."""
+    with _get_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS hilos_ocultos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_email TEXT NOT NULL,   -- quién oculta
+                otro_email  TEXT NOT NULL,   -- con quién
+                hidden_at   TEXT NOT NULL,   -- ISO str
+                UNIQUE(owner_email, otro_email)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_hilos_ocultos_owner
+            ON hilos_ocultos (owner_email, otro_email)
+        """)
+
 # ============================== Usuarios ==================================
 def agregar_usuario(nombre, email, password, rol="usuario", actor_user_id=None, ip=None):
     try:
@@ -192,6 +211,30 @@ def listar_usuarios():
             })
         return usuarios
 
+def buscar_usuarios(term: str, limit: int = 8):
+    """Autocompletar por nombre o email (case-insensitive)."""
+    like = f"%{term.strip()}%"
+    with _get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            """
+            SELECT id, nombre, email
+            FROM usuarios
+            WHERE activo = 1
+              AND (LOWER(nombre) LIKE LOWER(?) OR LOWER(email) LIKE LOWER(?))
+            ORDER BY 
+                CASE 
+                    WHEN LOWER(email) LIKE LOWER(?) THEN 0
+                    WHEN LOWER(nombre) LIKE LOWER(?) THEN 1
+                    ELSE 2
+                END,
+                nombre ASC
+            LIMIT ?
+            """,
+            (like, like, like, like, limit)
+        )
+        return [dict(r) for r in cur.fetchall()]
+
 def actualizar_password(email, nueva_password, actor_user_id=None, ip=None):
     with _get_conn() as conn:
         before = obtener_usuario_por_email(email)
@@ -221,20 +264,17 @@ def borrar_usuario(email, actor_user_id=None, ip=None, soft=True):
     para evitar 'database is locked' al abrir otra conexión (SQLAlchemy).
     """
     def _op():
-        # 1) Leer estado previo
         before = obtener_usuario_por_email(email)
         if not before:
             return False
         user_id = before[0]
 
         if soft:
-            # 2) Ejecutar actualización (y cerrar conexión)
             with _get_conn() as conn:
                 conn.execute(
                     "UPDATE usuarios SET activo = 0, rol = 'borrado' WHERE email = ?",
                     (email,)
                 )
-            # 3) Auditoría tras cerrar conexión
             after = obtener_usuario_por_email(email)
             registrar_auditoria(
                 actor_user_id, "SOFT_DELETE_USER", "usuarios", user_id,
@@ -243,10 +283,8 @@ def borrar_usuario(email, actor_user_id=None, ip=None, soft=True):
                 ip=ip
             )
         else:
-            # 2) Borrado duro (y cerrar conexión)
             with _get_conn() as conn:
                 conn.execute("DELETE FROM usuarios WHERE email = ?", (email,))
-            # 3) Auditoría tras cerrar conexión
             registrar_auditoria(
                 actor_user_id, "HARD_DELETE_USER", "usuarios", user_id,
                 before={"email": before[2], "rol": before[4], "activo": bool(before[5])},
@@ -425,6 +463,8 @@ def enviar_mensaje(de_email: str, para_email: str, texto: str, actor_user_id=Non
             (de_email, para_email, texto, fecha)
         )
         msg_id = cur.lastrowid
+    # Al enviar/recibir, restauramos el hilo si estaba oculto para cualquiera de los dos
+    restaurar_hilo(de_email, para_email, actor_user_id=actor_user_id, ip=ip, silent=True)
     # Auditoría (guardamos solo un preview del texto por tamaño)
     preview = (texto[:120] + "…") if len(texto) > 120 else texto
     registrar_auditoria(
@@ -435,7 +475,10 @@ def enviar_mensaje(de_email: str, para_email: str, texto: str, actor_user_id=Non
     return msg_id
 
 def obtener_hilos_para(email: str):
-    """Lista con quién conversé y última fecha del hilo, ordenado por reciente."""
+    """
+    Lista con quién conversé y última fecha del hilo, ordenado por reciente.
+    Excluye hilos ocultos por 'email', salvo que existan mensajes posteriores al ocultamiento.
+    """
     with _get_conn() as conn:
         cur = conn.execute("""
             SELECT otro, MAX(fecha) AS ultima_fecha
@@ -447,7 +490,27 @@ def obtener_hilos_para(email: str):
             GROUP BY otro
             ORDER BY ultima_fecha DESC
         """, (email, email))
-        return [{"con": row[0], "ultima_fecha": row[1]} for row in cur.fetchall()]
+        hilos = [{"con": row[0], "ultima_fecha": row[1]} for row in cur.fetchall()]
+
+        # Filtrado por hilos ocultos
+        resultado = []
+        for h in hilos:
+            hidden_at = es_hilo_oculto(email, h["con"])
+            if not hidden_at:
+                resultado.append(h)
+            else:
+                # Si hubo mensajes nuevos luego de ocultarlo, vuelve a aparecer
+                cur2 = conn.execute("""
+                    SELECT 1
+                    FROM mensajes
+                    WHERE ((de_email = ? AND para_email = ?) OR (de_email = ? AND para_email = ?))
+                      AND fecha > ?
+                    LIMIT 1
+                """, (email, h["con"], h["con"], email, hidden_at))
+                reaparece = cur2.fetchone() is not None
+                if reaparece:
+                    resultado.append(h)
+        return resultado
 
 def obtener_mensajes_entre(a: str, b: str, limit: int = 100):
     """Mensajes entre dos emails (ascendente por tiempo)."""
@@ -461,8 +524,7 @@ def obtener_mensajes_entre(a: str, b: str, limit: int = 100):
             LIMIT ?
         """, (a, b, b, a, limit))
         rows = cur.fetchall()
-    # devolver en orden cronológico (asc)
-    rows = list(reversed(rows))
+    rows = list(reversed(rows))  # devolver en orden cronológico (asc)
     return [
         {
             "id": r[0], "de": r[1], "para": r[2],
@@ -489,6 +551,45 @@ def contar_no_leidos(email: str) -> int:
         """, (email,))
         row = cur.fetchone()
         return row[0] if row else 0
+
+# ---------- Hilos ocultos (eliminar del sidebar sin perder historial) -----
+def ocultar_hilo(owner_email: str, otro_email: str, actor_user_id=None, ip=None):
+    """
+    Oculta un hilo para 'owner_email'. No borra mensajes.
+    Si llegan mensajes nuevos luego de ocultarlo, volverá a aparecer automáticamente.
+    """
+    hidden_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _get_conn() as conn:
+        conn.execute("""
+            INSERT INTO hilos_ocultos (owner_email, otro_email, hidden_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(owner_email, otro_email) DO UPDATE SET hidden_at=excluded.hidden_at
+        """, (owner_email, otro_email, hidden_at))
+    registrar_auditoria(
+        actor_user_id, "HIDE_THREAD", "hilos_ocultos", f"{owner_email}|{otro_email}",
+        after={"owner": owner_email, "otro": otro_email, "hidden_at": hidden_at}, ip=ip
+    )
+
+def restaurar_hilo(owner_email: str, otro_email: str, actor_user_id=None, ip=None, silent: bool=False):
+    """Quita el ocultamiento del hilo para 'owner_email' (vuelve a verse en el sidebar)."""
+    with _get_conn() as conn:
+        conn.execute("""
+            DELETE FROM hilos_ocultos WHERE owner_email = ? AND otro_email = ?
+        """, (owner_email, otro_email))
+    if not silent:
+        registrar_auditoria(
+            actor_user_id, "UNHIDE_THREAD", "hilos_ocultos", f"{owner_email}|{otro_email}",
+            before={"owner": owner_email, "otro": otro_email}, ip=ip
+        )
+
+def es_hilo_oculto(owner_email: str, otro_email: str):
+    """Devuelve la fecha de ocultamiento (str) si está oculto, o None si no lo está."""
+    with _get_conn() as conn:
+        cur = conn.execute("""
+            SELECT hidden_at FROM hilos_ocultos WHERE owner_email = ? AND otro_email = ?
+        """, (owner_email, otro_email))
+        row = cur.fetchone()
+        return row[0] if row else None
 
 # ============================ Consultar Auditoría ==========================
 def obtener_auditoria(limit=50):

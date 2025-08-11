@@ -22,6 +22,7 @@ from database import (
     # Usuarios
     obtener_usuario_por_email, agregar_usuario, listar_usuarios,
     actualizar_password, cambiar_estado_usuario, borrar_usuario,
+    buscar_usuarios,                      # 👈 autocompletar
     # Historial
     guardar_en_historial, obtener_historial, eliminar_del_historial,
     obtener_historial_completo,
@@ -32,7 +33,9 @@ from database import (
     obtener_auditoria,
     # Chat interno
     enviar_mensaje, obtener_hilos_para, obtener_mensajes_entre,
-    marcar_mensajes_leidos, contar_no_leidos
+    marcar_mensajes_leidos, contar_no_leidos,
+    # Hilos ocultos
+    ocultar_hilo, restaurar_hilo
 )
 
 # ORM (audit_logs)
@@ -43,7 +46,7 @@ app = FastAPI(middleware=[
     Middleware(SessionMiddleware, secret_key="clave_secreta_super_segura")
 ])
 
-# Inicializa BD SQLite (usuarios, historial, tickets, mensajes)
+# Inicializa BD SQLite (usuarios, historial, tickets, mensajes, hilos_ocultos)
 inicializar_bd()
 # Inicializa ORM (audit_logs) según DATABASE_URL
 inicializar_bd_orm()
@@ -373,6 +376,21 @@ async def chat_view(request: Request):
     return templates.TemplateResponse("chat.html", {"request": request})
 
 # ================== Chat interno (API) ==================
+@app.get("/api/usuarios")
+async def api_buscar_usuarios(request: Request, term: str = "", limit: int = 8):
+    """Autocompletar de usuarios por nombre/email."""
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+    term = (term or "").strip()
+    if not term:
+        return {"items": []}
+    try:
+        items = buscar_usuarios(term, limit=limit)
+        return {"items": [{"id": u["id"], "nombre": u.get("nombre") or "", "email": u["email"]} for u in items]}
+    except Exception as e:
+        print("❌ Error api_buscar_usuarios:", repr(e))
+        return JSONResponse({"error": "No se pudo completar la búsqueda"}, status_code=500)
+
 @app.post("/chat/enviar")
 async def chat_enviar(request: Request):
     if not request.session.get("usuario"):
@@ -401,7 +419,7 @@ async def chat_hilos(request: Request):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
     yo = request.session.get("usuario")
     try:
-        hilos = obtener_hilos_para(yo)
+        hilos = obtener_hilos_para(yo)  # ya filtra ocultos y reaparece si hay mensajes nuevos
         return JSONResponse({"hilos": hilos})
     except Exception as e:
         print("❌ Error chat_hilos:", repr(e))
@@ -448,6 +466,64 @@ async def chat_no_leidos(request: Request):
     except Exception as e:
         print("❌ Error chat_no_leidos:", repr(e))
         return JSONResponse({"error": "No se pudo obtener el conteo"}, status_code=500)
+
+# ---- NUEVO: ocultar / restaurar / abrir hilos ----------------------------
+@app.post("/chat/ocultar")
+async def chat_ocultar(request: Request):
+    """‘Eliminar chat’: oculta el hilo para el usuario actual (no borra mensajes)."""
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+    data = await request.json()
+    con = (data or {}).get("con")
+    if not con:
+        return JSONResponse({"error": "Falta 'con' (email del contacto)"}, status_code=400)
+    yo = request.session.get("usuario")
+    actor_user_id, ip = _actor_info(request)
+    try:
+        ocultar_hilo(owner_email=yo, otro_email=con, actor_user_id=actor_user_id, ip=ip)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        print("❌ Error chat_ocultar:", repr(e))
+        return JSONResponse({"error": "No se pudo ocultar el hilo"}, status_code=500)
+
+@app.post("/chat/restaurar")
+async def chat_restaurar(request: Request):
+    """Revierte el ocultamiento del hilo (vuelve a aparecer en el sidebar)."""
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+    data = await request.json()
+    con = (data or {}).get("con")
+    if not con:
+        return JSONResponse({"error": "Falta 'con' (email del contacto)"}, status_code=400)
+    yo = request.session.get("usuario")
+    actor_user_id, ip = _actor_info(request)
+    try:
+        restaurar_hilo(owner_email=yo, otro_email=con, actor_user_id=actor_user_id, ip=ip)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        print("❌ Error chat_restaurar:", repr(e))
+        return JSONResponse({"error": "No se pudo restaurar el hilo"}, status_code=500)
+
+@app.post("/chat/abrir")
+async def chat_abrir(request: Request):
+    """
+    Atajo para el buscador ‘@’: restaura (si estaba oculto) y no devuelve mensajes.
+    Úsalo antes de llamar a /chat/mensajes.
+    """
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+    data = await request.json()
+    con = (data or {}).get("con")
+    if not con:
+        return JSONResponse({"error": "Falta 'con' (email del contacto)"}, status_code=400)
+    yo = request.session.get("usuario")
+    actor_user_id, ip = _actor_info(request)
+    try:
+        restaurar_hilo(owner_email=yo, otro_email=con, actor_user_id=actor_user_id, ip=ip)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        print("❌ Error chat_abrir:", repr(e))
+        return JSONResponse({"error": "No se pudo abrir el hilo"}, status_code=500)
 
 # ================== Auditoría (vista) ==================
 @app.get("/auditoria", response_class=HTMLResponse)
