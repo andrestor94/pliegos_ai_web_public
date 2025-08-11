@@ -1,17 +1,58 @@
+import os
 import sqlite3
 import re
 import time
 import json
-from datetime import datetime
-from db_orm import SessionLocal, AuditLog, Usuario  # para auditoría y join con email/nombre
+from datetime import datetime, timezone
+
+# zoneinfo para manejar zona horaria local (Python 3.9+)
+try:
+    from zoneinfo import ZoneInfo
+except Exception:
+    ZoneInfo = None  # fallback simple si no está disponible
+
+from db_orm import SessionLocal, AuditLog, Usuario  # auditoría y join con email/nombre
 
 DB_PATH = "usuarios.db"
 
-# ---------------------- Conexión robusta SQLite ----------------------
+# ====================== Configuración de zona horaria ======================
+# Puedes cambiarlo por la que prefieras o definir APP_TIMEZONE en Render.
+APP_TIMEZONE = os.getenv("APP_TIMEZONE", "America/Argentina/Buenos_Aires")
+
+ACCION_ES = {
+    "CREATE_USER": "Crear usuario",
+    "SOFT_DELETE_USER": "Eliminar usuario (suave)",
+    "HARD_DELETE_USER": "Eliminar usuario (definitivo)",
+    "TOGGLE_USER_ACTIVE": "Cambiar estado de usuario",
+    "UPDATE_PASSWORD": "Actualizar contraseña",
+    "CREATE_TICKET": "Crear ticket",
+    "UPDATE_TICKET_STATE": "Cambiar estado de ticket",
+    "DELETE_TICKET": "Eliminar ticket",
+}
+
+def _accion_es(codigo: str) -> str:
+    return ACCION_ES.get(codigo, codigo)
+
+def _fmt_fecha(dt_utc):
+    """AuditLog.at se guarda en UTC. Mostramos en zona local (APP_TIMEZONE)."""
+    if dt_utc is None:
+        return "-"
+    if dt_utc.tzinfo is None:
+        dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+    if ZoneInfo:
+        try:
+            local = dt_utc.astimezone(ZoneInfo(APP_TIMEZONE))
+        except Exception:
+            local = dt_utc  # fallback: deja UTC si falla zoneinfo
+    else:
+        # fallback simple: aplica -03 (no recomendado, pero evita romper)
+        from datetime import timedelta
+        local = dt_utc.astimezone(timezone(timedelta(hours=-3)))
+    return local.strftime("%d/%m/%Y %H:%M:%S")
+
+# ======================= Conexión robusta SQLite ==========================
 def _get_conn():
-    """
-    Conexión SQLite con WAL y busy_timeout para reducir 'database is locked'.
-    """
+    """Conexión SQLite con WAL y busy_timeout para reducir 'database is locked'."""
     conn = sqlite3.connect(DB_PATH, timeout=10)
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
@@ -21,9 +62,7 @@ def _get_conn():
     return conn
 
 def _with_retry(callable_fn, retries=5, base_delay=0.15):
-    """
-    Reintenta operaciones si SQLite está bloqueada.
-    """
+    """Reintenta operaciones si SQLite está bloqueada."""
     for i in range(retries):
         try:
             return callable_fn()
@@ -33,11 +72,9 @@ def _with_retry(callable_fn, retries=5, base_delay=0.15):
                 continue
             raise
 
-# --------------------------- Auditoría ORM ---------------------------
+# ============================ Auditoría ORM ===============================
 def registrar_auditoria(actor_user_id, action, entity, entity_id, before=None, after=None, ip=None):
-    """
-    Inserta en audit_logs (SQLAlchemy). Funciona con SQLite local o Postgres (Render).
-    """
+    """Inserta en audit_logs (SQLAlchemy). Funciona con SQLite local o Postgres (Render)."""
     with SessionLocal() as session:
         log = AuditLog(
             actor_user_id=actor_user_id,
@@ -51,7 +88,7 @@ def registrar_auditoria(actor_user_id, action, entity, entity_id, before=None, a
         session.add(log)
         session.commit()
 
-# ---------------------- Inicialización de Tablas ----------------------
+# ===================== Inicialización de Tablas SQLite ====================
 def inicializar_bd():
     crear_tabla_usuarios()
     crear_tabla_historial()
@@ -97,7 +134,7 @@ def crear_tabla_tickets():
             )
         ''')
 
-# --------------------------- Gestión Usuarios ---------------------------
+# ============================== Usuarios ==================================
 def agregar_usuario(nombre, email, password, rol="usuario", actor_user_id=None, ip=None):
     try:
         with _get_conn() as conn:
@@ -161,20 +198,20 @@ def borrar_usuario(email, actor_user_id=None, ip=None, soft=True):
     para evitar 'database is locked' al abrir otra conexión (SQLAlchemy).
     """
     def _op():
-        # 1) Leer estado previo (abre/cierra su propia conexión)
+        # 1) Leer estado previo
         before = obtener_usuario_por_email(email)
         if not before:
             return False
         user_id = before[0]
 
         if soft:
-            # 2) Ejecutar actualización y CERRAR conexión
+            # 2) Ejecutar actualización (y cerrar conexión)
             with _get_conn() as conn:
                 conn.execute(
                     "UPDATE usuarios SET activo = 0, rol = 'borrado' WHERE email = ?",
                     (email,)
                 )
-            # 3) Obtener estado luego de cerrar la conexión y registrar auditoría
+            # 3) Auditoría tras cerrar conexión
             after = obtener_usuario_por_email(email)
             registrar_auditoria(
                 actor_user_id, "SOFT_DELETE_USER", "usuarios", user_id,
@@ -183,10 +220,10 @@ def borrar_usuario(email, actor_user_id=None, ip=None, soft=True):
                 ip=ip
             )
         else:
-            # 2) Ejecutar borrado duro y CERRAR conexión
+            # 2) Borrado duro (y cerrar conexión)
             with _get_conn() as conn:
                 conn.execute("DELETE FROM usuarios WHERE email = ?", (email,))
-            # 3) Registrar auditoría después de cerrar conexión
+            # 3) Auditoría tras cerrar conexión
             registrar_auditoria(
                 actor_user_id, "HARD_DELETE_USER", "usuarios", user_id,
                 before={"email": before[2], "rol": before[4], "activo": bool(before[5])},
@@ -196,7 +233,7 @@ def borrar_usuario(email, actor_user_id=None, ip=None, soft=True):
 
     return _with_retry(_op)
 
-# --------------------------- Historial ---------------------------
+# ============================== Historial =================================
 def guardar_en_historial(timestamp, usuario, nombre_archivo, ruta_pdf, resumen_texto=""):
     try:
         match = re.search(r"(\d{14})", timestamp)
@@ -276,7 +313,7 @@ def limpiar_historial_invalido():
             conn.execute("DELETE FROM historial WHERE id = ?", (id_,))
         print(f"🧹 Registros eliminados: {len(ids_invalidos)}")
 
-# --------------------------- Tickets ---------------------------
+# =============================== Tickets ==================================
 def crear_ticket(usuario, titulo, descripcion, tipo, actor_user_id=None, ip=None):
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with _get_conn() as conn:
@@ -355,10 +392,11 @@ def eliminar_ticket(ticket_id, actor_user_id=None, ip=None):
             before={"usuario": before[0], "titulo": before[1]}, ip=ip
         )
 
-# --------------------------- Consultar Auditoría ---------------------------
+# ============================ Consultar Auditoría ==========================
 def obtener_auditoria(limit=50):
     """
     Devuelve las últimas acciones de audit_logs, con email/nombre si existe el usuario.
+    Las fechas se muestran en zona local (APP_TIMEZONE) y las acciones en español.
     """
     with SessionLocal() as session:
         logs = (
@@ -371,10 +409,10 @@ def obtener_auditoria(limit=50):
         resultado = []
         for log, user in logs:
             resultado.append({
-                "fecha": log.at.strftime("%d/%m/%Y %H:%M:%S"),
+                "fecha": _fmt_fecha(log.at),  # hora local
                 "usuario": user.email if user else (f"ID {log.actor_user_id}" if log.actor_user_id else "-"),
                 "nombre": user.nombre if user else None,
-                "accion": log.action,
+                "accion": _accion_es(log.action),  # español
                 "entidad": log.entity,
                 "entidad_id": log.entity_id,
                 "before": log.before_json,
