@@ -156,31 +156,42 @@ def cambiar_estado_usuario(email, activo, actor_user_id=None, ip=None):
 
 def borrar_usuario(email, actor_user_id=None, ip=None, soft=True):
     """
-    Soft delete por defecto (activo=0, rol='borrado').
-    Hard delete si soft=False.
-    Usa conexión con timeout y reintentos para evitar 'database is locked'.
+    Soft delete (activo=0, rol='borrado') o hard delete si soft=False.
+    IMPORTANTE: cerramos la conexión SQLite ANTES de registrar auditoría
+    para evitar 'database is locked' al abrir otra conexión (SQLAlchemy).
     """
     def _op():
-        with _get_conn() as conn:
-            before = obtener_usuario_por_email(email)
-            if not before:
-                return False
-            user_id = before[0]
-            if soft:
-                conn.execute("UPDATE usuarios SET activo = 0, rol = 'borrado' WHERE email = ?", (email,))
-                after = obtener_usuario_por_email(email)
-                registrar_auditoria(
-                    actor_user_id, "SOFT_DELETE_USER", "usuarios", user_id,
-                    before={"email": before[2], "rol": before[4], "activo": bool(before[5])},
-                    after={"email": after[2], "rol": after[4], "activo": bool(after[5])},
-                    ip=ip
+        # 1) Leer estado previo (abre/cierra su propia conexión)
+        before = obtener_usuario_por_email(email)
+        if not before:
+            return False
+        user_id = before[0]
+
+        if soft:
+            # 2) Ejecutar actualización y CERRAR conexión
+            with _get_conn() as conn:
+                conn.execute(
+                    "UPDATE usuarios SET activo = 0, rol = 'borrado' WHERE email = ?",
+                    (email,)
                 )
-            else:
+            # 3) Obtener estado luego de cerrar la conexión y registrar auditoría
+            after = obtener_usuario_por_email(email)
+            registrar_auditoria(
+                actor_user_id, "SOFT_DELETE_USER", "usuarios", user_id,
+                before={"email": before[2], "rol": before[4], "activo": bool(before[5])},
+                after={"email": after[2], "rol": after[4], "activo": bool(after[5])} if after else None,
+                ip=ip
+            )
+        else:
+            # 2) Ejecutar borrado duro y CERRAR conexión
+            with _get_conn() as conn:
                 conn.execute("DELETE FROM usuarios WHERE email = ?", (email,))
-                registrar_auditoria(
-                    actor_user_id, "HARD_DELETE_USER", "usuarios", user_id,
-                    before={"email": before[2], "rol": before[4], "activo": bool(before[5])}, ip=ip
-                )
+            # 3) Registrar auditoría después de cerrar conexión
+            registrar_auditoria(
+                actor_user_id, "HARD_DELETE_USER", "usuarios", user_id,
+                before={"email": before[2], "rol": before[4], "activo": bool(before[5])},
+                ip=ip
+            )
         return True
 
     return _with_retry(_op)
