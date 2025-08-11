@@ -28,6 +28,7 @@ ACCION_ES = {
     "CREATE_TICKET": "Crear ticket",
     "UPDATE_TICKET_STATE": "Cambiar estado de ticket",
     "DELETE_TICKET": "Eliminar ticket",
+    "SEND_MESSAGE": "Enviar mensaje",  # 👈 chat interno
 }
 
 def _accion_es(codigo: str) -> str:
@@ -93,6 +94,7 @@ def inicializar_bd():
     crear_tabla_usuarios()
     crear_tabla_historial()
     crear_tabla_tickets()
+    crear_tabla_mensajes()  # 👈 chat interno
 
 def crear_tabla_usuarios():
     with _get_conn() as conn:
@@ -133,6 +135,19 @@ def crear_tabla_tickets():
                 fecha TEXT NOT NULL
             )
         ''')
+
+def crear_tabla_mensajes():
+    with _get_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS mensajes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                de_email   TEXT NOT NULL,
+                para_email TEXT NOT NULL,
+                texto      TEXT NOT NULL,
+                leido      INTEGER NOT NULL DEFAULT 0,
+                fecha      TEXT NOT NULL
+            )
+        """)
 
 # ============================== Usuarios ==================================
 def agregar_usuario(nombre, email, password, rol="usuario", actor_user_id=None, ip=None):
@@ -391,6 +406,61 @@ def eliminar_ticket(ticket_id, actor_user_id=None, ip=None):
             actor_user_id, "DELETE_TICKET", "tickets", ticket_id,
             before={"usuario": before[0], "titulo": before[1]}, ip=ip
         )
+
+# ============================== Chat interno ===============================
+def enviar_mensaje(de_email: str, para_email: str, texto: str, actor_user_id=None, ip=None) -> int:
+    """Guarda un mensaje 1 a 1 y registra auditoría."""
+    fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO mensajes (de_email, para_email, texto, fecha) VALUES (?, ?, ?, ?)",
+            (de_email, para_email, texto, fecha)
+        )
+        msg_id = cur.lastrowid
+    # Auditoría (guardamos solo un preview del texto por tamaño)
+    preview = (texto[:120] + "…") if len(texto) > 120 else texto
+    registrar_auditoria(
+        actor_user_id, "SEND_MESSAGE", "mensajes", msg_id,
+        after={"de": de_email, "para": para_email, "texto": preview},
+        ip=ip
+    )
+    return msg_id
+
+def obtener_hilos_para(email: str):
+    """Lista con quién conversé y última fecha del hilo, ordenado por reciente."""
+    with _get_conn() as conn:
+        cur = conn.execute("""
+            SELECT otro, MAX(fecha) AS ultima_fecha
+            FROM (
+                SELECT para_email AS otro, fecha FROM mensajes WHERE de_email = ?
+                UNION ALL
+                SELECT de_email  AS otro, fecha FROM mensajes WHERE para_email = ?
+            ) sub
+            GROUP BY otro
+            ORDER BY ultima_fecha DESC
+        """, (email, email))
+        return [{"con": row[0], "ultima_fecha": row[1]} for row in cur.fetchall()]
+
+def obtener_mensajes_entre(a: str, b: str, limit: int = 100):
+    """Mensajes entre dos emails (ascendente por tiempo)."""
+    with _get_conn() as conn:
+        cur = conn.execute("""
+            SELECT id, de_email, para_email, texto, leido, fecha
+            FROM mensajes
+            WHERE (de_email = ? AND para_email = ?)
+               OR (de_email = ? AND para_email = ?)
+            ORDER BY id DESC
+            LIMIT ?
+        """, (a, b, b, a, limit))
+        rows = cur.fetchall()
+    # devolver en orden cronológico (asc)
+    rows = list(reversed(rows))
+    return [
+        {
+            "id": r[0], "de": r[1], "para": r[2],
+            "texto": r[3], "leido": bool(r[4]), "fecha": r[5]
+        } for r in rows
+    ]
 
 # ============================ Consultar Auditoría ==========================
 def obtener_auditoria(limit=50):
