@@ -17,39 +17,44 @@ from utils import (
 )
 
 from database import (
-    crear_tabla_usuarios, crear_tabla_historial, crear_tabla_tickets,
-    obtener_usuario_por_email, agregar_usuario,
+    # Inicialización
+    inicializar_bd,
+    # Usuarios
+    obtener_usuario_por_email, agregar_usuario, listar_usuarios,
+    actualizar_password, cambiar_estado_usuario, borrar_usuario,
+    # Historial
     guardar_en_historial, obtener_historial, eliminar_del_historial,
-    listar_usuarios, actualizar_password, cambiar_estado_usuario,
-    crear_ticket, obtener_todos_los_tickets, obtener_tickets_por_usuario,
+    obtener_historial_completo,
+    # Tickets
+    crear_tabla_tickets, crear_ticket, obtener_todos_los_tickets, obtener_tickets_por_usuario,
     actualizar_estado_ticket, eliminar_ticket,
-    obtener_historial_completo, obtener_auditoria, borrar_usuario,
-    # 👇 Chat interno
-    enviar_mensaje, obtener_hilos_para, obtener_mensajes_entre
+    # Auditoría
+    obtener_auditoria,
+    # Chat interno
+    enviar_mensaje, obtener_hilos_para, obtener_mensajes_entre,
+    marcar_mensajes_leidos, contar_no_leidos
 )
 
-# 👇 crear/verificar tablas ORM (audit_logs) al iniciar
+# ORM (audit_logs)
 from db_orm import inicializar_bd_orm
 
-# Inicialización de BD SQLite (tablas existentes)
-crear_tabla_usuarios()
-crear_tabla_historial()
-crear_tabla_tickets()
-
+# ================== App & Middlewares ==================
 app = FastAPI(middleware=[
     Middleware(SessionMiddleware, secret_key="clave_secreta_super_segura")
 ])
 
-# ✅ Verifica/crea tablas ORM (incluye audit_logs) en el motor configurado por DATABASE_URL
+# Inicializa BD SQLite (usuarios, historial, tickets, mensajes)
+inicializar_bd()
+# Inicializa ORM (audit_logs) según DATABASE_URL
 inicializar_bd_orm()
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="generated_pdfs")
 
 templates = Jinja2Templates(directory="templates")
-templates.env.globals['os'] = os  # Acceso a 'os' desde las plantillas
+templates.env.globals['os'] = os
 
-# ---- Helpers actor/IP ----
+# ================== Helpers ==================
 def _actor_info(request: Request):
     email = request.session.get("usuario")
     row = obtener_usuario_por_email(email) if email else None
@@ -57,18 +62,7 @@ def _actor_info(request: Request):
     ip = request.client.host if request.client else None
     return actor_user_id, ip
 
-# ------------ FUNCIÓN DE ADJUNTOS PARA INCIDENCIAS ----------------
-def obtener_adjuntos_para_ticket(usuario, fecha):
-    carpeta_adjuntos = os.path.join("static", "adjuntos_incidencias")
-    prefix = f"{usuario}_{fecha.replace(':', '').replace('-', '').replace(' ', '')[:14]}"
-    adjuntos = []
-    if os.path.exists(carpeta_adjuntos):
-        for file in os.listdir(carpeta_adjuntos):
-            if file.startswith(prefix):
-                adjuntos.append(file)
-    return adjuntos
-
-# Página principal
+# ================== Rutas base ==================
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     if not request.session.get("usuario"):
@@ -78,7 +72,6 @@ async def home(request: Request):
         "rol": request.session.get("rol", "usuario")
     })
 
-# Login
 @app.get("/login", response_class=HTMLResponse)
 async def login_form(request: Request):
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
@@ -92,13 +85,12 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
         return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse("login.html", {"request": request, "error": "Credenciales incorrectas"})
 
-# Logout
 @app.post("/logout")
 async def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
 
-# Análisis de pliegos
+# ================== Análisis ==================
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: list[UploadFile] = File(...)):
     usuario = request.session.get("usuario", "Anónimo")
@@ -109,13 +101,12 @@ async def analizar_pliego(request: Request, archivos: list[UploadFile] = File(..
     resumen = analizar_con_openai(texto_total)
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     nombre_archivo = f"resumen_{timestamp}.pdf"
-    ruta_pdf = generar_pdf_con_plantilla(resumen, nombre_archivo)
+    generar_pdf_con_plantilla(resumen, nombre_archivo)
 
     guardar_en_historial(timestamp, usuario, nombre_archivo, nombre_archivo, resumen)
-
     return {"resumen": resumen, "pdf": nombre_archivo}
 
-# Historial
+# ================== Historial ==================
 @app.get("/historial")
 async def ver_historial():
     return JSONResponse(obtener_historial())
@@ -135,7 +126,7 @@ async def eliminar_archivo(timestamp: str):
         os.remove(ruta)
     return {"mensaje": "Eliminado correctamente"}
 
-# Usuario actual
+# ================== Usuario actual ==================
 @app.get("/usuario-actual")
 async def usuario_actual(request: Request):
     return {
@@ -143,7 +134,7 @@ async def usuario_actual(request: Request):
         "rol": request.session.get("rol", "usuario")
     }
 
-# ------------------- GESTIÓN DE INCIDENCIAS -------------------
+# ================== Incidencias ==================
 @app.get("/incidencias", response_class=HTMLResponse)
 async def vista_incidencias(request: Request):
     if not request.session.get("usuario"):
@@ -156,7 +147,14 @@ async def vista_incidencias(request: Request):
         if len(t) < 7:
             continue
         fecha_legible = datetime.strptime(t[6], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M")
-        adjuntos = obtener_adjuntos_para_ticket(t[1], t[6])
+        # Adjuntos
+        carpeta_adjuntos = os.path.join("static", "adjuntos_incidencias")
+        prefix = f"{t[1]}_{t[6].replace(':','').replace('-','').replace(' ','')[:14]}"
+        adjuntos = []
+        if os.path.exists(carpeta_adjuntos):
+            for file in os.listdir(carpeta_adjuntos):
+                if file.startswith(prefix):
+                    adjuntos.append(file)
         tickets.append({
             "id": t[0],
             "usuario": t[1],
@@ -214,7 +212,7 @@ async def eliminar_incidencia_form(request: Request, id: int):
     eliminar_ticket(id, actor_user_id=actor_user_id, ip=ip)
     return RedirectResponse("/incidencias", status_code=303)
 
-# ------------------- CAMBIO DE CONTRASEÑA POR EL USUARIO -------------------
+# ================== Cambio de contraseña ==================
 @app.get("/cambiar-password", response_class=HTMLResponse)
 async def cambiar_password_form(request: Request):
     if not request.session.get("usuario"):
@@ -254,36 +252,17 @@ async def cambiar_password_submit(request: Request,
         "error": ""
     })
 
-# ------------------- ADMIN -------------------
+# ================== Admin ==================
 @app.get("/admin", response_class=HTMLResponse)
 async def vista_admin(request: Request):
     if request.session.get("rol") != "admin":
         return RedirectResponse("/")
     return templates.TemplateResponse("admin.html", {"request": request})
 
-# 📋 Auditoría
-@app.get("/auditoria", response_class=HTMLResponse)
-async def ver_auditoria(request: Request):
-    if request.session.get("rol") != "admin":
-        return RedirectResponse("/")
-    logs = obtener_auditoria()
-    return templates.TemplateResponse("auditoria.html", {
-        "request": request,
-        "logs": logs
-    })
-
-# 👉 Página del chat (HTML)
-@app.get("/chat", response_class=HTMLResponse)
-async def chat_page(request: Request):
-    if not request.session.get("usuario"):
-        return RedirectResponse("/login")
-    return templates.TemplateResponse("chat.html", {"request": request})
-
 @app.get("/admin/usuarios")
 async def listar_usuarios_api():
     return JSONResponse(listar_usuarios())
 
-# ---- ENDPOINTS ADMIN (JSON body) ----
 @app.post("/admin/crear-usuario")
 async def crear_usuario_api(request: Request):
     try:
@@ -344,7 +323,7 @@ async def eliminar_usuario(request: Request):
         if not email:
             return JSONResponse({"error": "Falta email"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
-        ok = borrar_usuario(email, actor_user_id=actor_user_id, ip=ip, soft=False)  # 🔥 borrado duro
+        ok = borrar_usuario(email, actor_user_id=actor_user_id, ip=ip, soft=False)  # borrado duro
         if not ok:
             return JSONResponse({"error": "Usuario no encontrado"}, status_code=404)
         return JSONResponse({"mensaje": "Usuario eliminado definitivamente."})
@@ -352,7 +331,7 @@ async def eliminar_usuario(request: Request):
         print("❌ Error eliminar-usuario:", repr(e))
         return JSONResponse({"error": f"Error al eliminar: {e}"}, status_code=400)
 
-# ------------------- CHAT FLOTANTE -------------------
+# ================== Chat OpenAI flotante ==================
 @app.post("/chat-openai")
 async def chat_openai(request: Request):
     data = await request.json()
@@ -360,7 +339,6 @@ async def chat_openai(request: Request):
     usuario_actual = request.session.get("usuario", "Desconocido")
 
     historial = obtener_historial_completo()
-
     ultimo_analisis_usuario = next(
         (h for h in historial if h["usuario"] == usuario_actual and h["resumen"]),
         None
@@ -385,11 +363,16 @@ async def chat_openai(request: Request):
     contexto = f"{ultimo_resumen}\n\n📚 Historial completo:\n{contexto_general}"
 
     respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
-
     return JSONResponse({"respuesta": respuesta})
 
-# ------------------- CHAT INTERNO (API) -------------------
+# ================== Chat interno (UI) ==================
+@app.get("/chat", response_class=HTMLResponse)
+async def chat_view(request: Request):
+    if not request.session.get("usuario"):
+        return RedirectResponse("/login")
+    return templates.TemplateResponse("chat.html", {"request": request})
 
+# ================== Chat interno (API) ==================
 @app.post("/chat/enviar")
 async def chat_enviar(request: Request):
     if not request.session.get("usuario"):
@@ -398,7 +381,6 @@ async def chat_enviar(request: Request):
     data = await request.json()
     para = data.get("para")
     texto = data.get("texto", "").strip()
-
     if not para or not texto:
         return JSONResponse({"error": "Faltan campos: para, texto"}, status_code=400)
 
@@ -413,12 +395,10 @@ async def chat_enviar(request: Request):
         print("❌ Error chat_enviar:", repr(e))
         return JSONResponse({"error": "No se pudo enviar el mensaje"}, status_code=500)
 
-
 @app.get("/chat/hilos")
 async def chat_hilos(request: Request):
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
-
     yo = request.session.get("usuario")
     try:
         hilos = obtener_hilos_para(yo)
@@ -427,19 +407,55 @@ async def chat_hilos(request: Request):
         print("❌ Error chat_hilos:", repr(e))
         return JSONResponse({"error": "No se pudieron obtener los hilos"}, status_code=500)
 
-
 @app.get("/chat/mensajes")
 async def chat_mensajes(request: Request, con: str, limit: int = 100):
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
-
     yo = request.session.get("usuario")
     if not con:
         return JSONResponse({"error": "Falta parámetro 'con' (email del contacto)"}, status_code=400)
-
     try:
         mensajes = obtener_mensajes_entre(yo, con, limit=limit)
         return JSONResponse({"entre": [yo, con], "mensajes": mensajes})
     except Exception as e:
         print("❌ Error chat_mensajes:", repr(e))
         return JSONResponse({"error": "No se pudieron obtener los mensajes"}, status_code=500)
+
+@app.post("/chat/marcar-leidos")
+async def chat_marcar_leidos(request: Request):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+    data = await request.json()
+    de = data.get("de")
+    yo = request.session.get("usuario")
+    if not de:
+        return JSONResponse({"error": "Falta 'de' (email remitente)"}, status_code=400)
+    try:
+        marcar_mensajes_leidos(de_email=de, para_email=yo)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        print("❌ Error chat_marcar_leidos:", repr(e))
+        return JSONResponse({"error": "No se pudo marcar como leídos"}, status_code=500)
+
+@app.get("/chat/no-leidos")
+async def chat_no_leidos(request: Request):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+    yo = request.session.get("usuario")
+    try:
+        total = contar_no_leidos(yo)
+        return JSONResponse({"no_leidos": total})
+    except Exception as e:
+        print("❌ Error chat_no_leidos:", repr(e))
+        return JSONResponse({"error": "No se pudo obtener el conteo"}, status_code=500)
+
+# ================== Auditoría (vista) ==================
+@app.get("/auditoria", response_class=HTMLResponse)
+async def ver_auditoria(request: Request):
+    if request.session.get("rol") != "admin":
+        return RedirectResponse("/")
+    logs = obtener_auditoria()
+    return templates.TemplateResponse("auditoria.html", {
+        "request": request,
+        "logs": logs
+    })

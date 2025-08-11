@@ -46,7 +46,6 @@ def _fmt_fecha(dt_utc):
         except Exception:
             local = dt_utc  # fallback: deja UTC si falla zoneinfo
     else:
-        # fallback simple: aplica -03 (no recomendado, pero evita romper)
         from datetime import timedelta
         local = dt_utc.astimezone(timezone(timedelta(hours=-3)))
     return local.strftime("%d/%m/%Y %H:%M:%S")
@@ -147,6 +146,15 @@ def crear_tabla_mensajes():
                 leido      INTEGER NOT NULL DEFAULT 0,
                 fecha      TEXT NOT NULL
             )
+        """)
+        # Índices para performance en listados y filtros
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_mensajes_partes
+            ON mensajes (de_email, para_email, fecha)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_mensajes_fecha
+            ON mensajes (fecha)
         """)
 
 # ============================== Usuarios ==================================
@@ -461,6 +469,26 @@ def obtener_mensajes_entre(a: str, b: str, limit: int = 100):
             "texto": r[3], "leido": bool(r[4]), "fecha": r[5]
         } for r in rows
     ]
+
+def marcar_mensajes_leidos(de_email: str, para_email: str):
+    """Marca como leídos todos los mensajes entrantes de 'de_email' hacia 'para_email'."""
+    with _get_conn() as conn:
+        conn.execute("""
+            UPDATE mensajes
+               SET leido = 1
+             WHERE de_email = ? AND para_email = ? AND leido = 0
+        """, (de_email, para_email))
+
+def contar_no_leidos(email: str) -> int:
+    """Cuenta todos los mensajes no leídos para un usuario."""
+    with _get_conn() as conn:
+        cur = conn.execute("""
+            SELECT COUNT(*) 
+              FROM mensajes 
+             WHERE para_email = ? AND leido = 0
+        """, (email,))
+        row = cur.fetchone()
+        return row[0] if row else 0
 
 # ============================ Consultar Auditoría ==========================
 def obtener_auditoria(limit=50):
