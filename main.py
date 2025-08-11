@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import uuid
 from typing import List, Optional
 from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
@@ -666,3 +667,185 @@ async def ver_auditoria(request: Request):
         "request": request,
         "logs": logs
     })
+
+# =====================================================================
+# ========================== CALENDARIO ===============================
+# =====================================================================
+
+CAL_DB = "calendar.sqlite3"
+
+def cal_conn():
+    conn = sqlite3.connect(CAL_DB)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_calendar_db():
+    with cal_conn() as c:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS eventos(
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT,
+                start TEXT NOT NULL,
+                end TEXT,
+                all_day INTEGER NOT NULL DEFAULT 0,
+                color TEXT,
+                created_by TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS notificaciones(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user TEXT NOT NULL,
+                titulo TEXT NOT NULL,
+                cuerpo TEXT,
+                created_at TEXT NOT NULL,
+                leida INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+init_calendar_db()
+
+def _now_iso():
+    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def _event_row_to_dict(r: sqlite3.Row):
+    return {
+        "id": r["id"],
+        "title": r["title"],
+        "start": r["start"],
+        "end": r["end"],
+        "allDay": bool(r["all_day"]),
+        "description": r["description"] or "",
+        "color": r["color"] or "#0ea5e9",
+    }
+
+def _notify(user: str, titulo: str, cuerpo: str = ""):
+    with cal_conn() as c:
+        c.execute(
+            "INSERT INTO notificaciones(user, titulo, cuerpo, created_at, leida) VALUES(?,?,?,?,0)",
+            (user or "Desconocido", titulo, cuerpo, _now_iso())
+        )
+
+@app.get("/calendario", response_class=HTMLResponse)
+async def calendario_view(request: Request):
+    if not request.session.get("usuario"):
+        return RedirectResponse("/login")
+    return templates.TemplateResponse("calendario.html", {"request": request})
+
+@app.get("/calendario/eventos")
+async def cal_list():
+    with cal_conn() as c:
+        cur = c.execute("SELECT * FROM eventos ORDER BY start ASC")
+        rows = [ _event_row_to_dict(r) for r in cur.fetchall() ]
+    return rows
+
+@app.post("/calendario/eventos")
+async def cal_create(request: Request):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error":"No autenticado"}, status_code=401)
+    data = await request.json()
+    title = (data.get("title") or "").strip()
+    start = data.get("start")
+    end   = data.get("end")
+    all_day = 1 if data.get("allDay") else 0
+    desc  = (data.get("description") or "").strip()
+    color = (data.get("color") or "#0ea5e9").strip()
+    if not title or not start:
+        return JSONResponse({"error":"Faltan campos: title, start"}, status_code=400)
+
+    evt_id = uuid.uuid4().hex
+    now = _now_iso()
+    created_by = request.session.get("usuario","Desconocido")
+    with cal_conn() as c:
+        c.execute("""
+            INSERT INTO eventos(id,title,description,start,end,all_day,color,created_by,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?)
+        """, (evt_id,title,desc,start,end,all_day,color,created_by,now,now))
+    _notify(created_by, "Evento creado", f"{title} • {start}{(' → '+end) if end else ''}")
+    return {
+        "id": evt_id, "title": title, "description": desc, "start": start, "end": end,
+        "allDay": bool(all_day), "color": color
+    }
+
+@app.patch("/calendario/eventos/{evt_id}")
+async def cal_update(evt_id: str, request: Request):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error":"No autenticado"}, status_code=401)
+    data = await request.json()
+
+    # Normalizar fechas si vienen como objeto serializado por FullCalendar (tomamos ISO si es string)
+    def to_iso(v):
+        if v is None:
+            return None
+        return v if isinstance(v, str) else str(v)
+
+    title = data.get("title")
+    desc  = data.get("description")
+    color = data.get("color")
+    start = to_iso(data.get("start"))
+    end   = to_iso(data.get("end"))
+    all_day = data.get("allDay")
+
+    sets, vals = [], []
+    if title is not None: sets.append("title=?"); vals.append(title)
+    if desc  is not None: sets.append("description=?"); vals.append(desc)
+    if color is not None: sets.append("color=?"); vals.append(color)
+    if start is not None: sets.append("start=?"); vals.append(start)
+    if end   is not None: sets.append("end=?");   vals.append(end)
+    if all_day is not None: sets.append("all_day=?"); vals.append(1 if all_day else 0)
+    sets.append("updated_at=?"); vals.append(_now_iso())
+    vals.append(evt_id)
+
+    if len(sets) == 1:
+        return JSONResponse({"error":"Nada para actualizar"}, status_code=400)
+
+    with cal_conn() as c:
+        cur = c.execute(f"UPDATE eventos SET {', '.join(sets)} WHERE id=?", vals)
+        if cur.rowcount == 0:
+            return JSONResponse({"error":"Evento no encontrado"}, status_code=404)
+
+    _notify(request.session.get("usuario","Desconocido"), "Evento actualizado", f"ID: {evt_id}")
+    return {"ok": True}
+
+@app.delete("/calendario/eventos/{evt_id}")
+async def cal_delete(evt_id: str, request: Request):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error":"No autenticado"}, status_code=401)
+    with cal_conn() as c:
+        cur = c.execute("DELETE FROM eventos WHERE id=?", (evt_id,))
+        if cur.rowcount == 0:
+            return JSONResponse({"error":"Evento no encontrado"}, status_code=404)
+    _notify(request.session.get("usuario","Desconocido"), "Evento eliminado", f"ID: {evt_id}")
+    return {"ok": True}
+
+# ================== Notificaciones mínimas usadas por calendario.html ======
+@app.get("/notificaciones")
+async def list_notifs(request: Request, limit: int = 20):
+    user = request.session.get("usuario", "Desconocido")
+    with cal_conn() as c:
+        total_unread = c.execute(
+            "SELECT COUNT(1) FROM notificaciones WHERE user=? AND leida=0", (user,)
+        ).fetchone()[0]
+        cur = c.execute(
+            "SELECT id, titulo, cuerpo, created_at, leida FROM notificaciones WHERE user=? ORDER BY id DESC LIMIT ?",
+            (user, limit)
+        )
+        items = []
+        for r in cur.fetchall():
+            items.append({
+                "id": r["id"],
+                "titulo": r["titulo"],
+                "cuerpo": r["cuerpo"],
+                "fecha_legible": r["created_at"],
+                "leida": bool(r["leida"])
+            })
+    return {"total_unread": total_unread, "items": items}
+
+@app.post("/notificaciones/marcar-leidas")
+async def mark_read(request: Request):
+    user = request.session.get("usuario", "Desconocido")
+    with cal_conn() as c:
+        c.execute("UPDATE notificaciones SET leida=1 WHERE user=?", (user,))
+    return {"ok": True}

@@ -224,9 +224,9 @@
     function expandChat(){ localStorage.setItem(CHAT_STATE_KEY,'open'); applyChatState(); }
     async function enviarChatIA(){
       const input=document.getElementById("chat-text"); const msg=input.value.trim(); if(!msg) return;
-      const chat=document.getElementById("chat-messages"); chat.innerHTML+=`<div><b>Tú:</b> ${msg}</div>`; input.value="";
+      const chat=document.getElementById("chat-messages"); chat.innerHTML+=`<div><b>Tú:</b> ${escapeHtml(msg)}</div>`; input.value="";
       const res=await fetch("/chat-openai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mensaje:msg})});
-      const data=await res.json(); chat.innerHTML+=`<div><b>IA:</b> ${data.respuesta}</div>`; chat.scrollTop=chat.scrollHeight;
+      const data=await res.json(); chat.innerHTML+=`<div><b>IA:</b> ${escapeHtml(data.respuesta||'')}</div>`; chat.scrollTop=chat.scrollHeight;
     }
     document.addEventListener('keydown', e=>{ if(e.key==="Enter" && document.activeElement?.id==="chat-text") enviarChatIA(); });
 
@@ -240,18 +240,34 @@
 
     /* ===== Calendario ===== */
     let calendar;
+
+    // Helpers fechas → ISO (o null)
+    function toIsoOrNull(d){ return d ? new Date(d).toISOString() : null; }
+
     async function fetchEventos(){
-      // Espera: [{"id": "...","title":"...", "start":"2025-08-11T10:00:00","end":"2025-08-11T11:00:00","allDay":false,"description":"...","color":"#0ea5e9","source":"general"}]
-      const r = await fetch('/calendario/eventos'); if(!r.ok) return [];
-      return r.json();
+      try{
+        const r = await fetch('/calendario/eventos');
+        if(!r.ok) throw new Error('HTTP '+r.status);
+        return await r.json();
+      }catch(e){
+        // fallback de ejemplo para que no quede vacío en entornos sin backend listo
+        showToast({title:'Calendario', body:'No se pudo cargar del servidor. Mostrando ejemplo.', icon:'exclamation-triangle'});
+        const now = new Date();
+        const yyyy = now.getFullYear(), mm = String(now.getMonth()+1).padStart(2,'0'), dd = String(now.getDate()).padStart(2,'0');
+        return [
+          { id:'demo-1', title:'Evento demo', start:`${yyyy}-${mm}-${dd}T10:00:00`, end:`${yyyy}-${mm}-${dd}T11:00:00`, color:'#0ea5e9', description:'Solo ejemplo', allDay:false }
+        ];
+      }
     }
     async function crearEvento(payload){
       const r = await fetch('/calendario/eventos',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-      if(!r.ok) throw new Error('No se pudo crear el evento'); return r.json();
+      if(!r.ok) throw new Error('No se pudo crear el evento');
+      return await r.json();
     }
     async function actualizarEvento(id, payload){
       const r = await fetch(`/calendario/eventos/${encodeURIComponent(id)}`,{method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
       if(!r.ok) throw new Error('No se pudo actualizar el evento');
+      return await r.json().catch(()=> ({}));
     }
     async function eliminarEvento(id){
       const r = await fetch(`/calendario/eventos/${encodeURIComponent(id)}`,{method:'DELETE'});
@@ -259,7 +275,6 @@
     }
 
     function abrirModalNuevo(info){
-      // Modal simple nativo Bootstrap (creación rápida)
       const id='modalNuevoEvt';
       const html=`<div class="modal fade" id="${id}" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="border-radius:14px;">
         <div class="modal-header"><h5 class="modal-title">Nuevo evento</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
@@ -296,15 +311,17 @@
       modalEl.addEventListener('hidden.bs.modal',()=> modalEl.remove());
     }
 
+    function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
     function abrirModalDetalle(evt){
       const id='modalDetalleEvt';
       const html=`<div class="modal fade" id="${id}" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="border-radius:14px;">
         <div class="modal-header"><h5 class="modal-title">Detalle del evento</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
         <div class="modal-body">
-          <div class="mb-2"><label class="form-label">Título</label><input id="evtTitleE" class="form-control" value="${(evt.title||'').replace(/"/g,'&quot;')}"></div>
-          <div class="mb-2"><label class="form-label">Descripción</label><textarea id="evtDescE" class="form-control" rows="3">${(evt.extendedProps?.description||'')}</textarea></div>
+          <div class="mb-2"><label class="form-label">Título</label><input id="evtTitleE" class="form-control" value="${escapeHtml(evt.title||'')}"></div>
+          <div class="mb-2"><label class="form-label">Descripción</label><textarea id="evtDescE" class="form-control" rows="3">${escapeHtml(evt.extendedProps?.description||'')}</textarea></div>
           <div class="mb-2"><label class="form-label">Color</label>
-            <input id="evtColorE" type="color" class="form-control form-control-color" value="${evt.backgroundColor || '#0ea5e9'}">
+            <input id="evtColorE" type="color" class="form-control form-control-color" value="${evt.backgroundColor || evt.borderColor || '#0ea5e9'}">
           </div>
           <div class="form-text"><i class="bi bi-calendar-event"></i> ${evt.start?.toLocaleString()} ${evt.end?(' → '+evt.end.toLocaleString()):''}</div>
         </div>
@@ -352,11 +369,22 @@
       calendar = new FullCalendar.Calendar(el, {
         height: 'auto',
         locale: 'es',
+        firstDay: 1,
+        nowIndicator: true,
+        weekNumbers: true,
+        expandRows: true,
         initialView: 'dayGridMonth',
         headerToolbar: {
           left: 'prev,next today',
           center: 'title',
           right: 'dayGridMonth,timeGridWeek,listWeek'
+        },
+        buttonText: {
+          today: 'Hoy',
+          month: 'Mes',
+          week: 'Semana',
+          day: 'Día',
+          list: 'Lista'
         },
         selectable: true,
         selectMirror: true,
@@ -365,22 +393,31 @@
         editable: true,
         eventDrop: async (arg)=>{
           try{
-            await actualizarEvento(arg.event.id, { start: arg.event.start, end: arg.event.end, allDay: arg.event.allDay });
+            await actualizarEvento(arg.event.id, {
+              start: toIsoOrNull(arg.event.start),
+              end:   toIsoOrNull(arg.event.end),
+              allDay: arg.event.allDay
+            });
             showToast({title:'Evento movido', body:arg.event.title, icon:'check2-circle'});
           }catch(e){ arg.revert(); showToast({title:'Error', body:'No se pudo mover', icon:'exclamation-triangle'}); }
         },
         eventResize: async (arg)=>{
           try{
-            await actualizarEvento(arg.event.id, { start: arg.event.start, end: arg.event.end });
+            await actualizarEvento(arg.event.id, {
+              start: toIsoOrNull(arg.event.start),
+              end:   toIsoOrNull(arg.event.end)
+            });
             showToast({title:'Duración actualizada', body:arg.event.title, icon:'check2-circle'});
           }catch(e){ arg.revert(); showToast({title:'Error', body:'No se pudo cambiar duración', icon:'exclamation-triangle'}); }
         },
         events: initialEvents,
         eventDidMount: (info)=>{
-          // color pastel consistente
           const color = info.event.backgroundColor || info.event.color || '#0ea5e9';
           info.el.style.borderRadius = '8px';
           info.el.style.borderColor = color;
+          if (info.event.extendedProps?.description){
+            new bootstrap.Tooltip(info.el, { title: info.event.extendedProps.description, placement:'top' });
+          }
         }
       });
       calendar.render();
@@ -393,7 +430,6 @@
       document.getElementById('notif-panel').style.display = notifOpen ? 'block' : 'none';
     }
     async function fetchNotifs(){
-      // Espera: { total_unread: 2, items: [{id, titulo, cuerpo, fecha_legible, leida:false}] }
       try{
         const r = await fetch('/notificaciones?limit=20');
         if(!r.ok) return;
@@ -430,7 +466,6 @@
         showToast({title:'Notificaciones', body:'Marcadas como leídas', icon:'check2-circle'});
       }catch(e){}
     }
-    function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
     /* ===== Init ===== */
     window.onload = async ()=>{
@@ -438,7 +473,7 @@
       applyChatState();
       await initCalendar();
       await fetchNotifs();
-      setInterval(fetchNotifs, 30000); // polling cada 30s
+      setInterval(fetchNotifs, 30000);
     };
   </script>
 </body>
