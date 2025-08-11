@@ -21,12 +21,15 @@ from database import (
     obtener_usuario_por_email, agregar_usuario,
     guardar_en_historial, obtener_historial, eliminar_del_historial,
     listar_usuarios, actualizar_password, cambiar_estado_usuario,
-    crear_ticket, obtener_tickets_por_usuario, obtener_todos_los_tickets,
+    crear_ticket, obtener_todos_los_tickets, obtener_tickets_por_usuario,
     actualizar_estado_ticket, eliminar_ticket,
-    obtener_historial_completo, obtener_auditoria, borrar_usuario  # ⬅️ borrar_usuario
+    obtener_historial_completo, obtener_auditoria, borrar_usuario
 )
 
-# Inicialización de BD
+# 👇 IMPORTANTE: crear/verificar tablas ORM (audit_logs) al iniciar
+from db_orm import inicializar_bd_orm
+
+# Inicialización de BD SQLite (tablas existentes)
 crear_tabla_usuarios()
 crear_tabla_historial()
 crear_tabla_tickets()
@@ -35,11 +38,14 @@ app = FastAPI(middleware=[
     Middleware(SessionMiddleware, secret_key="clave_secreta_super_segura")
 ])
 
+# ✅ Verifica/crea tablas ORM (incluye audit_logs) en el motor configurado por DATABASE_URL
+inicializar_bd_orm()
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="generated_pdfs")
 
 templates = Jinja2Templates(directory="templates")
-templates.env.globals['os'] = os  # Habilita el acceso a 'os' desde las plantillas Jinja2
+templates.env.globals['os'] = os  # Acceso a 'os' desde las plantillas
 
 # ---- Helpers actor/IP ----
 def _actor_info(request: Request):
@@ -211,7 +217,11 @@ async def eliminar_incidencia_form(request: Request, id: int):
 async def cambiar_password_form(request: Request):
     if not request.session.get("usuario"):
         return RedirectResponse("/login")
-    return templates.TemplateResponse("cambiar_password.html", {"request": request, "mensaje": "", "error": ""})
+    return templates.TemplateResponse("cambiar_password.html", {
+        "request": request,
+        "mensaje": "",
+        "error": ""
+    })
 
 @app.post("/cambiar-password", response_class=HTMLResponse)
 async def cambiar_password_submit(request: Request,
@@ -224,16 +234,22 @@ async def cambiar_password_submit(request: Request,
     datos = obtener_usuario_por_email(usuario)
     if not datos or datos[3] != old_password:
         return templates.TemplateResponse("cambiar_password.html", {
-            "request": request, "mensaje": "", "error": "La contraseña actual es incorrecta."
+            "request": request,
+            "mensaje": "",
+            "error": "La contraseña actual es incorrecta."
         })
     if new_password != confirm_password:
         return templates.TemplateResponse("cambiar_password.html", {
-            "request": request, "mensaje": "", "error": "La nueva contraseña no coincide en ambos campos."
+            "request": request,
+            "mensaje": "",
+            "error": "La nueva contraseña no coincide en ambos campos."
         })
     actor_user_id, ip = _actor_info(request)
     actualizar_password(usuario, new_password, actor_user_id=actor_user_id, ip=ip)
     return templates.TemplateResponse("cambiar_password.html", {
-        "request": request, "mensaje": "Contraseña cambiada correctamente.", "error": ""
+        "request": request,
+        "mensaje": "Contraseña cambiada correctamente.",
+        "error": ""
     })
 
 # ------------------- ADMIN -------------------
@@ -243,13 +259,16 @@ async def vista_admin(request: Request):
         return RedirectResponse("/")
     return templates.TemplateResponse("admin.html", {"request": request})
 
-# 📋 Auditoría
+# 📋 Nueva ruta de Auditoría
 @app.get("/auditoria", response_class=HTMLResponse)
 async def ver_auditoria(request: Request):
     if request.session.get("rol") != "admin":
         return RedirectResponse("/")
     logs = obtener_auditoria()
-    return templates.TemplateResponse("auditoria.html", {"request": request, "logs": logs})
+    return templates.TemplateResponse("auditoria.html", {
+        "request": request,
+        "logs": logs
+    })
 
 @app.get("/admin/usuarios")
 async def listar_usuarios_api():
@@ -306,7 +325,11 @@ async def chat_openai(request: Request):
     usuario_actual = request.session.get("usuario", "Desconocido")
 
     historial = obtener_historial_completo()
-    ultimo_analisis_usuario = next((h for h in historial if h["usuario"] == usuario_actual and h["resumen"]), None)
+
+    ultimo_analisis_usuario = next(
+        (h for h in historial if h["usuario"] == usuario_actual and h["resumen"]),
+        None
+    )
 
     if ultimo_analisis_usuario:
         ultimo_resumen = f"""
@@ -325,5 +348,7 @@ async def chat_openai(request: Request):
     ])
 
     contexto = f"{ultimo_resumen}\n\n📚 Historial completo:\n{contexto_general}"
+
     respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
+
     return JSONResponse({"respuesta": respuesta})
