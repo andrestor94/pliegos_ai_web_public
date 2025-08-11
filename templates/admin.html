@@ -8,12 +8,131 @@
   <!-- Bootstrap & Icons -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
-
-  <!-- Theme global Suizo -->
-  <link rel="stylesheet" href="{{ url_for('static', path='suizo-theme.css') }}">
-
   <!-- Axios -->
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+
+  <style>
+    :root{
+      --color-azul:#044369;
+      --color-azul-sec:#0d6efd;
+      --color-gris:#eceff4;
+      --color-gris-medio:#c8d0df;
+      --color-gris-oscuro:#354151;
+      --color-verde:#1b7b5a;
+      --color-rojo:#c62828;
+
+      --bg:#f6f8ff;
+      --card:#ffffff;
+      --ink:#0a0a0a;
+      --primary:#2f6adf;
+      --primary-ink:#ffffff;
+      --ring:rgba(47,106,223,.35);
+      --shadow:0 10px 30px rgba(0,0,0,.06);
+      --radius:16px;
+    }
+
+    body{ background:var(--bg); color:var(--ink); }
+    .container{ max-width: 1100px; margin-top:56px; }
+
+    /* Navbar + Offcanvas */
+    .navbar-wrap{ background:#fff; border-bottom:1.5px solid var(--color-azul-sec); box-shadow:0 2px 8px rgba(4,67,105,0.05); }
+    .navbar-brand{ color:var(--color-azul)!important; font-weight:600; }
+    .logo{ height:32px; margin-right:8px; }
+    .btn-solid{
+      background:var(--primary); color:var(--primary-ink); border:0; padding:.5rem .85rem; border-radius:12px;
+      transition:transform .08s ease, box-shadow .2s ease; box-shadow:0 6px 16px rgba(47,106,223,.25);
+    }
+    .btn-solid:hover{ transform:translateY(-1px); }
+    .btn-ghost{
+      background:transparent; border:1px solid #e5e7eb; padding:.5rem .8rem; border-radius:12px;
+    }
+    .btn-ghost:hover{ background:#f3f4f6; }
+    .navbar-toggler-icon{
+      display:inline-block; width:1.5rem; height:1.5rem;
+      background-image:url("data:image/svg+xml,%3csvg viewBox='0 0 30 30' xmlns='http://www.w3.org/2000/svg'%3e%3cpath stroke='rgba(0,0,0,.7)' stroke-width='2' stroke-linecap='round' stroke-miterlimit='10' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+      background-repeat:no-repeat; background-position:center;
+    }
+    .offcanvas{ border-radius:0 var(--radius) var(--radius) 0; }
+    .offcanvas .nav-link-mobile{
+      display:flex; align-items:center; gap:.6rem; padding:.7rem .8rem; border-radius:12px; color:var(--ink); text-decoration:none;
+    }
+    .offcanvas .nav-link-mobile:hover{ background:#f3f4f6; }
+    .offcanvas .nav-link-mobile.active{ background:#e8efff; color:#1e40af; }
+
+    /* Tarjetas y tipografía */
+    .card{ border-radius:18px; border:none; box-shadow:0 4px 24px rgba(4,67,105,0.09); background:var(--card); }
+    h2{ color:var(--color-azul); font-weight:700; }
+    .card-title{ color:var(--color-azul-sec); font-weight:600; }
+
+    /* Badges */
+    .badge{ font-size:.94em; border-radius:7px; padding:5px 15px; letter-spacing:.5px; }
+    .badge.bg-secondary{ background:#e3ecf5!important; color:var(--color-azul)!important; border:1px solid #b6d1ea; font-weight:600; }
+    .badge.bg-success{ background:#1b7b5a!important; color:#fff!important; font-weight:500; }
+    .badge.bg-inactivo{ background:#b2becd!important; color:#495466!important; font-weight:500; }
+
+    /* Botones y campos */
+    .btn{ border-radius:7px!important; font-weight:500; }
+    .btn-primary{ background:var(--color-azul)!important; border:none!important; color:#fff!important; }
+    .btn-primary:hover{ background:#022a47!important; }
+    .btn-outline-secondary{ border-color:var(--color-azul)!important; color:var(--color-azul)!important; }
+    .btn-outline-secondary:hover{ background:var(--color-azul)!important; color:#fff!important; }
+    .btn-outline-danger{ border-color:var(--color-rojo)!important; color:var(--color-rojo)!important; }
+    .btn-outline-danger:hover{ background:var(--color-rojo)!important; color:#fff!important; }
+    .btn-outline-dark{ border-color:var(--color-gris-oscuro)!important; color:var(--color-gris-oscuro)!important; }
+    .btn-outline-dark:hover{ background:var(--color-gris-oscuro)!important; color:#fff!important; }
+    .btn-action{ background:#e3ecf5; color:var(--color-azul); border:1px solid #b6d1ea; }
+    .btn-action:hover{ background:var(--color-azul); color:#fff; border:1px solid var(--color-azul); }
+    .btn-warning{ background:#fff7e6!important; color:#b37d14!important; border:1px solid #ffe0b2!important; }
+    .btn-warning:hover{ background:#ffcc80!important; color:#7f5b0a!important; border:1px solid #ffb300!important; }
+    .form-control, .form-select{ border-radius:7px!important; border-color:var(--color-gris-medio)!important; }
+
+    /* Tabla */
+    .table thead{ background:#f3f8fc; }
+    .table th, .table td{ vertical-align:middle; border-bottom:1.5px solid #e9eef5!important; }
+    .table-responsive{ border-radius:12px; overflow:hidden; }
+
+    /* Chat flotante */
+    #chatbox{
+      position:fixed; bottom:20px; right:20px; width:350px; height:450px; border-radius:16px; background:#fff;
+      box-shadow:0 0 20px rgba(4,67,105,0.12); display:none; flex-direction:column; overflow:hidden; z-index:1000;
+      border:1.5px solid var(--color-azul);
+    }
+    #chatbox-header{
+      background:var(--color-azul); color:#fff; padding:10px; font-weight:600; font-size:1.05em; letter-spacing:.03em;
+      display:flex; align-items:center; justify-content:space-between;
+    }
+    #chat-messages{ flex:1; padding:12px 14px; overflow-y:auto; background:#f7fbff; }
+    #chat-input{ border-top:1px solid #e2e5ec; display:flex; }
+    #chat-input input{ flex:1; padding:10px; border:none; outline:none; font-size:1em; }
+    #chat-input button{ background:var(--color-azul); color:#fff; border:none; padding:10px 16px; border-radius:0 0 12px 0; }
+    #chat-fab{
+      position:fixed; right:20px; bottom:20px; z-index:999; display:none;
+      border-radius:999px; padding:.6rem .9rem; box-shadow:0 8px 18px rgba(4,67,105,0.18);
+    }
+
+    /* Notificaciones */
+    #notif-fab{
+      position:fixed; right:20px; bottom:88px; z-index:999; border-radius:999px; padding:.55rem .75rem;
+      box-shadow:0 8px 18px rgba(4,67,105,0.18); background:#fff; border:1px solid #e5e7eb;
+    }
+    #notif-badge{ transform: translate(20%, -40%); }
+    #notif-panel{
+      position:fixed; right:20px; bottom:148px; width:320px; max-height:50vh; overflow:auto; z-index:1000; background:#fff;
+      border:1px solid #e5e7eb; border-radius:14px; box-shadow:0 12px 28px rgba(0,0,0,.12); display:none;
+    }
+
+    /* Toasts */
+    .toast-container{ position: fixed; right: 16px; bottom: 16px; z-index: 1200; }
+    .toast{ border-radius:12px; box-shadow:var(--shadow); }
+    .toast-header{ border-bottom:none; }
+    .toast .bi{ margin-right:.4rem; }
+
+    @media (max-width: 1000px){ .container{ max-width: 98vw; } }
+    @media (max-width: 700px){
+      #chatbox{ right:5vw; width:94vw; height:60vh; }
+      #notif-panel{ right:5vw; width:90vw; }
+    }
+  </style>
 </head>
 <body>
 
@@ -98,7 +217,7 @@
             <button type="submit" class="btn btn-primary">➕</button>
           </div>
         </form>
-        <div id="mensaje" class="mt-3" aria-live="polite"></div>
+        <div id="mensaje" class="mt-3"></div>
       </div>
     </div>
 
@@ -176,9 +295,9 @@
       try{
         const res = await fetch("/usuario-actual");
         const data = await res.json();
-        document.getElementById("usuario-nombre").textContent = \`👤 \${data.usuario}\`;
+        document.getElementById("usuario-nombre").textContent = 👤 ${data.usuario};
         const mobileName = document.getElementById("usuario-nombre-mobile");
-        if (mobileName) mobileName.textContent = \`👤 \${data.usuario}\`;
+        if (mobileName) mobileName.textContent = 👤 ${data.usuario};
 
         // Mostrar enlaces admin si corresponde
         if (data.rol && data.rol.toLowerCase() === "admin") {
@@ -210,19 +329,19 @@
       const res = await axios.get("/admin/usuarios");
       res.data.forEach(usuario => {
         const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>\${usuario.nombre}</td>
-          <td>\${usuario.email}</td>
-          <td><span class="badge bg-secondary">\${usuario.rol}</span></td>
-          <td><span class="badge \${usuario.activo ? 'bg-success' : 'bg-inactivo'}">\${usuario.activo ? 'Activo' : 'Inactivo'}</span></td>
+        tr.innerHTML = 
+          <td>${usuario.nombre}</td>
+          <td>${usuario.email}</td>
+          <td><span class="badge bg-secondary">${usuario.rol}</span></td>
+          <td><span class="badge ${usuario.activo ? 'bg-success' : 'bg-inactivo'}">${usuario.activo ? 'Activo' : 'Inactivo'}</span></td>
           <td class="d-flex flex-wrap gap-2">
-            <button class="btn btn-sm btn-action" onclick="\${usuario.activo ? \`desactivarUsuario('\${usuario.email}')\` : \`activarUsuario('\${usuario.email}')\`}">
-              \${usuario.activo ? '⛔ Desactivar' : '🟢 Activar'}
+            <button class="btn btn-sm btn-action" onclick="${usuario.activo ? desactivarUsuario('${usuario.email}') : activarUsuario('${usuario.email}')}">
+              ${usuario.activo ? '⛔ Desactivar' : '🟢 Activar'}
             </button>
-            <button class="btn btn-sm btn-outline-dark" onclick="blanquearPassword('\${usuario.email}')">🔑 Blanquear contraseña</button>
-            <button class="btn btn-sm btn-outline-danger" onclick="eliminarUsuario('\${usuario.email}')">🗑️ Eliminar</button>
+            <button class="btn btn-sm btn-outline-dark" onclick="blanquearPassword('${usuario.email}')">🔑 Blanquear contraseña</button>
+            <button class="btn btn-sm btn-outline-danger" onclick="eliminarUsuario('${usuario.email}')">🗑️ Eliminar</button>
           </td>
-        `;
+        ;
         tabla.appendChild(tr);
       });
     }
@@ -235,20 +354,20 @@
 
       try {
         const res = await axios.post("/admin/crear-usuario", { nombre, email, rol });
-        document.getElementById("mensaje").innerHTML = \`<div class="alert alert-success">\${res.data.mensaje}</div>\`;
+        document.getElementById("mensaje").innerHTML = <div class="alert alert-success">${res.data.mensaje}</div>;
         document.getElementById("crearUsuarioForm").reset();
         cargarUsuarios();
         showToast({title:'Usuario creado', body:email, icon:'check2-circle'});
       } catch (err) {
         const msg = err?.response?.data?.error || "Error al crear el usuario";
-        document.getElementById("mensaje").innerHTML = \`<div class="alert alert-danger">\${msg}</div>\`;
+        document.getElementById("mensaje").innerHTML = <div class="alert alert-danger">${msg}</div>;
         showToast({title:'Error', body:msg, icon:'exclamation-triangle'});
       }
     });
 
     async function blanquearPassword(email) {
       await axios.post("/admin/blanquear-password", { email });
-      showToast({title:'Password blanqueado', body:\`Usuario: \${email}\`, icon:'key'});
+      showToast({title:'Password blanqueado', body:Usuario: ${email}, icon:'key'});
       alert("Contraseña blanqueada a 1234");
     }
     async function desactivarUsuario(email) { await axios.post("/admin/desactivar-usuario", { email }); cargarUsuarios(); showToast({title:'Usuario desactivado', body:email, icon:'person-dash'}); }
@@ -282,7 +401,7 @@
       if (!message) return;
 
       const chat = document.getElementById("chat-messages");
-      chat.innerHTML += \`<div><b>Tú:</b> \${message}</div>\`;
+      chat.innerHTML += <div><b>Tú:</b> ${message}</div>;
       input.value = "";
 
       const res = await fetch("/chat-openai", {
@@ -291,7 +410,7 @@
         body: JSON.stringify({ mensaje: message })
       });
       const data = await res.json();
-      chat.innerHTML += \`<div><b>IA:</b> \${data.respuesta}</div>\`;
+      chat.innerHTML += <div><b>IA:</b> ${data.respuesta}</div>;
       chat.scrollTop = chat.scrollHeight;
     }
 
@@ -303,12 +422,12 @@
     function showToast({title="Aviso", body="", icon="info"}){
       const container=document.getElementById('toastContainer'); if(!container) return;
       const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
-      el.innerHTML=\`<div class="toast-header">
-        <i class="bi bi-\${icon} me-1"></i>
-        <strong class="me-auto">\${title}</strong>
+      el.innerHTML=<div class="toast-header">
+        <i class="bi bi-${icon} me-1"></i>
+        <strong class="me-auto">${title}</strong>
         <small>Ahora</small>
         <button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
-      </div><div class="toast-body">\${body}</div>\`;
+      </div><div class="toast-body">${body}</div>;
       container.appendChild(el); const t=new bootstrap.Toast(el,{delay:3000}); t.show(); el.addEventListener('hidden.bs.toast',()=>el.remove());
     }
 
@@ -321,9 +440,9 @@
       if(!items?.length){ list.innerHTML='<div class="p-3 text-muted">Sin notificaciones</div>'; return; }
       items.forEach(n=>{
         const div=document.createElement('div'); div.className='item '+(!n.leida?'unread':''); div.style.padding='10px 12px'; div.style.borderBottom='1px solid #f0f2f5';
-        div.innerHTML=\`<div style="font-weight:600">\${escapeHtml(n.titulo||'Notificación')}</div>
-                       <div class="small">\${escapeHtml(n.cuerpo||'')}</div>
-                       <div class="small text-muted">\${escapeHtml(n.fecha_legible||'')}</div>\`;
+        div.innerHTML=<div style="font-weight:600">${escapeHtml(n.titulo||'Notificación')}</div>
+                       <div class="small">${escapeHtml(n.cuerpo||'')}</div>
+                       <div class="small text-muted">${escapeHtml(n.fecha_legible||'')}</div>;
         list.appendChild(div);
       });
     }
