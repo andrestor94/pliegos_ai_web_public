@@ -26,7 +26,7 @@ from database import (
     obtener_historial_completo, obtener_auditoria, borrar_usuario
 )
 
-# 👇 IMPORTANTE: crear/verificar tablas ORM (audit_logs) al iniciar
+# 👇 crear/verificar tablas ORM (audit_logs) al iniciar
 from db_orm import inicializar_bd_orm
 
 # Inicialización de BD SQLite (tablas existentes)
@@ -259,7 +259,7 @@ async def vista_admin(request: Request):
         return RedirectResponse("/")
     return templates.TemplateResponse("admin.html", {"request": request})
 
-# 📋 Nueva ruta de Auditoría
+# 📋 Auditoría
 @app.get("/auditoria", response_class=HTMLResponse)
 async def ver_auditoria(request: Request):
     if request.session.get("rol") != "admin":
@@ -274,48 +274,74 @@ async def ver_auditoria(request: Request):
 async def listar_usuarios_api():
     return JSONResponse(listar_usuarios())
 
+# ---- ENDPOINTS ADMIN (JSON body) ----
 @app.post("/admin/crear-usuario")
-async def crear_usuario_api(request: Request, data: dict):
+async def crear_usuario_api(request: Request):
     try:
+        data = await request.json()
+        nombre = data.get("nombre")
+        email = data.get("email")
+        rol = data.get("rol")
+        if not nombre or not email or not rol:
+            return JSONResponse({"error": "Faltan campos: nombre, email, rol"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
-        agregar_usuario(data["nombre"], data["email"], "1234", data["rol"], actor_user_id=actor_user_id, ip=ip)
+        agregar_usuario(nombre, email, "1234", rol, actor_user_id=actor_user_id, ip=ip)
         return JSONResponse({"mensaje": "Usuario creado correctamente con contraseña: 1234"})
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
+        print("❌ Error crear-usuario:", repr(e))
+        return JSONResponse({"error": f"Error al crear usuario: {e}"}, status_code=400)
 
 @app.post("/admin/blanquear-password")
-async def blanquear_password(request: Request, data: dict):
+async def blanquear_password(request: Request):
     try:
+        data = await request.json()
+        email = data.get("email")
+        if not email:
+            return JSONResponse({"error": "Falta email"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
-        actualizar_password(data["email"], "1234", actor_user_id=actor_user_id, ip=ip)
+        actualizar_password(email, "1234", actor_user_id=actor_user_id, ip=ip)
         return JSONResponse({"mensaje": "Contraseña blanqueada a 1234"})
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
+        print("❌ Error blanquear-password:", repr(e))
+        return JSONResponse({"error": f"Error al blanquear: {e}"}, status_code=400)
 
 @app.post("/admin/desactivar-usuario")
-async def desactivar_usuario(request: Request, data: dict):
+async def desactivar_usuario(request: Request):
+    data = await request.json()
+    email = data.get("email")
+    if not email:
+        return JSONResponse({"error": "Falta email"}, status_code=400)
     actor_user_id, ip = _actor_info(request)
-    cambiar_estado_usuario(data["email"], 0, actor_user_id=actor_user_id, ip=ip)
+    cambiar_estado_usuario(email, 0, actor_user_id=actor_user_id, ip=ip)
     return JSONResponse({"mensaje": "Usuario desactivado"})
 
 @app.post("/admin/activar-usuario")
-async def activar_usuario(request: Request, data: dict):
+async def activar_usuario(request: Request):
+    data = await request.json()
+    email = data.get("email")
+    if not email:
+        return JSONResponse({"error": "Falta email"}, status_code=400)
     actor_user_id, ip = _actor_info(request)
-    cambiar_estado_usuario(data["email"], 1, actor_user_id=actor_user_id, ip=ip)
+    cambiar_estado_usuario(email, 1, actor_user_id=actor_user_id, ip=ip)
     return JSONResponse({"mensaje": "Usuario activado"})
 
 @app.post("/admin/eliminar-usuario")
-async def eliminar_usuario(request: Request, data: dict):
+async def eliminar_usuario(request: Request):
     try:
         if request.session.get("rol") != "admin":
             return JSONResponse({"error": "Acceso denegado"}, status_code=403)
+        data = await request.json()
+        email = data.get("email")
+        if not email:
+            return JSONResponse({"error": "Falta email"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
-        ok = borrar_usuario(data["email"], actor_user_id=actor_user_id, ip=ip, soft=True)  # soft delete + auditoría
+        ok = borrar_usuario(email, actor_user_id=actor_user_id, ip=ip, soft=False)  # 🔥 borrado duro
         if not ok:
             return JSONResponse({"error": "Usuario no encontrado"}, status_code=404)
-        return JSONResponse({"mensaje": "Usuario eliminado (soft delete)."})
+        return JSONResponse({"mensaje": "Usuario eliminado definitivamente."})
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
+        print("❌ Error eliminar-usuario:", repr(e))
+        return JSONResponse({"error": f"Error al eliminar: {e}"}, status_code=400)
 
 # ------------------- CHAT FLOTANTE -------------------
 @app.post("/chat-openai")
