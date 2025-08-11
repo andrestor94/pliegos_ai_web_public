@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Chat interno</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <style>
+    :root{
+      --azul:#044369; --bg:#f4f7fb; --card:#ffffff; --gris:#e9eef5;
+    }
+    body{ background: var(--bg); }
+    .app { height: 100vh; display: flex; flex-direction: column; }
+    .chat-wrap { flex:1; display:grid; grid-template-columns: 320px 1fr; gap:16px; padding:16px; }
+    .panel { background: var(--card); border-radius: 14px; box-shadow: 0 6px 20px rgba(4,67,105,.08); overflow: hidden;}
+    .panel h5{ padding:14px 16px; margin:0; color: var(--azul); border-bottom:1px solid var(--gris); }
+    /* Hilos */
+    .hilos { display:flex; flex-direction:column; height:100%; }
+    .hilos-list { overflow:auto; }
+    .item-hilo { padding:12px 16px; border-bottom:1px solid var(--gris); cursor:pointer; }
+    .item-hilo:hover{ background:#f7faff; }
+    .item-hilo.active{ background:#e9f2ff; }
+    .item-hilo .nombre{ font-weight:600; color:#223; }
+    .item-hilo .fecha{ font-size:12px; color:#666; }
+    /* Mensajes */
+    .chat { display:flex; flex-direction:column; height:100%; }
+    .chat-head { padding:8px 16px; border-bottom:1px solid var(--gris); display:flex; align-items:center; gap:8px; }
+    .chat-body { flex:1; overflow:auto; padding:16px; background:#f9fbff;}
+    .msg { max-width: 70%; margin-bottom:10px; padding:10px 12px; border-radius:12px; background:#fff; box-shadow: 0 2px 8px rgba(0,0,0,.04);}
+    .msg.you { margin-left:auto; background:#dff0ff;}
+    .msg .meta{ font-size:12px; color:#666; margin-bottom:4px;}
+    .chat-input { border-top:1px solid var(--gris); padding:10px; background:#fff; display:flex; gap:8px; }
+    .chat-input input { border-radius:10px; }
+    .chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; background:#eef5ff; border-radius:999px; font-size:14px;}
+    .empty { color:#667; padding:16px; }
+    @media (max-width: 900px){
+      .chat-wrap{ grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <nav class="navbar navbar-light bg-white shadow-sm px-3">
+    <a href="/" class="navbar-brand">← Volver</a>
+    <span class="ms-auto chip">
+      <span id="yoEmail">...</span>
+    </span>
+  </nav>
+
+  <div class="chat-wrap">
+    <!-- Panel Hilos -->
+    <div class="panel hilos">
+      <h5>Conversaciones</h5>
+      <div class="p-3 border-bottom">
+        <div class="input-group">
+          <span class="input-group-text">@</span>
+          <input id="nuevoPara" type="email" class="form-control" placeholder="email@suizo.com (nuevo contacto)" />
+          <button id="btnAbrir" class="btn btn-primary">Abrir</button>
+        </div>
+      </div>
+      <div id="listaHilos" class="hilos-list"></div>
+    </div>
+
+    <!-- Panel Chat -->
+    <div class="panel chat">
+      <div class="chat-head">
+        <div class="chip">
+          Conversando con:
+          <strong id="conEmail">—</strong>
+        </div>
+        <button id="btnRefrescar" class="btn btn-sm btn-outline-secondary ms-auto">Refrescar</button>
+      </div>
+      <div id="chatBody" class="chat-body">
+        <div class="empty">Seleccioná una conversación o creá una nueva desde la izquierda.</div>
+      </div>
+      <div class="chat-input">
+        <input id="inputMsg" type="text" class="form-control" placeholder="Escribe un mensaje..." />
+        <button id="btnEnviar" class="btn btn-primary">Enviar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // --- Estado ---
+  let yo = null;
+  let con = null; // email del contacto seleccionado
+  let refresco = null;
+
+  async function getJSON(url){
+    const r = await fetch(url);
+    if(!r.ok) throw new Error("Error HTTP " + r.status);
+    return r.json();
+  }
+  async function postJSON(url, data){
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(data)
+    });
+    if(!r.ok){
+      const t = await r.text().catch(()=> '');
+      throw new Error(t || ('Error HTTP ' + r.status));
+    }
+    return r.json();
+  }
+
+  // --- UI helpers ---
+  function setActiveHilo(email){
+    document.querySelectorAll('.item-hilo').forEach(el=>{
+      el.classList.toggle('active', el.dataset.email === email);
+    });
+  }
+  function renderHilos(hilos){
+    const cont = document.getElementById('listaHilos');
+    cont.innerHTML = '';
+    if(!hilos || !hilos.length){
+      cont.innerHTML = '<div class="p-3 text-muted">Sin conversaciones aún.</div>';
+      return;
+    }
+    hilos.forEach(h=>{
+      const div = document.createElement('div');
+      div.className = 'item-hilo';
+      div.dataset.email = h.con;
+      div.innerHTML = `
+        <div class="nombre">${h.con}</div>
+        <div class="fecha">${h.ultima_fecha || ''}</div>
+      `;
+      div.onclick = () => {
+        con = h.con;
+        document.getElementById('conEmail').textContent = con;
+        setActiveHilo(con);
+        cargarMensajes();
+        iniciarAutoRefresh();
+      };
+      cont.appendChild(div);
+    });
+    setActiveHilo(con);
+  }
+
+  function renderMensajes(mensajes){
+    const body = document.getElementById('chatBody');
+    body.innerHTML = '';
+    if(!mensajes || !mensajes.length){
+      body.innerHTML = '<div class="empty">No hay mensajes aún. ¡Escribe el primero!</div>';
+      return;
+    }
+    mensajes.forEach(m=>{
+      const div = document.createElement('div');
+      div.className = 'msg' + (m.de === yo ? ' you' : '');
+      div.innerHTML = `
+        <div class="meta">${m.de} • ${m.fecha}</div>
+        <div class="txt">${escapeHtml(m.texto)}</div>
+      `;
+      body.appendChild(div);
+    });
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function escapeHtml(str){
+    return str.replace(/[&<>"']/g, s => (
+      { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[s]
+    ));
+  }
+
+  // --- Lógica ---
+  async function cargarYo(){
+    const info = await getJSON('/usuario-actual');
+    yo = info.usuario || 'Desconocido';
+    document.getElementById('yoEmail').textContent = yo;
+  }
+
+  async function cargarHilos(){
+    try{
+      const data = await getJSON('/chat/hilos');
+      renderHilos(data.hilos || []);
+    }catch(e){
+      console.error(e);
+      alert('No se pudieron cargar los hilos. ¿Estás logueado?');
+    }
+  }
+
+  async function cargarMensajes(){
+    if(!con) return;
+    try{
+      const data = await getJSON(`/chat/mensajes?con=${encodeURIComponent(con)}`);
+      renderMensajes(data.mensajes || []);
+    }catch(e){
+      console.error(e);
+      alert('No se pudieron cargar los mensajes.');
+    }
+  }
+
+  async function enviar(){
+    const input = document.getElementById('inputMsg');
+    const texto = (input.value || '').trim();
+    if(!con){
+      alert('Elegí un contacto o escribí uno nuevo a la izquierda.');
+      return;
+    }
+    if(!texto) return;
+    try{
+      await postJSON('/chat/enviar', { para: con, texto });
+      input.value = '';
+      await cargarMensajes();
+      await cargarHilos(); // para actualizar orden por última fecha
+    }catch(e){
+      console.error(e);
+      alert('No se pudo enviar el mensaje.');
+    }
+  }
+
+  function iniciarAutoRefresh(){
+    if(refresco) clearInterval(refresco);
+    // refresco cada 5s los mensajes del hilo activo
+    refresco = setInterval(cargarMensajes, 5000);
+  }
+
+  // --- Eventos ---
+  document.getElementById('btnEnviar').onclick = enviar;
+  document.getElementById('inputMsg').addEventListener('keypress', (e)=>{
+    if(e.key === 'Enter') enviar();
+  });
+  document.getElementById('btnRefrescar').onclick = ()=> {
+    cargarMensajes();
+    cargarHilos();
+  };
+  document.getElementById('btnAbrir').onclick = ()=>{
+    const email = document.getElementById('nuevoPara').value.trim();
+    if(!email) return;
+    con = email;
+    document.getElementById('conEmail').textContent = con;
+    setActiveHilo(con);
+    cargarMensajes();
+    iniciarAutoRefresh();
+  };
+
+  // --- Init ---
+  (async ()=>{
+    await cargarYo();
+    await cargarHilos();
+  })();
+</script>
+</body>
+</html>

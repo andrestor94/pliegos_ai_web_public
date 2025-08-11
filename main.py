@@ -272,6 +272,13 @@ async def ver_auditoria(request: Request):
         "logs": logs
     })
 
+# 👉 Página del chat (HTML)
+@app.get("/chat", response_class=HTMLResponse)
+async def chat_page(request: Request):
+    if not request.session.get("usuario"):
+        return RedirectResponse("/login")
+    return templates.TemplateResponse("chat.html", {"request": request})
+
 @app.get("/admin/usuarios")
 async def listar_usuarios_api():
     return JSONResponse(listar_usuarios())
