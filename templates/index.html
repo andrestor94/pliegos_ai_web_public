@@ -35,9 +35,7 @@
       transition: border .15s;
       box-shadow: 0 2px 8px rgba(4,67,105,0.05);
     }
-    .historial-entry:hover {
-      border: 1.5px solid var(--color-azul);
-    }
+    .historial-entry:hover { border: 1.5px solid var(--color-azul); }
     .btn {
       border-radius: 8px !important;
       transition: background 0.18s, color 0.18s, border 0.18s;
@@ -48,9 +46,7 @@
       border: none !important;
       color: #fff !important;
     }
-    .btn-primary:hover, .btn-dark:hover {
-      background: #022a47 !important;
-    }
+    .btn-primary:hover, .btn-dark:hover { background: #022a47 !important; }
     .btn-outline-secondary {
       border-color: var(--color-azul) !important;
       color: var(--color-azul) !important;
@@ -65,23 +61,14 @@
       color: var(--color-gris-oscuro) !important;
       background: transparent !important;
     }
-    .btn-outline-dark:hover {
-      background: var(--color-gris-oscuro) !important;
-      color: #fff !important;
-    }
-    .btn-success {
-      background: var(--color-verde) !important;
-      border: none !important;
-    }
+    .btn-outline-dark:hover { background: var(--color-gris-oscuro) !important; color: #fff !important; }
+    .btn-success { background: var(--color-verde) !important; border: none !important; }
     .btn-outline-danger {
       border-color: var(--color-rojo) !important;
       color: var(--color-rojo) !important;
       background: transparent !important;
     }
-    .btn-outline-danger:hover {
-      background: var(--color-rojo) !important;
-      color: #fff !important;
-    }
+    .btn-outline-danger:hover { background: var(--color-rojo) !important; color: #fff !important; }
     .alert {
       border-radius: 10px; 
       white-space: pre-wrap;
@@ -113,50 +100,20 @@
       font-size: 1.09em;
       letter-spacing: 0.03em;
     }
-    #chat-messages {
-      flex: 1;
-      padding: 12px 14px;
-      overflow-y: auto;
-      background: #f7fbff;
-    }
-    #chat-input {
-      border-top: 1px solid #e2e5ec;
-      display: flex;
-    }
+    #chat-messages { flex: 1; padding: 12px 14px; overflow-y: auto; background: #f7fbff; }
+    #chat-input { border-top: 1px solid #e2e5ec; display: flex; }
     #chat-input input {
-      flex: 1;
-      padding: 10px;
-      border: none;
-      outline: none;
-      font-size: 1em;
+      flex: 1; padding: 10px; border: none; outline: none; font-size: 1em;
     }
     #chat-input button {
-      background: var(--color-azul);
-      color: white;
-      border: none;
-      padding: 10px 16px;
-      border-radius: 0 0 12px 0;
+      background: var(--color-azul); color: white; border: none; padding: 10px 16px; border-radius: 0 0 12px 0;
     }
-    .form-control, .form-select {
-      border-radius: 8px !important;
-      border-color: var(--color-gris-medio) !important;
-    }
-    .d-flex.gap-3 > * {
-      min-width: 110px;
-    }
-    #usuario-nombre {
-      font-weight: 600;
-      color: var(--color-azul) !important;
-    }
-    .list-group-item {
-      border-radius: 6px !important;
-    }
-    .navbar .btn {
-      margin-left: 6px;
-    }
-    .navbar .btn:last-child {
-      margin-right: 0;
-    }
+    .form-control, .form-select { border-radius: 8px !important; border-color: var(--color-gris-medio) !important; }
+    .d-flex.gap-3 > * { min-width: 110px; }
+    #usuario-nombre { font-weight: 600; color: var(--color-azul) !important; }
+    .list-group-item { border-radius: 6px !important; }
+    .navbar .btn { margin-left: 6px; }
+    .navbar .btn:last-child { margin-right: 0; }
     /* Responsive tweaks */
     @media (max-width: 700px) {
       .container { max-width: 98vw; }
@@ -174,6 +131,8 @@
       <span id="usuario-nombre" class="small"></span>
       <button id="admin-btn" class="btn btn-outline-secondary btn-sm d-none" onclick="window.location.href='/admin'">Panel Admin</button>
       <button class="btn btn-outline-secondary btn-sm" onclick="window.location.href='/incidencias'">Incidencias</button>
+      <!-- 👇 Nuevo botón Chat interno -->
+      <a href="/chat" class="btn btn-outline-primary btn-sm">💬 Chat interno</a>
       <a href="/cambiar-password" class="btn btn-outline-dark btn-sm">Cambiar contraseña</a>
       <button class="btn btn-outline-secondary btn-sm" onclick="toggleChat()">Chat OpenAI</button>
       <button class="btn btn-outline-danger btn-sm" onclick="logout()">Cerrar sesión</button>
@@ -209,7 +168,7 @@
     </div>
   </div>
 
-  <!-- Chat -->
+  <!-- Chat flotante con OpenAI -->
   <div id="chatbox">
     <div id="chatbox-header">Chat con OpenAI</div>
     <div id="chat-messages"></div>
@@ -278,12 +237,9 @@
 
       document.getElementById("result").innerHTML = '<div class="alert alert-info">⏳ Analizando pliegos...</div>';
 
-      const response = await fetch("/analizar-pliego", {
-        method: "POST",
-        body: formData
-      });
-
+      const response = await fetch("/analizar-pliego", { method: "POST", body: formData });
       const data = await response.json();
+
       if (response.ok) {
         resumenGlobal = data.resumen;
         ultimoPDF = data.pdf;
@@ -340,9 +296,13 @@
       ultimoPDF = "";
     }
 
+    // Chat flotante con OpenAI (no es el chat interno entre usuarios)
     function toggleChat() {
       const chatbox = document.getElementById("chatbox");
       chatbox.style.display = chatbox.style.display === "flex" ? "none" : "flex";
+      if (chatbox.style.display === "flex") {
+        chatbox.style.display = "flex";
+      }
     }
 
     async function enviarChat() {
