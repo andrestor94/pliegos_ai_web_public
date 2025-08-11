@@ -6,9 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
   <style>
-    :root{
-      --azul:#044369; --bg:#f4f7fb; --card:#ffffff; --gris:#e9eef5;
-    }
+    :root{ --azul:#044369; --bg:#f4f7fb; --card:#ffffff; --gris:#e9eef5; }
     body{ background: var(--bg); }
     .app { height: 100vh; display: flex; flex-direction: column; }
     .chat-wrap { flex:1; display:grid; grid-template-columns: 320px 1fr; gap:16px; padding:16px; }
@@ -17,11 +15,14 @@
     /* Hilos */
     .hilos { display:flex; flex-direction:column; height:100%; }
     .hilos-list { overflow:auto; }
-    .item-hilo { padding:12px 16px; border-bottom:1px solid var(--gris); cursor:pointer; }
+    .item-hilo { padding:10px 12px; border-bottom:1px solid var(--gris); cursor:pointer; display:flex; gap:8px; align-items:center; }
     .item-hilo:hover{ background:#f7faff; }
     .item-hilo.active{ background:#e9f2ff; }
-    .item-hilo .nombre{ font-weight:600; color:#223; }
+    .item-hilo .info { flex:1; min-width:0; }
+    .item-hilo .nombre{ font-weight:600; color:#223; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .item-hilo .fecha{ font-size:12px; color:#666; }
+    .item-hilo .btn-del{ border:none; background:transparent; font-size:18px; line-height:1; opacity:.7; }
+    .item-hilo .btn-del:hover{ opacity:1; }
     /* Mensajes */
     .chat { display:flex; flex-direction:column; height:100%; }
     .chat-head { padding:8px 16px; border-bottom:1px solid var(--gris); display:flex; align-items:center; gap:8px; }
@@ -33,30 +34,42 @@
     .chat-input input { border-radius:10px; }
     .chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; background:#eef5ff; border-radius:999px; font-size:14px;}
     .empty { color:#667; padding:16px; }
-    @media (max-width: 900px){
-      .chat-wrap{ grid-template-columns: 1fr; }
-    }
+    @media (max-width: 900px){ .chat-wrap{ grid-template-columns: 1fr; } }
+    /* Autocompletar */
+    .auto-wrap{ position:relative; }
+    .auto-list{ position:absolute; z-index:1000; top:100%; left:0; right:0; background:#fff; border:1px solid #e5e7eb; border-radius:10px; margin-top:.25rem; list-style:none; padding:.25rem 0; display:none; max-height:280px; overflow:auto; box-shadow:0 10px 25px rgba(0,0,0,.08); }
+    .auto-li{ padding:.5rem .75rem; cursor:pointer; }
+    .auto-li .nm{ font-weight:600; }
+    .auto-li .em{ font-size:.85rem; color:#6b7280; }
+    .auto-li.active, .auto-li:hover{ background:#f3f4f6; }
+    /* Badge no leídos */
+    .badge-pill{ border-radius:999px; }
   </style>
 </head>
 <body>
 <div class="app">
   <nav class="navbar navbar-light bg-white shadow-sm px-3">
     <a href="/" class="navbar-brand">← Volver</a>
-    <span class="ms-auto chip">
-      <span id="yoEmail">...</span>
-    </span>
+
+    <div class="ms-auto d-flex align-items-center gap-2">
+      <span id="noLeidosWrap" class="chip" title="Mensajes no leídos">
+        🔔 <span id="noLeidosBadge" class="badge bg-danger badge-pill">0</span>
+      </span>
+      <span class="chip"><span id="yoEmail">...</span></span>
+    </div>
   </nav>
 
   <div class="chat-wrap">
     <!-- Panel Hilos -->
     <div class="panel hilos">
       <h5>Conversaciones</h5>
-      <div class="p-3 border-bottom">
+      <div class="p-3 border-bottom auto-wrap">
         <div class="input-group">
           <span class="input-group-text">@</span>
-          <input id="nuevoPara" type="email" class="form-control" placeholder="email@suizo.com (nuevo contacto)" />
+          <input id="nuevoPara" type="text" class="form-control" placeholder="nombre o email..." autocomplete="off" />
           <button id="btnAbrir" class="btn btn-primary">Abrir</button>
         </div>
+        <ul id="sugs" class="auto-list"></ul>
       </div>
       <div id="listaHilos" class="hilos-list"></div>
     </div>
@@ -64,10 +77,8 @@
     <!-- Panel Chat -->
     <div class="panel chat">
       <div class="chat-head">
-        <div class="chip">
-          Conversando con:
-          <strong id="conEmail">—</strong>
-        </div>
+        <div class="chip">Conversando con: <strong id="conEmail">—</strong></div>
+        <button id="btnEliminarChat" class="btn btn-sm btn-outline-danger ms-2" title="Eliminar chat (ocultar)">🗑</button>
         <button id="btnRefrescar" class="btn btn-sm btn-outline-secondary ms-auto">Refrescar</button>
       </div>
       <div id="chatBody" class="chat-body">
@@ -86,7 +97,9 @@
   let yo = null;
   let con = null; // email del contacto seleccionado
   let refresco = null;
+  let refrescoNoLeidos = null;
 
+  // --- Utils fetch ---
   async function getJSON(url){
     const r = await fetch(url);
     if(!r.ok) throw new Error("Error HTTP " + r.status);
@@ -99,8 +112,10 @@
       body: JSON.stringify(data)
     });
     if(!r.ok){
-      const t = await r.text().catch(()=> '');
-      throw new Error(t || ('Error HTTP ' + r.status));
+      let msg = '';
+      try{ msg = (await r.json()).error || ''; }catch(_){}
+      if(!msg){ try{ msg = await r.text(); }catch(_){} }
+      throw new Error(msg || ('Error HTTP ' + r.status));
     }
     return r.json();
   }
@@ -123,15 +138,18 @@
       div.className = 'item-hilo';
       div.dataset.email = h.con;
       div.innerHTML = `
-        <div class="nombre">${h.con}</div>
-        <div class="fecha">${h.ultima_fecha || ''}</div>
+        <div class="info">
+          <div class="nombre">${escapeHtml(h.con)}</div>
+          <div class="fecha">${h.ultima_fecha || ''}</div>
+        </div>
+        <button class="btn-del" title="Eliminar chat (ocultar)" aria-label="Eliminar">🗑</button>
       `;
-      div.onclick = () => {
-        con = h.con;
-        document.getElementById('conEmail').textContent = con;
-        setActiveHilo(con);
-        cargarMensajes();
-        iniciarAutoRefresh();
+      // abrir hilo al hacer click en el área de info
+      div.querySelector('.info').onclick = () => abrirChat(h.con);
+      // ocultar hilo con el botón
+      div.querySelector('.btn-del').onclick = async (ev) => {
+        ev.stopPropagation();
+        await ocultar(h.con);
       };
       cont.appendChild(div);
     });
@@ -149,7 +167,7 @@
       const div = document.createElement('div');
       div.className = 'msg' + (m.de === yo ? ' you' : '');
       div.innerHTML = `
-        <div class="meta">${m.de} • ${m.fecha}</div>
+        <div class="meta">${escapeHtml(m.de)} • ${m.fecha}</div>
         <div class="txt">${escapeHtml(m.texto)}</div>
       `;
       body.appendChild(div);
@@ -158,12 +176,66 @@
   }
 
   function escapeHtml(str){
-    return str.replace(/[&<>"']/g, s => (
+    return (str || '').toString().replace(/[&<>"']/g, s => (
       { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[s]
     ));
   }
 
-  // --- Lógica ---
+  // --- Autocompletar (live, /api/usuarios?term=) ---
+  const $input = document.getElementById('nuevoPara');
+  const $sugs  = document.getElementById('sugs');
+  let sugItems = [];
+  let sugIdx = -1;
+  let debounceId = null;
+
+  function debounce(fn, ms){ clearTimeout(debounceId); debounceId = setTimeout(fn, ms); }
+
+  async function buscar(term){
+    term = (term || '').trim();
+    if(!term){ sugItems=[]; renderSugs(); return; }
+    try{
+      const data = await getJSON(`/api/usuarios?term=${encodeURIComponent(term)}`);
+      sugItems = data.items || [];
+      sugIdx = sugItems.length ? 0 : -1;
+      renderSugs();
+    }catch(e){ sugItems=[]; renderSugs(); }
+  }
+
+  function renderSugs(){
+    $sugs.innerHTML = '';
+    if(!sugItems.length){ $sugs.style.display='none'; return; }
+    sugItems.forEach((it, i)=>{
+      const li = document.createElement('li');
+      li.className = 'auto-li' + (i===sugIdx?' active':'');
+      li.innerHTML = `<div class="nm">${escapeHtml(it.nombre || '(Sin nombre)')}</div>
+                      <div class="em">${escapeHtml(it.email)}</div>`;
+      li.onclick = ()=> seleccionarSugerencia(i);
+      $sugs.appendChild(li);
+    });
+    $sugs.style.display='block';
+  }
+
+  function seleccionarSugerencia(i){
+    if(i<0 || i>=sugItems.length) return;
+    const email = sugItems[i].email;
+    $input.value = email;
+    $sugs.style.display='none';
+    abrirChat(email);
+  }
+
+  $input.addEventListener('input', (e)=> debounce(()=> buscar(e.target.value), 160));
+  $input.addEventListener('keydown', (e)=>{
+    if($sugs.style.display==='none') return;
+    if(e.key==='ArrowDown'){ e.preventDefault(); sugIdx = Math.min(sugIdx+1, sugItems.length-1); renderSugs(); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); sugIdx = Math.max(sugIdx-1, 0); renderSugs(); }
+    else if(e.key==='Enter'){ if(sugIdx>=0){ e.preventDefault(); seleccionarSugerencia(sugIdx); } }
+    else if(e.key==='Escape'){ $sugs.style.display='none'; }
+  });
+  document.addEventListener('click', (e)=>{
+    if(!e.target.closest('.auto-wrap')) $sugs.style.display='none';
+  });
+
+  // --- Lógica principal ---
   async function cargarYo(){
     const info = await getJSON('/usuario-actual');
     yo = info.usuario || 'Desconocido';
@@ -185,6 +257,8 @@
     try{
       const data = await getJSON(`/chat/mensajes?con=${encodeURIComponent(con)}`);
       renderMensajes(data.mensajes || []);
+      await marcarLeidos(con);   // marcar leídos después de mostrar
+      await cargarNoLeidos();    // refrescar badge global
     }catch(e){
       console.error(e);
       alert('No se pudieron cargar los mensajes.');
@@ -195,7 +269,7 @@
     const input = document.getElementById('inputMsg');
     const texto = (input.value || '').trim();
     if(!con){
-      alert('Elegí un contacto o escribí uno nuevo a la izquierda.');
+      alert('Elegí un contacto o buscá uno con @.');
       return;
     }
     if(!texto) return;
@@ -203,42 +277,99 @@
       await postJSON('/chat/enviar', { para: con, texto });
       input.value = '';
       await cargarMensajes();
-      await cargarHilos(); // para actualizar orden por última fecha
+      await cargarHilos(); // actualizar orden
     }catch(e){
       console.error(e);
       alert('No se pudo enviar el mensaje.');
     }
   }
 
+  async function abrirChat(email){
+    try{
+      await postJSON('/chat/abrir', { con: email }); // restaura si estaba oculto
+      con = email;
+      document.getElementById('conEmail').textContent = con;
+      setActiveHilo(con);
+      await marcarLeidos(con);
+      await cargarMensajes();
+      await cargarHilos();
+      iniciarAutoRefresh();
+    }catch(e){
+      console.error(e);
+      alert('No se pudo abrir el chat.');
+    }
+  }
+
+  async function ocultar(email){
+    if(!email) return;
+    if(!confirm('¿Eliminar chat? Esto solo lo ocultará de tu lista, no borra mensajes.')) return;
+    try{
+      await postJSON('/chat/ocultar', { con: email });
+      if(con === email){
+        // salimos del hilo activo
+        con = null;
+        document.getElementById('conEmail').textContent = '—';
+        document.getElementById('chatBody').innerHTML = '<div class="empty">Seleccioná una conversación o creá una nueva desde la izquierda.</div>';
+        if(refresco) clearInterval(refresco);
+      }
+      await cargarHilos();
+      await cargarNoLeidos();
+    }catch(e){
+      console.error(e);
+      alert('No se pudo eliminar el chat.');
+    }
+  }
+
+  async function marcarLeidos(remitente){
+    if(!remitente) return;
+    try{
+      await postJSON('/chat/marcar-leidos', { de: remitente });
+    }catch(e){
+      console.warn('No se pudieron marcar leídos:', e?.message || e);
+    }
+  }
+
   function iniciarAutoRefresh(){
     if(refresco) clearInterval(refresco);
-    // refresco cada 5s los mensajes del hilo activo
     refresco = setInterval(cargarMensajes, 5000);
+  }
+
+  // --- Badge global de no leídos ---
+  async function cargarNoLeidos(){
+    try{
+      const data = await getJSON('/chat/no-leidos');
+      const n = (data && typeof data.no_leidos === 'number') ? data.no_leidos : 0;
+      const badge = document.getElementById('noLeidosBadge');
+      badge.textContent = n;
+      badge.classList.toggle('bg-danger', n > 0);
+      badge.classList.toggle('bg-secondary', n === 0);
+      document.title = (n > 0 ? `(${n}) ` : '') + 'Chat interno';
+    }catch(e){
+      // silencioso
+    }
+  }
+  function iniciarAutoNoLeidos(){
+    if(refrescoNoLeidos) clearInterval(refrescoNoLeidos);
+    refrescoNoLeidos = setInterval(cargarNoLeidos, 10000); // cada 10s
   }
 
   // --- Eventos ---
   document.getElementById('btnEnviar').onclick = enviar;
-  document.getElementById('inputMsg').addEventListener('keypress', (e)=>{
-    if(e.key === 'Enter') enviar();
-  });
-  document.getElementById('btnRefrescar').onclick = ()=> {
-    cargarMensajes();
-    cargarHilos();
-  };
+  document.getElementById('inputMsg').addEventListener('keypress', (e)=>{ if(e.key === 'Enter') enviar(); });
+  document.getElementById('btnRefrescar').onclick = ()=> { cargarMensajes(); cargarHilos(); };
   document.getElementById('btnAbrir').onclick = ()=>{
-    const email = document.getElementById('nuevoPara').value.trim();
+    const email = $input.value.trim();
     if(!email) return;
-    con = email;
-    document.getElementById('conEmail').textContent = con;
-    setActiveHilo(con);
-    cargarMensajes();
-    iniciarAutoRefresh();
+    abrirChat(email);
   };
+  document.getElementById('btnEliminarChat').onclick = ()=> ocultar(con);
 
   // --- Init ---
   (async ()=>{
     await cargarYo();
     await cargarHilos();
+    await cargarNoLeidos();
+    iniciarAutoNoLeidos();
   })();
 </script>
 </body>
