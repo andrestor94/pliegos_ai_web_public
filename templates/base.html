@@ -65,7 +65,7 @@
         "sidebar content";
     }
 
-    /* Sidebar fijo a todo el alto, con botones centrados visualmente */
+    /* Sidebar */
     .sidebar{
       grid-area:sidebar;
       background: linear-gradient(180deg, #0f172a, #0b1220);
@@ -88,6 +88,7 @@
       border:1px solid rgba(255,255,255,.08);
       background:rgba(255,255,255,.03);
       transition: transform .06s ease, box-shadow .2s ease, background .2s ease, color .2s ease;
+      text-decoration:none;
     }
     .side-btn:hover{ transform:translateY(-2px); color:#fff; box-shadow:0 12px 22px rgba(0,0,0,.28); background:rgba(255,255,255,.08); }
     .side-btn.active{ color:#fff; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); border-color:transparent; box-shadow:0 10px 22px rgba(139,92,246,.35); }
@@ -95,7 +96,7 @@
     .side-spacer{ flex:1; }
     .side-small{ color:#94a3b8; font-size:12px; margin-top:6px; }
 
-    /* Header superior (fijo dentro del tablero) */
+    /* Header superior */
     .header{
       grid-area:header;
       display:flex; align-items:center; gap:12px;
@@ -112,12 +113,12 @@
     .brand b{ font-weight:700; }
     .header-actions{ margin-left:auto; display:flex; align-items:center; gap:10px; }
 
-    .pill{ border-radius:999px; padding:.55rem 1rem; border:1px solid var(--border); background:var(--pill); color:#222; font-weight:500; }
+    .pill{ border-radius:999px; padding:.55rem 1rem; border:1px solid var(--border); background:var(--pill); color:#222; font-weight:500; text-decoration:none; }
     .pill-grad{ border:none; color:#fff; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); box-shadow:0 12px 26px rgba(139,92,246,.32); }
     .pill-icon{ display:inline-flex; align-items:center; gap:.5rem; }
     .icon-btn{ width:44px; height:44px; display:grid; place-items:center; border-radius:14px; border:1px solid var(--border); background:#fff; }
 
-    /* Área de contenido: ocupa todo y lleva el degradado SUAVE dentro */
+    /* Área de contenido */
     .content{
       grid-area:content;
       position:relative;
@@ -129,7 +130,7 @@
         radial-gradient(900px 660px at 16% 16%, rgba(37,99,235,.10), transparent 60%),
         radial-gradient(1000px 720px at 84% 80%, rgba(236,72,153,.12), transparent 60%),
         radial-gradient(780px 560px at 76% 8%, rgba(124,58,237,.10), transparent 60%),
-        #f7f8ff; /* base */
+        #f7f8ff;
     }
 
     /* Tarjetas / grilla reutilizable */
@@ -205,16 +206,7 @@
 
       <!-- ===== Área de contenido ===== -->
       <main class="content">
-        {% block content %}
-        <!--
-        <div class="grid">
-          <section class="cardx col-8">Contenido 1</section>
-          <aside   class="cardx col-4">Sidebar</aside>
-          <section class="cardx col-6">Contenido 2</section>
-          <section class="cardx col-6">Contenido 3</section>
-        </div>
-        -->
-        {% endblock %}
+        {% block content %}{% endblock %}
       </main>
     </div>
   </div>
@@ -238,7 +230,9 @@
     async function getUsuario(){
       try{
         const r=await fetch('/usuario-actual'); if(!r.ok) return;
-        const d=await r.json(); document.getElementById('usuario-nombre').textContent = d?.usuario ? `· ${d.usuario}` : '';
+        const d=await r.json();
+        const target=document.getElementById('usuario-nombre');
+        if(target) target.textContent = d?.usuario ? `· ${d.usuario}` : '';
       }catch(_){}
     }
 
@@ -249,13 +243,19 @@
     /* Notificaciones */
     const notifBtn = document.getElementById('btnNotif');
     const notifPanel = document.getElementById('notif-panel');
-    notifBtn?.addEventListener('click', ()=>{ notifPanel.style.display = (notifPanel.style.display==='block'?'none':'block'); });
-    document.addEventListener('click', (e)=>{ if(!e.target.closest('#notif-panel') && !e.target.closest('#btnNotif')) notifPanel.style.display='none'; });
+    notifBtn?.addEventListener('click', ()=>{ if(!notifPanel) return; notifPanel.style.display = (notifPanel.style.display==='block'?'none':'block'); });
+    document.addEventListener('click', (e)=>{
+      if(!notifPanel) return;
+      if(!e.target.closest('#notif-panel') && !e.target.closest('#btnNotif')) notifPanel.style.display='none';
+    });
     document.getElementById('btnMarkRead')?.addEventListener('click', async ()=>{
-      try{ await fetch('/notificaciones/marcar-leidas',{method:'POST'}); showToast({title:'Notificaciones', body:'Marcadas como leídas', icon:'check2-circle'}); }catch(_){}
+      try{
+        await fetch('/notificaciones/marcar-leidas',{method:'POST'});
+        showToast({title:'Notificaciones', body:'Marcadas como leídas', icon:'check2-circle'});
+      }catch(_){}
     });
 
-    /* Chat IA (solo abre tu widget existente) */
+    /* Chat IA (abrir widget existente) */
     const CHAT_STATE_KEY='chatboxState';
     function openChatAndExpand(){ localStorage.setItem(CHAT_STATE_KEY,'open'); showToast({title:'Chat OpenAI', body:'Abierto.', icon:'robot'}); }
 
@@ -269,21 +269,21 @@
       });
     })();
 
-    /* Toast helper */
+    /* Toast helper (escape simple) */
     function showToast({title='Aviso', body='', icon='info', delay=3200}={}){
       const cont=document.getElementById('toastContainer'); if(!cont) return;
+      const esc=(s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
       const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
       el.innerHTML=`<div class="toast-header">
-        <i class="bi bi-${icon} me-1"></i><strong class="me-auto">${title}</strong>
+        <i class="bi bi-${esc(icon)} me-1"></i><strong class="me-auto">${esc(title)}</strong>
         <small>Ahora</small><button class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
-      </div><div class="toast-body">${body}</div>`;
+      </div><div class="toast-body">${esc(body)}</div>`;
       cont.appendChild(el); const t=new bootstrap.Toast(el,{delay}); t.show(); el.addEventListener('hidden.bs.toast',()=> el.remove());
     }
 
     getUsuario();
   </script>
 
-  {% block extra_head %}{% endblock %}
   {% block extra_scripts %}{% endblock %}
 </body>
 </html>
