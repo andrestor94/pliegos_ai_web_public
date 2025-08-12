@@ -257,6 +257,10 @@
   // Init
   window.addEventListener('load', ()=>{
     loadHistorial();
+    // Si llegamos con /#historial, hacemos scroll al cargar
+    if(location.hash === '#historial'){
+      document.getElementById('historial')?.scrollIntoView({behavior:'smooth', block:'start'});
+    }
   });
 </script>
 {% endblock %}
