@@ -4,6 +4,17 @@
 {% block extra_head %}
   <!-- FullCalendar -->
   <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css" rel="stylesheet"/>
+  <style>
+    .segmented .btn{ border-radius:999px; }
+    .segmented .btn.active{ background:var(--brand-soft); border-color:var(--brand); color:var(--brand); }
+    .fab{
+      position:fixed; right:20px; bottom:20px; z-index:999;
+      border-radius:999px; box-shadow:var(--shadow);
+    }
+    /* calendario dentro de card */
+    #calendar .fc .fc-toolbar-title{ font-weight:700; color:var(--brand); }
+    #calendar .fc .fc-button{ border-radius:10px; }
+  </style>
 {% endblock %}
 
 {% block content %}
@@ -99,11 +110,12 @@
 </div>
 
 <!-- FAB Chat OpenAI -->
-<button class="btn btn-primary fab" onclick="toggleAiWidget()"><i class="bi bi-robot me-2"></i>Chat OpenAI</button>
+<button class="btn btn-primary fab" onclick="openChatAndExpand()"><i class="bi bi-robot me-2"></i>Chat OpenAI</button>
 {% endblock %}
 
 {% block extra_scripts %}
 <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/locales-all.global.min.js"></script>
 <script>
   // Fecha de hoy
   (function(){
@@ -125,16 +137,18 @@
       nowIndicator:true,
       firstDay:1,
       navLinks:true,
-      events: async (info, cb) => {
+      events: async (info, successCallback) => {
         try{
           const r = await fetch('/api/calendar/events');
           const j = await r.json();
-          cb(j.events || []);
-          // KPI semana (7 días desde hoy)
+          successCallback(j.events || []);
+          // KPI semana
           const start=new Date(); const end=new Date(); end.setDate(start.getDate()+7);
           const cnt=(j.events||[]).filter(e=>{const d=new Date(e.start||e.date); return d>=start && d<=end;}).length;
           document.getElementById('kpiSemana').textContent = cnt;
-        }catch(e){ cb([]); document.getElementById('kpiSemana').textContent='0'; }
+        }catch(e){
+          successCallback([]); document.getElementById('kpiSemana').textContent='0';
+        }
       },
       eventTimeFormat:{hour:'2-digit',minute:'2-digit',meridiem:false},
     });
@@ -153,7 +167,7 @@
     document.getElementById('todayBtn').addEventListener('click',()=>calendar.today());
   })();
 
-  // ====== Módulo análisis (tuyo, adaptado) ======
+  // ====== Módulo análisis ======
   let resumenGlobal="", ultimoPDF="", archivosSeleccionados=[];
 
   function agregarArchivos(){
@@ -245,10 +259,6 @@
   // Init
   window.addEventListener('load', ()=>{
     loadHistorial();
-    // Etiqueta de usuario (opcional)
-    fetch("/usuario-actual").then(r=>r.json()).then(d=>{
-      // si querés mostrar algo adicional, está disponible aquí
-    });
   });
 </script>
 {% endblock %}

@@ -3,11 +3,23 @@
 
 {% block extra_head %}
 <style>
+  :root{
+    --text: var(--ink, #0f1222);
+    --text-2: var(--muted, #667085);
+    --card: var(--panel, #ffffff);
+    --bg: #f6f7fe;
+    --bg-soft: #eef2ff;
+    --bg-strong: #e4e9ff;
+    --brand: #2563eb;
+    --brand-soft: #e8f0ff;
+    --border-strong: #d9def0;
+  }
+
   .app { min-height: calc(100vh - var(--navbar-h,56px)); display:flex; flex-direction:column; }
   .chat-wrap { flex:1; display:grid; grid-template-columns: 320px 1fr; gap:16px; }
   @media (max-width: 900px){ .chat-wrap{ grid-template-columns: 1fr; } }
 
-  .panel { background: var(--card); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; }
+  .panel { background: var(--card); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; border:1px solid var(--border); }
   .panel .panel-title{ margin:0; padding:14px 16px; color: var(--brand); border-bottom: 1px solid var(--border); font-weight:600; }
 
   /* Hilos */
@@ -44,13 +56,16 @@
   .btn-icon{ display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; border-radius:10px; }
 
   /* Adjuntos múltiples */
-  .dz{ flex:1; min-height:42px; border:1px dashed var(--border-strong); border-radius:12px; background:var(--bg-soft); padding:8px 10px; color:var(--text-2); display:flex; align-items:center; gap:8px; cursor:pointer; }
+  .dz{
+    flex:1; min-height:42px; border:1px dashed var(--border-strong); border-radius:12px;
+    background:var(--bg-soft); padding:8px 10px; color:var(--text-2);
+    display:flex; align-items:center; justify-content:center; gap:8px; cursor:pointer;
+  }
   .dz.dragover{ background:#eef6ff; border-color:#85aee6; }
   .chips{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; padding:0 12px 8px; }
   .chip-file{ display:inline-flex; align-items:center; gap:8px; padding:5px 8px; background:var(--bg-soft); border-radius:999px; font-size:12px; }
   .chip-file button{ border:none; background:transparent; line-height:1; font-size:14px; }
   .chip-thumb{ width:26px; height:26px; border-radius:6px; object-fit:cover; background:#fff; border:1px solid var(--border); }
-  .totals{ font-size:12px; color:var(--text-2); padding:0 12px 10px; }
 </style>
 {% endblock %}
 
@@ -92,14 +107,13 @@
       <div class="chat-input">
         <input id="inputMsg" type="text" class="form-control" placeholder="Escribe un mensaje..." />
         <div id="drop" class="dz" title="Clic o arrastrá archivos">
-          <span id="dzHint">📎 Adjuntar…</span>
+          📎 Adjuntar
           <input id="inputFiles" type="file" multiple style="display:none" />
         </div>
         <button id="btnPick" class="btn btn-outline-secondary btn-icon" title="Elegir archivos">📎</button>
         <button id="btnEnviar" class="btn btn-primary">Enviar</button>
       </div>
       <div id="chips" class="chips"></div>
-      <div id="totals" class="totals"></div>
     </section>
   </div>
 </div>
@@ -143,7 +157,7 @@
         if(cfg?.allowed_ext) CONFIG = cfg;
       }
     }catch(e){}
-    document.getElementById('dzHint').innerHTML = `📎 Adjuntar… <span class="muted">(máx. ${CONFIG.max_files} archivos / ${CONFIG.max_total_mb} MB totales)</span>`;
+    // ya no mostramos ningún texto de límites en la UI
   })();
   function extPermitida(name){ const ext=(name.split('.').pop()||'').toLowerCase(); return CONFIG.allowed_ext.includes(ext); }
   function isImage(name){ return /\.(png|jpg|jpeg|gif|webp)$/i.test(name); }
@@ -297,7 +311,6 @@
   const $drop  = document.getElementById('drop');
   const $chips = document.getElementById('chips');
   const $btnPick = document.getElementById('btnPick');
-  const $totals = document.getElementById('totals');
 
   $btnPick.onclick = () => $files.click();
   $drop.onclick = () => $files.click();
@@ -312,17 +325,12 @@
       if(selectedFiles.length >= CONFIG.max_files){ alert(`Máximo ${CONFIG.max_files} archivos por mensaje.`); break; }
       selectedFiles.push(f);
     }
-    limitTotal(); renderChips(); renderTotals();
+    limitTotal(); renderChips();
   }
   function limitTotal(){
+    // Se respeta el límite total silenciosamente (sin texto en UI)
     const maxBytes = CONFIG.max_total_mb*1024*1024;
     while(selectedFiles.reduce((a,b)=>a+b.size,0) > maxBytes){ selectedFiles.pop(); }
-  }
-  function renderTotals(){
-    if(!selectedFiles.length){ $totals.textContent=''; return; }
-    const total = selectedFiles.reduce((a,b)=>a+b.size,0);
-    const mb = total/1024/1024;
-    $totals.textContent = `Archivos seleccionados: ${selectedFiles.length} • Total: ${mb.toFixed(2)} MB (límite ${CONFIG.max_total_mb} MB)`;
   }
   function renderChips(){
     $chips.innerHTML=''; if(!selectedFiles.length) return;
@@ -334,7 +342,7 @@
       }
       const label=document.createElement('span'); label.innerHTML=`${escapeHtml(f.name)} <small class="muted">${Math.round(f.size/1024)} KB</small>`;
       const btn=document.createElement('button'); btn.title='Quitar'; btn.setAttribute('aria-label','Quitar'); btn.innerHTML='&times;';
-      btn.onclick=()=>{ selectedFiles.splice(idx,1); renderChips(); renderTotals(); };
+      btn.onclick=()=>{ selectedFiles.splice(idx,1); renderChips(); };
       chip.appendChild(label); chip.appendChild(btn); $chips.appendChild(chip);
     });
   }
@@ -364,7 +372,7 @@
         if(!msg){ try{ msg=await resp.text(); }catch(_){} }
         throw new Error(msg || 'No se pudo enviar los adjuntos.');
       }
-      selectedFiles=[]; renderChips(); renderTotals(); document.getElementById('inputMsg').value='';
+      selectedFiles=[]; renderChips(); document.getElementById('inputMsg').value='';
       await cargarMensajes(); await cargarHilos();
     }catch(e){ console.error(e); alert(e.message || 'No se pudo enviar los adjuntos.'); }
     finally{ toggleSending(false); }
@@ -403,7 +411,7 @@
       <small>Ahora</small>
       <button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
     </div><div class="toast-body">${body}</div>`;
-    container.appendChild(el); const t=new bootstrap.Toast(el,{delay:3000}); t.show(); el.addEventListener('hidden.bs.toast',()=>el.remove());
+    container.appendChild(el); const t=new bootstrap.Toast(el,{delay:3000}); t.show(); el.addEventListener('hidden-bs.toast',()=>el.remove());
   }
   let notifOpen=false;
   function toggleNotifPanel(){ notifOpen=!notifOpen; const p=document.getElementById('notif-panel'); if(p) p.style.display = notifOpen ? 'block':'none'; }
@@ -438,7 +446,6 @@
     await cargarHilos();
     await cargarNoLeidos();
     iniciarAutoNoLeidos();
-    // Estado del chat IA (topbar) – la lógica ya está en base.html
     fetchNotifs();
     setInterval(fetchNotifs, 30000);
   })();

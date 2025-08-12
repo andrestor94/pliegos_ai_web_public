@@ -1,521 +1,250 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Todas las notificaciones</title>
+{% extends "base.html" %}
+{% block title %}Notificaciones – Suizo Argentina{% endblock %}
 
-  <!-- Bootstrap & Icons -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"/>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
+{% block extra_head %}
+<style>
+  /* ——— Estilos específicos de la vista ——— */
+  .toolbar{ gap:.5rem; }
+  .toolbar .form-control, .toolbar .form-select{ border-radius:10px; }
 
-  <style>
-    :root{
-      --color-azul:#044369;
-      --color-azul-sec:#0d6efd;
-      --color-gris:#eceff4;
-      --color-gris-medio:#c8d0df;
-      --color-gris-oscuro:#354151;
-      --color-verde:#1b7b5a;
-      --color-rojo:#c62828;
+  .notif-item{
+    display:grid; grid-template-columns: 28px 1fr auto; gap:10px;
+    padding:12px; border-bottom:1px solid var(--border);
+  }
+  .notif-item:last-child{ border-bottom:none; }
+  .notif-item.unread{ background:var(--bg-soft); }
+  .notif-title{ font-weight:600; color:var(--text); }
+  .notif-meta{ font-size:.82rem; color:var(--text-2); }
+  .notif-body{ color:var(--text-1); }
+  .badge-kind{
+    background:#e3ecf5; color:var(--brand);
+    border:1px solid #b6d1ea; border-radius:999px; padding:.15rem .5rem; font-size:.72rem;
+  }
+  .actions .btn{ border-radius:8px!important; }
 
-      --bg:#f6f8ff;
-      --card:#ffffff;
-      --ink:#0a0a0a;
-      --primary:#2f6adf;
-      --primary-ink:#ffffff;
-      --ring:rgba(47,106,223,.35);
-      --shadow:0 10px 30px rgba(0,0,0,.06);
-      --radius:16px;
-    }
+  .empty{ color:var(--text-2); padding:18px; text-align:center; }
 
-    body{ background:var(--bg); color:var(--ink); }
-    .container{ max-width: 980px; margin-top:56px; }
+  @media (max-width:700px){
+    .notif-item{ grid-template-columns: 24px 1fr; }
+    .notif-item .actions{ grid-column: 1 / -1; display:flex; gap:.5rem; }
+  }
+</style>
+{% endblock %}
 
-    /* Navbar + Offcanvas */
-    .navbar-wrap{ background:#fff; border-bottom:1.5px solid var(--color-azul-sec); box-shadow:0 2px 8px rgba(4,67,105,0.05); }
-    .navbar-brand{ color:var(--color-azul)!important; font-weight:600; }
-    .logo{ height:32px; margin-right:8px; }
-    .btn-solid{
-      background:var(--primary); color:var(--primary-ink); border:0; padding:.5rem .85rem; border-radius:12px;
-      transition:transform .08s ease, box-shadow .2s ease; box-shadow:0 6px 16px rgba(47,106,223,.25);
-    }
-    .btn-solid:hover{ transform:translateY(-1px); }
-    .btn-ghost{ background:transparent; border:1px solid #e5e7eb; padding:.5rem .8rem; border-radius:12px; }
-    .btn-ghost:hover{ background:#f3f4f6; }
-    .navbar-toggler-icon{
-      display:inline-block; width:1.5rem; height:1.5rem;
-      background-image:url("data:image/svg+xml,%3csvg viewBox='0 0 30 30' xmlns='http://www.w3.org/2000/svg'%3e%3cpath stroke='rgba(0,0,0,.7)' stroke-width='2' stroke-linecap='round' stroke-miterlimit='10' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
-      background-repeat:no-repeat; background-position:center;
-    }
-    .offcanvas{ border-radius:0 var(--radius) var(--radius) 0; }
-    .offcanvas .nav-link-mobile{
-      display:flex; align-items:center; gap:.6rem; padding:.7rem .8rem; border-radius:12px; color:var(--ink); text-decoration:none;
-    }
-    .offcanvas .nav-link-mobile:hover{ background:#f3f4f6; }
-    .offcanvas .nav-link-mobile.active{ background:#e8efff; color:#1e40af; }
+{% block content %}
+<div class="py-3">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="hero-title mb-0">🔔 Notificaciones</h1>
+    <a href="/" class="btn btn-outline-secondary btn-sm">← Volver</a>
+  </div>
 
-    /* Tarjetas / lista */
-    .card{ border-radius:18px; border:none; box-shadow:0 4px 24px rgba(4,67,105,0.09); background:var(--card); }
-    h2{ color:var(--color-azul); font-weight:700; }
-    .notif-item{ display:grid; grid-template-columns: 28px 1fr auto; gap:10px; padding:12px; border-bottom:1px solid #e9eef5; }
-    .notif-item:last-child{ border-bottom:none; }
-    .notif-item.unread{ background:#f2f7ff; }
-    .notif-title{ font-weight:600; color:#111827; }
-    .notif-meta{ font-size:.82rem; color:#6b7280; }
-    .notif-body{ color:#374151; }
-    .badge-kind{ background:#e3ecf5; color:var(--color-azul); border:1px solid #b6d1ea; border-radius:999px; padding:.15rem .5rem; font-size:.72rem; }
-    .actions .btn{ border-radius:8px!important; }
-
-    .toolbar{ gap:.5rem; }
-    .toolbar .form-control, .toolbar .form-select{ border-radius:8px; border-color:var(--color-gris-medio)!important; }
-
-    .empty{ color:#6b7280; padding:18px; text-align:center; }
-
-    /* Mini campanita (persistente) + panel (mismo que otras vistas) */
-    #notif-fab{
-      position:fixed; right:20px; bottom:88px; z-index:999; border-radius:999px; padding:.55rem .75rem;
-      box-shadow:0 8px 18px rgba(4,67,105,0.18); background:#fff; border:1px solid #e5e7eb;
-    }
-    #notif-badge{ transform: translate(20%, -40%); }
-    #notif-panel{
-      position:fixed; right:20px; bottom:148px; width:320px; max-height:50vh; overflow:auto; z-index:1000; background:#fff;
-      border:1px solid #e5e7eb; border-radius:14px; box-shadow:0 12px 28px rgba(0,0,0,.12); display:none;
-    }
-
-    /* Chat IA flotante */
-    #chatbox{
-      position:fixed; bottom:20px; right:20px; width:350px; height:450px; border-radius:16px; background:#fff;
-      box-shadow:0 0 20px rgba(4,67,105,0.12); display:none; flex-direction:column; overflow:hidden; z-index:1000;
-      border:1.5px solid var(--color-azul);
-    }
-    #chatbox-header{
-      background:var(--color-azul); color:#fff; padding:10px; font-weight:600; font-size:1.05em; letter-spacing:.03em;
-      display:flex; align-items:center; justify-content:space-between;
-    }
-    #chat-messages{ flex:1; padding:12px 14px; overflow-y:auto; background:#f7fbff; }
-    #chat-input{ border-top:1px solid #e2e5ec; display:flex; }
-    #chat-input input{ flex:1; padding:10px; border:none; outline:none; font-size:1em; }
-    #chat-input button{ background:var(--color-azul); color:#fff; border:none; padding:10px 16px; border-radius:0 0 12px 0; }
-    #chat-fab{
-      position:fixed; right:20px; bottom:20px; z-index:999; display:none;
-      border-radius:999px; padding:.6rem .9rem; box-shadow:0 8px 18px rgba(4,67,105,0.18);
-    }
-
-    /* Toasts */
-    .toast-container{ position: fixed; right: 16px; bottom: 16px; z-index: 1200; }
-    .toast{ border-radius:12px; box-shadow:var(--shadow); }
-    .toast-header{ border-bottom:none; }
-
-    @media (max-width: 1000px){ .container{ max-width: 98vw; } }
-    @media (max-width:700px){
-      #chatbox{ right:5vw; width:94vw; height:60vh; }
-      #notif-panel{ right:5vw; width:90vw; }
-      .notif-item{ grid-template-columns: 24px 1fr; }
-      .notif-item .actions{ grid-column: 1 / -1; display:flex; gap:.5rem; }
-    }
-  </style>
-</head>
-<body>
-
-  <!-- ===== Navbar ===== -->
-  <header class="navbar-wrap sticky-top">
-    <nav class="navbar navbar-expand-lg px-3">
-      <button class="btn-ghost d-lg-none me-2" type="button" data-bs-toggle="offcanvas" data-bs-target="#menuOffcanvas" aria-controls="menuOffcanvas" aria-label="Abrir menú">
-        <span class="navbar-toggler-icon"></span>
-      </button>
-
-      <a class="navbar-brand d-flex align-items-center" href="/">
-        <img src="/static/logo-suizo.png" class="logo" alt="Logo Suizo"/>
-        <span>Suizo Argentina <b>- Licitaciones IA</b></span>
-      </a>
-
-      <div class="ms-auto d-none d-lg-flex align-items-center gap-2">
-        <span id="usuario-nombre" class="small me-2"></span>
-        <a href="/chat" class="btn-ghost">💬 Chat interno</a>
-        <button class="btn-ghost" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Chat OpenAI</button>
-        <a href="/calendario" class="btn-ghost">Calendario</a>
-        <a href="/incidencias" class="btn-ghost">Incidencias</a>
-        <a href="/cambiar-password" class="btn-ghost">Cambiar contraseña</a>
-        <a href="/admin" class="btn-ghost d-none" id="admin-link-desktop">Panel Admin</a>
-        <button class="btn-ghost text-danger" onclick="logout()"><i class="bi bi-box-arrow-right"></i> Salir</button>
-      </div>
-    </nav>
-  </header>
-
-  <!-- ===== Offcanvas (móvil) ===== -->
-  <div class="offcanvas offcanvas-start" tabindex="-1" id="menuOffcanvas" aria-labelledby="menuOffcanvasLabel">
-    <div class="offcanvas-header">
-      <h5 id="menuOffcanvasLabel" class="m-0">Menú</h5>
-      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Cerrar"></button>
-    </div>
-    <div class="offcanvas-body d-flex flex-column gap-2">
-      <div class="mb-2"><div id="usuario-nombre-mobile" class="small text-muted"></div></div>
-
-      <a class="nav-link-mobile" href="/"><i class="bi bi-house"></i> Inicio</a>
-      <a class="nav-link-mobile" href="/historia"><i class="bi bi-clock-history"></i> Historial</a>
-      <a class="nav-link-mobile" href="/chat"><i class="bi bi-chat-dots"></i> Chat interno</a>
-      <a class="nav-link-mobile" href="/calendario"><i class="bi bi-calendar-event"></i> Calendario</a>
-      <a class="nav-link-mobile" href="/incidencias"><i class="bi bi-bug"></i> Incidencias</a>
-      <a class="nav-link-mobile" href="/cambiar-password"><i class="bi bi-key"></i> Cambiar contraseña</a>
-      <a class="nav-link-mobile d-none" id="admin-link-mobile" href="/admin"><i class="bi bi-gear"></i> Administración</a>
-
-      <button class="btn-solid mt-3" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Abrir Chat OpenAI</button>
-
-      <div class="mt-auto pt-3 border-top">
-        <button class="nav-link-mobile text-danger" onclick="logout()"><i class="bi bi-box-arrow-right"></i> Salir</button>
+  <!-- Filtros / acciones -->
+  <div class="card card-clean shadow-hover mb-3">
+    <div class="card-body">
+      <div class="row g-2 align-items-center toolbar">
+        <div class="col-sm-6">
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input id="search" type="text" class="form-control" placeholder="Buscar por título o contenido…">
+          </div>
+        </div>
+        <div class="col-sm-3">
+          <select id="filterUnread" class="form-select">
+            <option value="all">Todas</option>
+            <option value="unread">Solo no leídas</option>
+          </select>
+        </div>
+        <div class="col-sm-3 d-flex gap-2 justify-content-sm-end">
+          <button id="btnMarkSelected" class="btn btn-outline-success btn-sm" disabled>
+            <i class="bi bi-check2-all"></i> Marcar selección
+          </button>
+          <button id="btnMarkAll" class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-check2-square"></i> Marcar todas
+          </button>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- ===== Contenido ===== -->
-  <main class="container">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-      <h2 class="mb-0">🔔 Notificaciones</h2>
-      <a href="/" class="btn btn-outline-secondary btn-sm">← Volver</a>
-    </div>
-
-    <div class="card shadow-sm mb-3">
-      <div class="card-body">
-        <div class="row g-2 align-items-center toolbar">
-          <div class="col-sm-6">
-            <div class="input-group">
-              <span class="input-group-text"><i class="bi bi-search"></i></span>
-              <input id="search" type="text" class="form-control" placeholder="Buscar por título o contenido…">
-            </div>
-          </div>
-          <div class="col-sm-3">
-            <select id="filterUnread" class="form-select">
-              <option value="all">Todas</option>
-              <option value="unread">Solo no leídas</option>
-            </select>
-          </div>
-          <div class="col-sm-3 d-flex gap-2 justify-content-sm-end">
-            <button id="btnMarkSelected" class="btn btn-outline-success btn-sm" disabled><i class="bi bi-check2-all"></i> Marcar selección</button>
-            <button id="btnMarkAll" class="btn btn-outline-primary btn-sm"><i class="bi bi-check2-square"></i> Marcar todas</button>
-          </div>
-        </div>
+  <!-- Lista -->
+  <div class="card card-clean shadow-hover">
+    <div class="card-body p-0">
+      <div id="list" role="list"><!-- items --></div>
+      <div class="p-2 border-top d-flex justify-content-between align-items-center">
+        <div class="small text-muted" id="counter">0 mostradas</div>
+        <button id="loadMore" class="btn btn-outline-secondary btn-sm">Cargar más</button>
       </div>
-    </div>
-
-    <div class="card shadow-sm">
-      <div class="card-body p-0">
-        <div id="list" role="list">
-          <!-- Notificaciones se inyectan aquí -->
-        </div>
-        <div class="p-2 border-top d-flex justify-content-between align-items-center">
-          <div class="small text-muted" id="counter">0 mostradas</div>
-          <button id="loadMore" class="btn btn-outline-secondary btn-sm">Cargar más</button>
-        </div>
-      </div>
-    </div>
-  </main>
-
-  <!-- ===== Chat IA flotante ===== -->
-  <div id="chatbox" aria-live="polite">
-    <div id="chatbox-header">
-      <span>Chat con OpenAI</span>
-      <div class="d-flex align-items-center gap-2">
-        <button class="btn btn-sm btn-light" title="Minimizar" onclick="minimizeChat()" style="border-radius:8px;">
-          <i class="bi bi-dash-lg"></i>
-        </button>
-        <button class="btn btn-sm btn-light" title="Cerrar" onclick="closeChat()" style="border-radius:8px;">
-          <i class="bi bi-x-lg"></i>
-        </button>
-      </div>
-    </div>
-    <div id="chat-messages"></div>
-    <div id="chat-input">
-      <input type="text" id="chat-text" placeholder="Escribe tu pregunta...">
-      <button onclick="enviarChat()">Enviar</button>
     </div>
   </div>
-  <button id="chat-fab" class="btn btn-solid" onclick="expandChat()">
-    <i class="bi bi-robot"></i> Chat IA
-  </button>
+</div>
+{% endblock %}
 
-  <!-- ===== Campanita + panel pequeño (consistente) ===== -->
-  <button id="notif-fab" class="btn" title="Notificaciones" onclick="toggleNotifPanel()">
-    <i class="bi bi-bell"></i>
-    <span id="notif-badge" class="badge text-bg-danger rounded-pill" style="display:none;">0</span>
-  </button>
-  <div id="notif-panel" class="small">
-    <div class="p-2 border-bottom d-flex align-items-center justify-content-between">
-      <strong>Notificaciones</strong>
-      <button class="btn btn-sm btn-ghost" onclick="markAllAsRead()">Marcar leídas</button>
-    </div>
-    <div id="notif-list"></div>
-    <div class="p-2 text-center">
-      <a href="/notificaciones" class="small">Ver todas</a>
-    </div>
-  </div>
+{% block extra_scripts %}
+<script>
+  // Helpers mínimos (nos apoyamos en base.html para showToast y estilos)
+  const escapeHtml = (s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const $ = (sel)=> document.querySelector(sel);
 
-  <!-- Toasts -->
-  <div class="toast-container" id="toastContainer"></div>
+  // Estado de la vista
+  const state = {
+    q: '',
+    onlyUnread: false,
+    limit: 20,
+    offset: 0,
+    loading: false,
+    done: false,
+    selected: new Set(),
+    totalShown: 0
+  };
 
-  <!-- ===== JS ===== -->
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script>
-    /* ===== Util ===== */
-    const escapeHtml = (s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const $ = (sel)=> document.querySelector(sel);
+  function renderCounter(){
+    $('#counter').textContent = `${state.totalShown} mostradas${state.onlyUnread ? ' (no leídas)' : ''}`;
+  }
+  function checkboxChanged(id, checked){
+    if(checked) state.selected.add(id); else state.selected.delete(id);
+    $('#btnMarkSelected').disabled = state.selected.size === 0;
+  }
 
-    /* ===== Usuario / Navbar ===== */
-    async function getUsuario() {
-      try{
-        const res = await fetch("/usuario-actual");
-        const data = await res.json();
-        document.getElementById("usuario-nombre").textContent = `👤 ${data.usuario}`;
-        const mobileName = document.getElementById("usuario-nombre-mobile");
-        if (mobileName) mobileName.textContent = `👤 ${data.usuario}`;
-        if (data.rol && data.rol.toLowerCase() === "admin") {
-          document.getElementById("admin-link-desktop")?.classList.remove("d-none");
-          document.getElementById("admin-link-mobile")?.classList.remove("d-none");
-        }
-      }catch(e){ console.error(e); }
+  function renderList(items, append){
+    const list = $('#list');
+    if(!append) list.innerHTML = '';
+    if(!items || !items.length){
+      if(!append) list.innerHTML = '<div class="empty">No hay notificaciones con esos criterios.</div>';
+      return;
     }
-    // Cerrar offcanvas al navegar
-    document.addEventListener('click', (e) => {
-      const link = e.target.closest('.offcanvas .nav-link-mobile, .offcanvas .btn, .offcanvas .dropdown-item');
-      if (!link) return;
-      const offcanvasEl = document.getElementById('menuOffcanvas');
-      if (!offcanvasEl) return;
-      const offcanvas = bootstrap.Offcanvas.getInstance(offcanvasEl);
-      if (offcanvas) offcanvas.hide();
-    });
-    function logout(){ fetch("/logout", { method: "POST" }).then(() => window.location.href = "/login"); }
-
-    /* ===== Chat IA flotante (persistencia) ===== */
-    const CHAT_STATE_KEY = 'chatboxState';
-    function applyChatState(){
-      const state = localStorage.getItem(CHAT_STATE_KEY) || 'closed';
-      const box = document.getElementById('chatbox');
-      const fab = document.getElementById('chat-fab');
-      if (state === 'open'){ box.style.display='flex'; fab.style.display='none'; }
-      else if (state === 'min'){ box.style.display='none'; fab.style.display='inline-flex'; }
-      else { box.style.display='none'; fab.style.display='none'; }
-    }
-    function openChatAndExpand(){ localStorage.setItem(CHAT_STATE_KEY,'open'); applyChatState(); }
-    function closeChat(){ localStorage.setItem(CHAT_STATE_KEY,'closed'); applyChatState(); }
-    function minimizeChat(){ localStorage.setItem(CHAT_STATE_KEY,'min'); applyChatState(); }
-    function expandChat(){ localStorage.setItem(CHAT_STATE_KEY,'open'); applyChatState(); }
-    async function enviarChat() {
-      const input = document.getElementById("chat-text");
-      const message = input.value.trim();
-      if (!message) return;
-      const chat = document.getElementById("chat-messages");
-      chat.innerHTML += `<div><b>Tú:</b> ${escapeHtml(message)}</div>`;
-      input.value = "";
-      const res = await fetch("/chat-openai", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ mensaje: message }) });
-      const data = await res.json();
-      chat.innerHTML += `<div><b>IA:</b> ${escapeHtml(data.respuesta || '')}</div>`;
-      chat.scrollTop = chat.scrollHeight;
-    }
-    document.addEventListener('keydown', (e) => {
-      if (e.key === "Enter" && document.activeElement?.id === "chat-text") enviarChat();
-    });
-
-    /* ===== Toasts ===== */
-    function showToast({title="Aviso", body="", icon="info"}) {
-      const container=document.getElementById('toastContainer'); if(!container) return;
-      const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
-      el.innerHTML=`<div class="toast-header">
-        <i class="bi bi-${escapeHtml(icon)} me-1"></i>
-        <strong class="me-auto">${escapeHtml(title)}</strong>
-        <small>Ahora</small>
-        <button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
-      </div><div class="toast-body">${escapeHtml(body)}</div>`;
-      container.appendChild(el); const t=new bootstrap.Toast(el,{delay:3200}); t.show(); el.addEventListener('hidden.bs.toast',()=>el.remove());
-    }
-
-    /* ===== Panel pequeño (campanita) ===== */
-    let notifOpen=false;
-    function toggleNotifPanel(){ notifOpen=!notifOpen; const p=document.getElementById('notif-panel'); if(p) p.style.display = notifOpen ? 'block':'none'; }
-    function renderBadge(n){ const b=document.getElementById('notif-badge'); if(!b) return; if(n>0){ b.style.display='inline-block'; b.textContent=n; } else { b.style.display='none'; } }
-    function renderNotifs(items){
-      const list=document.getElementById('notif-list'); if(!list) return; list.innerHTML='';
-      if(!items?.length){ list.innerHTML='<div class="p-3 text-muted">Sin notificaciones</div>'; return; }
-      items.forEach(n=>{
-        const div=document.createElement('div'); div.className='item '+(!n.leida?'unread':''); div.style.padding='10px 12px'; div.style.borderBottom='1px solid #f0f2f5';
-        div.innerHTML=`<div style="font-weight:600">${escapeHtml(n.titulo||'Notificación')}</div>
-                       <div class="small">${escapeHtml(n.cuerpo||'')}</div>
-                       <div class="small text-muted">${escapeHtml(n.fecha_legible||'')}</div>`;
-        list.appendChild(div);
-      });
-    }
-    async function smallFetchNotifs(){
-      try{
-        const r=await fetch('/notificaciones?limit=10');
-        if(!r.ok) return;
-        const data=await r.json();
-        renderNotifs(data.items||[]);
-        renderBadge(data.total_unread||0);
-      }catch(e){}
-    }
-    async function markAllAsRead(){
-      try{
-        await fetch('/notificaciones/marcar-leidas',{method:'POST'});
-        await smallFetchNotifs();
-        await reloadList(true);
-        showToast({title:'Notificaciones', body:'Marcadas como leídas', icon:'check2-circle'});
-      }catch(e){}
-    }
-
-    /* ===== Página principal de notificaciones ===== */
-    const state = {
-      q: '',
-      onlyUnread: false,
-      limit: 20,
-      offset: 0,
-      loading: false,
-      done: false,
-      selected: new Set(),
-      totalShown: 0
-    };
-
-    function renderCounter(){
-      $('#counter').textContent = `${state.totalShown} mostradas${state.onlyUnread ? ' (no leídas)' : ''}`;
-    }
-
-    function checkboxChanged(id, checked){
-      if(checked) state.selected.add(id); else state.selected.delete(id);
-      $('#btnMarkSelected').disabled = state.selected.size === 0;
-    }
-
-    function renderList(items, append){
-      const list = $('#list');
-      if(!append) list.innerHTML = '';
-      if(!items || !items.length){
-        if(!append) list.innerHTML = '<div class="empty">No hay notificaciones con esos criterios.</div>';
-        return;
-      }
-      const frag = document.createDocumentFragment();
-      items.forEach(n=>{
-        const id = n.id ?? n._id ?? String(Math.random());
-        const div = document.createElement('div');
-        div.className = 'notif-item' + (!n.leida ? ' unread' : '');
-        div.setAttribute('role','listitem');
-        div.innerHTML = `
-          <div class="form-check mt-1">
-            <input class="form-check-input" type="checkbox" id="chk_${id}">
+    const frag = document.createDocumentFragment();
+    items.forEach(n=>{
+      const id = n.id ?? n._id ?? String(Math.random());
+      const div = document.createElement('div');
+      div.className = 'notif-item' + (!n.leida ? ' unread' : '');
+      div.setAttribute('role','listitem');
+      div.innerHTML = `
+        <div class="form-check mt-1">
+          <input class="form-check-input" type="checkbox" id="chk_${id}">
+        </div>
+        <div>
+          <div class="d-flex align-items-center gap-2">
+            <div class="notif-title">${escapeHtml(n.titulo || 'Notificación')}</div>
+            ${n.tipo ? `<span class="badge-kind">${escapeHtml(n.tipo)}</span>` : ''}
           </div>
-          <div>
-            <div class="d-flex align-items-center gap-2">
-              <div class="notif-title">${escapeHtml(n.titulo || 'Notificación')}</div>
-              ${n.tipo ? `<span class="badge-kind">${escapeHtml(n.tipo)}</span>` : ''}
-            </div>
-            <div class="notif-body">${escapeHtml(n.cuerpo || '')}</div>
-            <div class="notif-meta">${escapeHtml(n.fecha_legible || '')} ${n.origen ? `• ${escapeHtml(n.origen)}` : ''}</div>
-          </div>
-          <div class="actions d-flex align-items-start gap-1">
-            ${!n.leida ? `<button class="btn btn-sm btn-outline-success" data-action="read">Marcar leída</button>` : ''}
-            <button class="btn btn-sm btn-outline-danger" data-action="delete"><i class="bi bi-trash"></i></button>
-          </div>
-        `;
-        // eventos
-        const chk = div.querySelector(`#chk_${CSS.escape(id)}`);
-        chk.addEventListener('change', (e)=> checkboxChanged(id, e.target.checked));
-        div.querySelector('.actions').addEventListener('click', async (e)=>{
-          const btn = e.target.closest('button'); if(!btn) return;
-          if(btn.dataset.action === 'read'){
-            await markIdsAsRead([id]);
-            div.classList.remove('unread');
-            btn.remove();
-          }else if(btn.dataset.action === 'delete'){
-            if(!confirm('¿Eliminar esta notificación?')) return;
-            try{
-              // TODO: si tu backend no soporta borrar, podés ocultar este botón.
-              await fetch('/notificaciones/eliminar',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id })});
-              div.remove();
-              state.totalShown = Math.max(0, state.totalShown - 1);
-              renderCounter();
-              showToast({title:'Notificación eliminada', icon:'trash'});
-            }catch(_){ showToast({title:'Error', body:'No se pudo eliminar.', icon:'exclamation-triangle'}); }
+          <div class="notif-body">${escapeHtml(n.cuerpo || '')}</div>
+          <div class="notif-meta">${escapeHtml(n.fecha_legible || '')} ${n.origen ? `• ${escapeHtml(n.origen)}` : ''}</div>
+        </div>
+        <div class="actions d-flex align-items-start gap-1">
+          ${!n.leida ? `<button class="btn btn-sm btn-outline-success" data-action="read">Marcar leída</button>` : ''}
+          <button class="btn btn-sm btn-outline-danger" data-action="delete"><i class="bi bi-trash"></i></button>
+        </div>
+      `;
+
+      // Eventos: checkbox selección
+      const chk = div.querySelector(`#chk_${CSS.escape(id)}`);
+      chk.addEventListener('change', (e)=> checkboxChanged(id, e.target.checked));
+
+      // Eventos: acciones item
+      div.querySelector('.actions').addEventListener('click', async (e)=>{
+        const btn = e.target.closest('button'); if(!btn) return;
+        if(btn.dataset.action === 'read'){
+          await markIdsAsRead([id]);
+          div.classList.remove('unread');
+          btn.remove();
+        }else if(btn.dataset.action === 'delete'){
+          if(!confirm('¿Eliminar esta notificación?')) return;
+          try{
+            // Si tu backend no soporta borrar, podés ocultar este botón.
+            const r = await fetch('/notificaciones/eliminar',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id })});
+            if(!r.ok) throw new Error();
+            div.remove();
+            state.totalShown = Math.max(0, state.totalShown - 1);
+            renderCounter();
+            (window.showToast||console.log)({title:'Notificación eliminada', icon:'trash'});
+          }catch(_){
+            (window.showToast||console.error)({title:'Error', body:'No se pudo eliminar.', icon:'exclamation-triangle'});
           }
-        });
-        frag.appendChild(div);
+        }
       });
-      list.appendChild(frag);
-    }
 
-    async function fetchList({append=false}={}){
-      if(state.loading || state.done) return;
-      state.loading = true;
-      $('#loadMore').disabled = true; $('#loadMore').textContent = 'Cargando…';
-      try{
-        const params = new URLSearchParams({
-          limit: String(state.limit),
-          offset: String(state.offset)
-        });
-        if(state.q) params.set('q', state.q);
-        if(state.onlyUnread) params.set('only_unread','1');
-        const r = await fetch(`/notificaciones?${params.toString()}`);
-        if(!r.ok) throw new Error('HTTP '+r.status);
-        const data = await r.json();
-        const items = data.items || data.lista || [];
-        renderList(items, append);
-        state.offset += items.length;
-        state.totalShown += items.length;
-        if(items.length < state.limit) state.done = true;
-        $('#loadMore').style.display = state.done ? 'none' : 'inline-block';
-        renderCounter();
-      }catch(e){
-        if(!append) $('#list').innerHTML = '<div class="empty">No se pudieron cargar las notificaciones.</div>';
-      }finally{
-        state.loading = false;
-        $('#loadMore').disabled = false; $('#loadMore').textContent = 'Cargar más';
-      }
-    }
-
-    async function reloadList(resetOffset){
-      if(resetOffset){
-        state.offset = 0; state.done = false; state.totalShown = 0;
-        state.selected.clear(); $('#btnMarkSelected').disabled = true;
-      }
-      await fetchList({append:false});
-    }
-
-    async function markIdsAsRead(ids){
-      try{
-        // Intenta marcar solo las indicadas; si el backend no soporta ids, hará markAll.
-        const r = await fetch('/notificaciones/marcar-leidas',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ids }) });
-        if(!r.ok) throw new Error();
-        showToast({title:'Listo', body: (ids.length>1? 'Notificaciones marcadas' : 'Notificación marcada'), icon:'check2-circle'});
-        state.selected.clear(); $('#btnMarkSelected').disabled = true;
-        await smallFetchNotifs();
-      }catch(_){
-        showToast({title:'Error', body:'No se pudieron marcar como leídas.', icon:'exclamation-triangle'});
-      }
-    }
-
-    /* ===== Eventos UI ===== */
-    document.getElementById('search').addEventListener('input', ()=>{
-      state.q = document.getElementById('search').value.trim();
-      reloadList(true);
+      frag.appendChild(div);
     });
-    document.getElementById('filterUnread').addEventListener('change', ()=>{
-      state.onlyUnread = document.getElementById('filterUnread').value === 'unread';
-      reloadList(true);
-    });
-    document.getElementById('loadMore').addEventListener('click', ()=> fetchList({append:true}));
-    document.getElementById('btnMarkAll').addEventListener('click', async ()=>{
-      if(!confirm('¿Marcar todas las notificaciones actuales como leídas?')) return;
-      await markAllAsRead();
-    });
-    document.getElementById('btnMarkSelected').addEventListener('click', async ()=>{
-      if(state.selected.size === 0) return;
-      await markIdsAsRead([...state.selected]);
+    list.appendChild(frag);
+  }
+
+  async function fetchList({append=false}={}){
+    if(state.loading || state.done) return;
+    state.loading = true;
+    $('#loadMore').disabled = true; $('#loadMore').textContent = 'Cargando…';
+    try{
+      const params = new URLSearchParams({
+        limit: String(state.limit),
+        offset: String(state.offset)
+      });
+      if(state.q) params.set('q', state.q);
+      if(state.onlyUnread) params.set('only_unread','1');
+
+      const r = await fetch(`/notificaciones?${params.toString()}`);
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const data = await r.json();
+      const items = data.items || data.lista || [];
+      renderList(items, append);
+      state.offset += items.length;
+      state.totalShown += items.length;
+      if(items.length < state.limit) state.done = true;
+      $('#loadMore').style.display = state.done ? 'none' : 'inline-block';
+      renderCounter();
+    }catch(e){
+      if(!append) $('#list').innerHTML = '<div class="empty">No se pudieron cargar las notificaciones.</div>';
+    }finally{
+      state.loading = false;
+      $('#loadMore').disabled = false; $('#loadMore').textContent = 'Cargar más';
+    }
+  }
+
+  async function reloadList(resetOffset){
+    if(resetOffset){
+      state.offset = 0; state.done = false; state.totalShown = 0;
+      state.selected.clear(); $('#btnMarkSelected').disabled = true;
+    }
+    await fetchList({append:false});
+  }
+
+  async function markIdsAsRead(ids){
+    try{
+      const r = await fetch('/notificaciones/marcar-leidas',{
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ids })
+      });
+      if(!r.ok) throw new Error();
+      (window.showToast||console.log)({title:'Listo', body:(ids.length>1? 'Notificaciones marcadas' : 'Notificación marcada'), icon:'check2-circle'});
+      state.selected.clear(); $('#btnMarkSelected').disabled = true;
+      // Actualizar campanita global (base.html)
+      if(window.fetchNotifs) await window.fetchNotifs();
+    }catch(_){
+      (window.showToast||console.error)({title:'Error', body:'No se pudieron marcar como leídas.', icon:'exclamation-triangle'});
+    }
+  }
+
+  async function markAllAsRead(){
+    try{
+      await fetch('/notificaciones/marcar-leidas',{method:'POST'});
+      (window.showToast||console.log)({title:'Notificaciones', body:'Marcadas como leídas', icon:'check2-circle'});
+      if(window.fetchNotifs) await window.fetchNotifs();
       await reloadList(true);
-    });
+    }catch(_){
+      (window.showToast||console.error)({title:'Error', body:'No se pudieron marcar todas.', icon:'exclamation-triangle'});
+    }
+  }
 
-    /* ===== Init ===== */
-    window.onload = async () => {
-      await getUsuario();
-      applyChatState();
-      await smallFetchNotifs();
-      await fetchList({append:false});
-      setInterval(smallFetchNotifs, 30000); // polling 30s para la campanita
-    };
-  </script>
-</body>
-</html>
+  // Eventos UI
+  document.addEventListener('DOMContentLoaded', ()=>{
+    $('#search').addEventListener('input', ()=>{ state.q = $('#search').value.trim(); reloadList(true); });
+    $('#filterUnread').addEventListener('change', ()=>{ state.onlyUnread = $('#filterUnread').value === 'unread'; reloadList(true); });
+    $('#loadMore').addEventListener('click', ()=> fetchList({append:true}));
+    $('#btnMarkAll').addEventListener('click', async ()=>{ if(confirm('¿Marcar todas las notificaciones actuales como leídas?')) await markAllAsRead(); });
+    $('#btnMarkSelected').addEventListener('click', async ()=>{ if(state.selected.size) { await markIdsAsRead([...state.selected]); await reloadList(true); } });
+  });
+
+  // Init (base.html ya carga nav, chat IA, campanita, etc.)
+  window.onload = async ()=>{
+    // Si base expone getUsuario/fetchNotifs, se ejecutan allí.
+    await reloadList(true);
+  };
+</script>
+{% endblock %}

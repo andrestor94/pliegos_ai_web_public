@@ -1,329 +1,103 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8"/>
-  <title>Calendario</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+{% extends "base.html" %}
 
-  <!-- Bootstrap & Icons -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
+{% block title %}Calendario · Suizo Argentina{% endblock %}
 
+{% block extra_head %}
   <!-- FullCalendar 6 -->
   <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/locales-all.global.min.js"></script>
 
   <style>
-    :root{
-      --color-azul:#044369; --color-azul-sec:#0d6efd; --color-gris:#eceff4; --color-gris-medio:#c8d0df; --color-gris-oscuro:#354151; --color-rojo:#c62828;
-      --bg:#f6f8ff; --card:#ffffff; --ink:#0a0a0a; --primary:#2f6adf; --primary-ink:#ffffff; --shadow:0 10px 30px rgba(0,0,0,.06); --radius:16px;
+    /* Ajustes visuales para integrarse al theme */
+    #calendar{
+      background:#fff; border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow);
+      padding:14px;
     }
-    body{ background:var(--bg); color:var(--ink); }
-    .container{ max-width: 1100px; margin-top:56px; }
-
-    /* Navbar + Offcanvas */
-    .navbar-wrap{ background:#fff; border-bottom:1.5px solid var(--color-azul-sec); box-shadow:0 2px 8px rgba(4,67,105,0.05); }
-    .navbar-brand{ color:var(--color-azul)!important; font-weight:600; }
-    .logo{ height:32px; margin-right:8px; }
-    .btn-ghost{ background:transparent; border:1px solid #e5e7eb; padding:.5rem .8rem; border-radius:12px; }
-    .btn-ghost:hover{ background:#f3f4f6; }
-    .btn-solid{ background:var(--primary); color:#fff; border:0; padding:.5rem .85rem; border-radius:12px; box-shadow:0 6px 16px rgba(47,106,223,.25); }
-    .navbar-toggler-icon{
-      display:inline-block; width:1.5rem; height:1.5rem;
-      background-image:url("data:image/svg+xml,%3csvg viewBox='0 0 30 30' xmlns='http://www.w3.org/2000/svg'%3e%3cpath stroke='rgba(0,0,0,.7)' stroke-width='2' stroke-linecap='round' stroke-miterlimit='10' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
-      background-repeat:no-repeat; background-position:center;
-    }
-    .offcanvas{ border-radius:0 var(--radius) var(--radius) 0; }
-    .offcanvas .nav-link-mobile{ display:flex; align-items:center; gap:.6rem; padding:.7rem .8rem; border-radius:12px; color:var(--ink); text-decoration:none; }
-    .offcanvas .nav-link-mobile:hover{ background:#f3f4f6; }
-
-    /* Card y calendario */
-    .card{ border:none; border-radius:18px; background:var(--card); box-shadow:0 4px 24px rgba(4,67,105,0.09); }
-    #calendar{ background:#fff; border-radius:14px; padding:12px; }
-    .fc .fc-toolbar-title{ font-weight:700; color:var(--color-azul); }
+    .fc .fc-toolbar-title{ font-weight:700; color:#0f172a; }
     .fc .fc-button{ border-radius:10px; }
     .fc-theme-standard .fc-scrollgrid{ border-radius:12px; overflow:hidden; }
-    .legend{ display:flex; gap:8px; align-items:center; }
+
+    .legend{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
     .dot{ width:12px; height:12px; border-radius:999px; display:inline-block; }
-
-    /* Chat IA flotante */
-    #chatbox{ position:fixed; bottom:20px; right:20px; width:350px; height:450px; border-radius:16px; background:#fff; box-shadow:0 0 20px rgba(4,67,105,0.12); display:none; flex-direction:column; overflow:hidden; z-index:1000; border:1.5px solid var(--color-azul); }
-    #chatbox-header{ background:var(--color-azul); color:#fff; padding:10px; font-weight:600; display:flex; align-items:center; justify-content:space-between; }
-    #chat-messages{ flex:1; padding:12px 14px; overflow-y:auto; background:#f7fbff; }
-    #chat-input-ai{ border-top:1px solid #e2e5ec; display:flex; }
-    #chat-input-ai input{ flex:1; padding:10px; border:none; outline:none; font-size:1em; }
-    #chat-input-ai button{ background:var(--color-azul); color:#fff; border:none; padding:10px 16px; border-radius:0 0 12px 0; }
-    #chat-fab{ position:fixed; right:20px; bottom:20px; z-index:999; display:none; border-radius:999px; padding:.6rem .9rem; box-shadow:0 8px 18px rgba(4,67,105,0.18); }
-
-    /* Toasts */
-    .toast-container{ position: fixed; right: 16px; bottom: 16px; z-index: 1200; }
-    .toast{ border-radius:12px; box-shadow:var(--shadow); }
-    .toast-header{ border-bottom:none; }
-    .toast .bi{ margin-right:.4rem; }
-
-    /* Notificaciones (panel pequeño) */
-    #notif-fab{ position:fixed; right:20px; bottom:88px; z-index:999; border-radius:999px; padding:.55rem .75rem; box-shadow:0 8px 18px rgba(4,67,105,0.18); background:#fff; border:1px solid #e5e7eb; }
-    #notif-fab .badge{ transform: translate(20%, -40%); }
-    #notif-panel{ position:fixed; right:20px; bottom:148px; width:320px; max-height:50vh; overflow:auto; z-index:1000; background:#fff; border:1px solid #e5e7eb; border-radius:14px; box-shadow:0 12px 28px rgba(0,0,0,.12); display:none; }
-    #notif-panel .item{ padding:10px 12px; border-bottom:1px solid #f0f2f5; }
-    #notif-panel .item.unread{ background:#f7fbff; }
-    #notif-panel .item:last-child{ border-bottom:none; }
-    #notif-panel .title{ font-weight:600; }
-    #notif-panel .time{ font-size:12px; color:#6b7280; }
-
-    @media (max-width: 700px){
-      .container{ max-width:98vw; }
-      #chatbox{ right:5vw; width:94vw; height:60vh; }
-      #notif-panel{ right:5vw; width:90vw; }
-    }
   </style>
-</head>
-<body>
+{% endblock %}
 
-  <!-- ===== Navbar ===== -->
-  <header class="navbar-wrap sticky-top">
-    <nav class="navbar navbar-expand-lg px-3">
-      <button class="btn-ghost d-lg-none me-2" type="button" data-bs-toggle="offcanvas" data-bs-target="#menuOffcanvas" aria-controls="menuOffcanvas" aria-label="Abrir menú">
-        <span class="navbar-toggler-icon"></span>
-      </button>
-
-      <a class="navbar-brand d-flex align-items-center" href="/">
-        <img src="/static/logo-suizo.png" class="logo" alt="Logo Suizo"/>
-        <span>Suizo Argentina <b>- Licitaciones IA</b></span>
-      </a>
-
-      <div class="ms-auto d-none d-lg-flex align-items-center gap-2">
-        <span id="usuario-nombre" class="small me-2"></span>
-        <a href="/chat" class="btn-ghost">💬 Chat interno</a>
-        <button class="btn-ghost" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Chat OpenAI</button>
-        <a href="/calendario" class="btn-ghost">Calendario</a>
-        <a href="/incidencias" class="btn-ghost">Incidencias</a>
-        <a href="/cambiar-password" class="btn-ghost">Cambiar contraseña</a>
-        <a href="/admin" class="btn-ghost d-none" id="admin-link-desktop">Panel Admin</a>
-        <button class="btn-ghost text-danger" onclick="logout()"><i class="bi bi-box-arrow-right"></i> Salir</button>
-      </div>
-    </nav>
-  </header>
-
-  <!-- ===== Offcanvas (móvil) ===== -->
-  <div class="offcanvas offcanvas-start" tabindex="-1" id="menuOffcanvas">
-    <div class="offcanvas-header">
-      <h5 class="m-0">Menú</h5>
-      <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
-    </div>
-    <div class="offcanvas-body d-flex flex-column gap-2">
-      <div class="mb-2"><div id="usuario-nombre-mobile" class="small text-muted"></div></div>
-
-      <a class="nav-link-mobile" href="/"><i class="bi bi-house"></i> Inicio</a>
-      <a class="nav-link-mobile" href="/historia"><i class="bi bi-clock-history"></i> Historial</a>
-      <a class="nav-link-mobile" href="/chat"><i class="bi bi-chat-dots"></i> Chat interno</a>
-      <a class="nav-link-mobile" href="/calendario"><i class="bi bi-calendar-event"></i> Calendario</a>
-      <a class="nav-link-mobile" href="/incidencias"><i class="bi bi-bug"></i> Incidencias</a>
-      <a class="nav-link-mobile" href="/cambiar-password"><i class="bi bi-key"></i> Cambiar contraseña</a>
-      <a class="nav-link-mobile d-none" id="admin-link-mobile" href="/admin"><i class="bi bi-gear"></i> Administración</a>
-
-      <button class="btn-solid mt-3" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Abrir Chat OpenAI</button>
-
-      <div class="mt-auto pt-3 border-top">
-        <button class="nav-link-mobile text-danger" onclick="logout()"><i class="bi bi-box-arrow-right"></i> Salir</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ===== Contenido ===== -->
-  <main class="container">
-    <div class="card p-3 mb-3">
+{% block content %}
+  <div class="grid">
+    <section class="cardx col-12">
       <div class="d-flex flex-wrap gap-2 align-items-center">
-        <h4 class="m-0" style="color:var(--color-azul);font-weight:700;">📅 Calendario</h4>
+        <h5 class="title mb-0"><i class="bi bi-calendar-event"></i> Calendario</h5>
         <div class="ms-auto legend">
-          <span class="dot" style="background:#0ea5e9"></span><small>General</small>
-          <span class="dot" style="background:#22c55e"></span><small>Incidencias</small>
-          <span class="dot" style="background:#f59e0b"></span><small>Pliegos</small>
+          <span class="dot" style="background:#0ea5e9"></span><small class="muted">General</small>
+          <span class="dot" style="background:#22c55e"></span><small class="muted">Incidencias</small>
+          <span class="dot" style="background:#f59e0b"></span><small class="muted">Pliegos</small>
         </div>
       </div>
-    </div>
+    </section>
 
-    <div id="calendar"></div>
-  </main>
-
-  <!-- ===== Chat IA flotante ===== -->
-  <div id="chatbox" aria-live="polite">
-    <div id="chatbox-header">
-      <span>Chat con OpenAI</span>
-      <div class="d-flex align-items-center gap-2">
-        <button class="btn btn-sm btn-light" title="Minimizar" onclick="minimizeChat()" style="border-radius:8px;"><i class="bi bi-dash-lg"></i></button>
-        <button class="btn btn-sm btn-light" title="Cerrar" onclick="closeChat()" style="border-radius:8px;"><i class="bi bi-x-lg"></i></button>
-      </div>
-    </div>
-    <div id="chat-messages"></div>
-    <div id="chat-input-ai">
-      <input type="text" id="chat-text" placeholder="Escribe tu pregunta...">
-      <button onclick="enviarChatIA()">Enviar</button>
-    </div>
-  </div>
-  <button id="chat-fab" class="btn btn-solid" onclick="expandChat()"><i class="bi bi-robot"></i> Chat IA</button>
-
-  <!-- Notificaciones: botón flotante y panel pequeño -->
-  <button id="notif-fab" class="btn" title="Notificaciones" onclick="toggleNotifPanel()">
-    <i class="bi bi-bell"></i>
-    <span id="notif-badge" class="badge text-bg-danger rounded-pill" style="display:none;">0</span>
-  </button>
-  <div id="notif-panel" class="small">
-    <div class="p-2 border-bottom d-flex align-items-center justify-content-between">
-      <strong>Notificaciones</strong>
-      <button class="btn btn-sm btn-ghost" onclick="markAllAsRead()">Marcar leídas</button>
-    </div>
-    <div id="notif-list"></div>
-    <div class="p-2 text-center">
-      <a href="/notificaciones" class="small">Ver todas</a>
-    </div>
+    <section class="col-12">
+      <div id="calendar" aria-label="Calendario de eventos"></div>
+    </section>
   </div>
 
-  <!-- Toasts -->
-  <div class="toast-container" id="toastContainer"></div>
-
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script>
-    /* ===== Usuario / Navbar ===== */
-    async function getUsuario(){
-      try{
-        const res = await fetch("/usuario-actual");
-        const data = await res.json();
-        document.getElementById("usuario-nombre").textContent = `👤 ${data.usuario}`;
-        const mobileName = document.getElementById("usuario-nombre-mobile");
-        if (mobileName) mobileName.textContent = `👤 ${data.usuario}`;
-        if (data.rol && data.rol.toLowerCase() === "admin") {
-          document.getElementById("admin-link-desktop")?.classList.remove("d-none");
-          document.getElementById("admin-link-mobile")?.classList.remove("d-none");
-        }
-      }catch(e){ console.error(e); }
-    }
-    document.addEventListener('click', (e) => {
-      const link = e.target.closest('.offcanvas .nav-link-mobile, .offcanvas .btn, .offcanvas .dropdown-item');
-      if (!link) return;
-      const el = document.getElementById('menuOffcanvas');
-      if (!el) return;
-      const oc = bootstrap.Offcanvas.getInstance(el);
-      if (oc) oc.hide();
-    });
-    function logout(){ fetch("/logout",{method:"POST"}).then(()=>location.href="/login"); }
-
-    /* ===== Chat IA (persistencia) ===== */
-    const CHAT_STATE_KEY='chatboxState';
-    function applyChatState(){
-      const s = localStorage.getItem(CHAT_STATE_KEY) || 'closed';
-      const box = document.getElementById('chatbox'); const fab = document.getElementById('chat-fab');
-      if (s==='open'){ box.style.display='flex'; fab.style.display='none'; }
-      else if (s==='min'){ box.style.display='none'; fab.style.display='inline-flex'; }
-      else { box.style.display='none'; fab.style.display='none'; }
-    }
-    function openChatAndExpand(){ localStorage.setItem(CHAT_STATE_KEY,'open'); applyChatState(); }
-    function closeChat(){ localStorage.setItem(CHAT_STATE_KEY,'closed'); applyChatState(); }
-    function minimizeChat(){ localStorage.setItem(CHAT_STATE_KEY,'min'); applyChatState(); }
-    function expandChat(){ localStorage.setItem(CHAT_STATE_KEY,'open'); applyChatState(); }
-    async function enviarChatIA(){
-      const input=document.getElementById("chat-text"); const msg=input.value.trim(); if(!msg) return;
-      const chat=document.getElementById("chat-messages"); chat.innerHTML+=`<div><b>Tú:</b> ${escapeHtml(msg)}</div>`; input.value="";
-      const res=await fetch("/chat-openai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mensaje:msg})});
-      const data=await res.json(); chat.innerHTML+=`<div><b>IA:</b> ${escapeHtml(data.respuesta||'')}</div>`; chat.scrollTop=chat.scrollHeight;
-    }
-    document.addEventListener('keydown', e=>{ if(e.key==="Enter" && document.activeElement?.id==="chat-text") enviarChatIA(); });
-
-    /* ===== Toasts helper ===== */
-    function showToast({title="Aviso", body="", icon="info"}){
-      const container=document.getElementById('toastContainer');
-      const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
-      el.innerHTML=`<div class="toast-header"><i class="bi bi-${icon} me-1"></i><strong class="me-auto">${title}</strong><small>Ahora</small><button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button></div><div class="toast-body">${body}</div>`;
-      container.appendChild(el); const t=new bootstrap.Toast(el,{delay:3000}); t.show(); el.addEventListener('hidden.bs.toast',()=>el.remove());
-    }
-
-    /* ===== Calendario ===== */
-    let calendar;
-
-    // Helpers fechas → ISO (o null)
-    function toIsoOrNull(d){ return d ? new Date(d).toISOString() : null; }
-
-    async function fetchEventos(){
-      try{
-        const r = await fetch('/calendario/eventos');
-        if(!r.ok) throw new Error('HTTP '+r.status);
-        return await r.json();
-      }catch(e){
-        // fallback de ejemplo para que no quede vacío en entornos sin backend listo
-        showToast({title:'Calendario', body:'No se pudo cargar del servidor. Mostrando ejemplo.', icon:'exclamation-triangle'});
-        const now = new Date();
-        const yyyy = now.getFullYear(), mm = String(now.getMonth()+1).padStart(2,'0'), dd = String(now.getDate()).padStart(2,'0');
-        return [
-          { id:'demo-1', title:'Evento demo', start:`${yyyy}-${mm}-${dd}T10:00:00`, end:`${yyyy}-${mm}-${dd}T11:00:00`, color:'#0ea5e9', description:'Solo ejemplo', allDay:false }
-        ];
-      }
-    }
-    async function crearEvento(payload){
-      const r = await fetch('/calendario/eventos',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-      if(!r.ok) throw new Error('No se pudo crear el evento');
-      return await r.json();
-    }
-    async function actualizarEvento(id, payload){
-      const r = await fetch(`/calendario/eventos/${encodeURIComponent(id)}`,{method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-      if(!r.ok) throw new Error('No se pudo actualizar el evento');
-      return await r.json().catch(()=> ({}));
-    }
-    async function eliminarEvento(id){
-      const r = await fetch(`/calendario/eventos/${encodeURIComponent(id)}`,{method:'DELETE'});
-      if(!r.ok) throw new Error('No se pudo eliminar el evento');
-    }
-
-    function abrirModalNuevo(info){
-      const id='modalNuevoEvt';
-      const html=`<div class="modal fade" id="${id}" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="border-radius:14px;">
-        <div class="modal-header"><h5 class="modal-title">Nuevo evento</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+  <!-- Modal: Nuevo evento -->
+  <div class="modal fade" id="modalNuevoEvt" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content" style="border-radius:14px;">
+        <div class="modal-header">
+          <h5 class="modal-title">Nuevo evento</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
         <div class="modal-body">
-          <div class="mb-2"><label class="form-label">Título</label><input id="evtTitle" class="form-control" placeholder="Reunión / Entrega..."></div>
-          <div class="mb-2"><label class="form-label">Descripción</label><textarea id="evtDesc" class="form-control" rows="3"></textarea></div>
-          <div class="mb-2"><label class="form-label">Tipo</label>
+          <div class="mb-2">
+            <label class="form-label">Título</label>
+            <input id="evtTitle" class="form-control" placeholder="Reunión / Entrega...">
+          </div>
+          <div class="mb-2">
+            <label class="form-label">Descripción</label>
+            <textarea id="evtDesc" class="form-control" rows="3"></textarea>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">Tipo</label>
             <select id="evtTipo" class="form-select">
               <option value="#0ea5e9">General</option>
               <option value="#22c55e">Incidencia</option>
               <option value="#f59e0b">Pliegos</option>
             </select>
           </div>
-          <div class="form-text">Rango: ${info.startStr}${info.endStr ? ' → '+info.endStr : ''}</div>
+          <div class="form-text" id="evtRangeTxt"></div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
           <button id="evtCreateBtn" class="btn btn-primary">Crear</button>
-        </div></div></div></div>`;
-      document.body.insertAdjacentHTML('beforeend', html);
-      const modalEl=document.getElementById(id); const modal=new bootstrap.Modal(modalEl); modal.show();
-      modalEl.querySelector('#evtCreateBtn').onclick = async ()=>{
-        const title=modalEl.querySelector('#evtTitle').value.trim();
-        const description=modalEl.querySelector('#evtDesc').value.trim();
-        const color=modalEl.querySelector('#evtTipo').value;
-        if(!title){ showToast({title:'Falta título', body:'El evento necesita un título.', icon:'exclamation-triangle'}); return; }
-        try{
-          const created = await crearEvento({ title, description, start: info.startStr, end: info.endStr || null, allDay: info.allDay, color });
-          calendar.addEvent({ ...created });
-          showToast({title:'Evento creado', body:title, icon:'check2-circle'});
-        }catch(e){ showToast({title:'Error', body:e.message||'No se pudo crear', icon:'exclamation-triangle'}); }
-        modal.hide(); modalEl.addEventListener('hidden.bs.modal',()=> modalEl.remove());
-      };
-      modalEl.addEventListener('hidden.bs.modal',()=> modalEl.remove());
-    }
+        </div>
+      </div>
+    </div>
+  </div>
 
-    function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-
-    function abrirModalDetalle(evt){
-      const id='modalDetalleEvt';
-      const html=`<div class="modal fade" id="${id}" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="border-radius:14px;">
-        <div class="modal-header"><h5 class="modal-title">Detalle del evento</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+  <!-- Modal: Detalle/editar -->
+  <div class="modal fade" id="modalDetalleEvt" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content" style="border-radius:14px;">
+        <div class="modal-header">
+          <h5 class="modal-title">Detalle del evento</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
         <div class="modal-body">
-          <div class="mb-2"><label class="form-label">Título</label><input id="evtTitleE" class="form-control" value="${escapeHtml(evt.title||'')}"></div>
-          <div class="mb-2"><label class="form-label">Descripción</label><textarea id="evtDescE" class="form-control" rows="3">${escapeHtml(evt.extendedProps?.description||'')}</textarea></div>
-          <div class="mb-2"><label class="form-label">Color</label>
-            <input id="evtColorE" type="color" class="form-control form-control-color" value="${evt.backgroundColor || evt.borderColor || '#0ea5e9'}">
+          <div class="mb-2">
+            <label class="form-label">Título</label>
+            <input id="evtTitleE" class="form-control">
           </div>
-          <div class="form-text"><i class="bi bi-calendar-event"></i> ${evt.start?.toLocaleString()} ${evt.end?(' → '+evt.end.toLocaleString()):''}</div>
+          <div class="mb-2">
+            <label class="form-label">Descripción</label>
+            <textarea id="evtDescE" class="form-control" rows="3"></textarea>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">Color</label>
+            <input id="evtColorE" type="color" class="form-control form-control-color" value="#0ea5e9">
+          </div>
+          <div class="form-text" id="evtTimeInfo"></div>
         </div>
         <div class="modal-footer d-flex justify-content-between">
           <button id="evtDelBtn" class="btn btn-outline-danger"><i class="bi bi-trash"></i> Eliminar</button>
@@ -331,150 +105,183 @@
             <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
             <button id="evtSaveBtn" class="btn btn-primary">Guardar</button>
           </div>
-        </div></div></div></div>`;
-      document.body.insertAdjacentHTML('beforeend', html);
-      const el=document.getElementById(id); const modal=new bootstrap.Modal(el); modal.show();
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
 
-      el.querySelector('#evtSaveBtn').onclick = async ()=>{
-        const title=el.querySelector('#evtTitleE').value.trim();
-        const description=el.querySelector('#evtDescE').value.trim();
-        const color=el.querySelector('#evtColorE').value;
-        try{
-          await actualizarEvento(evt.id, { title, description, color });
-          evt.setProp('title', title);
-          evt.setExtendedProp('description', description);
-          evt.setProp('backgroundColor', color);
-          evt.setProp('borderColor', color);
-          showToast({title:'Evento actualizado', body:title, icon:'check2-circle'});
-        }catch(e){ showToast({title:'Error', body:e.message||'No se pudo actualizar', icon:'exclamation-triangle'}); }
-        modal.hide(); el.addEventListener('hidden.bs.modal',()=> el.remove());
-      };
+{% block extra_scripts %}
+<script>
+  /* ===== Helpers ===== */
+  function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function toIsoOrNull(d){ return d ? new Date(d).toISOString() : null; }
+  function showToast({title="Aviso", body="", icon="info"}){
+    const cont=document.getElementById('toastContainer'); if(!cont) return;
+    const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
+    el.innerHTML=`<div class="toast-header"><i class="bi bi-${icon} me-1"></i><strong class="me-auto">${title}</strong><small>Ahora</small><button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button></div><div class="toast-body">${body}</div>`;
+    cont.appendChild(el); const t=new bootstrap.Toast(el,{delay:3000}); t.show(); el.addEventListener('hidden.bs.toast',()=>el.remove());
+  }
 
-      el.querySelector('#evtDelBtn').onclick = async ()=>{
-        if(!confirm('¿Eliminar este evento?')) return;
-        try{
-          await eliminarEvento(evt.id);
-          evt.remove();
-          showToast({title:'Evento eliminado', body:evt.title, icon:'trash'});
-          modal.hide(); el.addEventListener('hidden.bs.modal',()=> el.remove());
-        }catch(e){ showToast({title:'Error', body:e.message||'No se pudo eliminar', icon:'exclamation-triangle'}); }
-      };
-
-      el.addEventListener('hidden.bs.modal',()=> el.remove());
+  /* ===== API ===== */
+  async function fetchEventos(){
+    try{
+      const r = await fetch('/calendario/eventos');
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return await r.json();
+    }catch(e){
+      showToast({title:'Calendario', body:'No se pudo cargar del servidor. Mostrando ejemplo.', icon:'exclamation-triangle'});
+      const now = new Date();
+      const yyyy = now.getFullYear(), mm = String(now.getMonth()+1).padStart(2,'0'), dd = String(now.getDate()).padStart(2,'0');
+      return [{ id:'demo-1', title:'Evento demo', start:`${yyyy}-${mm}-${dd}T10:00:00`, end:`${yyyy}-${mm}-${dd}T11:00:00`, color:'#0ea5e9', description:'Solo ejemplo', allDay:false }];
     }
+  }
+  async function crearEvento(payload){
+    const r = await fetch('/calendario/eventos',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    if(!r.ok) throw new Error('No se pudo crear el evento');
+    return await r.json();
+  }
+  async function actualizarEvento(id, payload){
+    const r = await fetch(`/calendario/eventos/${encodeURIComponent(id)}`,{method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    if(!r.ok) throw new Error('No se pudo actualizar el evento');
+    return await r.json().catch(()=> ({}));
+  }
+  async function eliminarEvento(id){
+    const r = await fetch(`/calendario/eventos/${encodeURIComponent(id)}`,{method:'DELETE'});
+    if(!r.ok) throw new Error('No se pudo eliminar el evento');
+  }
 
-    async function initCalendar(){
-      const initialEvents = await fetchEventos();
-      const el = document.getElementById('calendar');
-      calendar = new FullCalendar.Calendar(el, {
-        height: 'auto',
-        locale: 'es',
-        firstDay: 1,
-        nowIndicator: true,
-        weekNumbers: true,
-        expandRows: true,
-        initialView: 'dayGridMonth',
-        headerToolbar: {
-          left: 'prev,next today',
-          center: 'title',
-          right: 'dayGridMonth,timeGridWeek,listWeek'
-        },
-        buttonText: {
-          today: 'Hoy',
-          month: 'Mes',
-          week: 'Semana',
-          day: 'Día',
-          list: 'Lista'
-        },
-        selectable: true,
-        selectMirror: true,
-        select: (info)=> abrirModalNuevo(info),
-        eventClick: (arg)=> abrirModalDetalle(arg.event),
-        editable: true,
-        eventDrop: async (arg)=>{
-          try{
-            await actualizarEvento(arg.event.id, {
-              start: toIsoOrNull(arg.event.start),
-              end:   toIsoOrNull(arg.event.end),
-              allDay: arg.event.allDay
-            });
-            showToast({title:'Evento movido', body:arg.event.title, icon:'check2-circle'});
-          }catch(e){ arg.revert(); showToast({title:'Error', body:'No se pudo mover', icon:'exclamation-triangle'}); }
-        },
-        eventResize: async (arg)=>{
-          try{
-            await actualizarEvento(arg.event.id, {
-              start: toIsoOrNull(arg.event.start),
-              end:   toIsoOrNull(arg.event.end)
-            });
-            showToast({title:'Duración actualizada', body:arg.event.title, icon:'check2-circle'});
-          }catch(e){ arg.revert(); showToast({title:'Error', body:'No se pudo cambiar duración', icon:'exclamation-triangle'}); }
-        },
-        events: initialEvents,
-        eventDidMount: (info)=>{
-          const color = info.event.backgroundColor || info.event.color || '#0ea5e9';
-          info.el.style.borderRadius = '8px';
-          info.el.style.borderColor = color;
-          if (info.event.extendedProps?.description){
-            new bootstrap.Tooltip(info.el, { title: info.event.extendedProps.description, placement:'top' });
-          }
+  /* ===== Modales ===== */
+  let _selectCtx = null;  // guarda el rango seleccionado para el modal "nuevo"
+  function openNuevoModal(info){
+    _selectCtx = info;
+    document.getElementById('evtTitle').value = '';
+    document.getElementById('evtDesc').value = '';
+    document.getElementById('evtTipo').value = '#0ea5e9';
+    document.getElementById('evtRangeTxt').textContent = `Rango: ${info.startStr}${info.endStr ? ' → '+info.endStr : ''}`;
+    new bootstrap.Modal(document.getElementById('modalNuevoEvt')).show();
+  }
+
+  function openDetalleModal(evt){
+    document.getElementById('evtTitleE').value = evt.title || '';
+    document.getElementById('evtDescE').value  = evt.extendedProps?.description || '';
+    const col = evt.backgroundColor || evt.borderColor || '#0ea5e9';
+    document.getElementById('evtColorE').value = col;
+    document.getElementById('evtTimeInfo').textContent =
+      `${evt.start?.toLocaleString()}${evt.end ? ' → '+evt.end.toLocaleString() : ''}`;
+    // Guardamos referencia en dataset para handlers
+    const modal = document.getElementById('modalDetalleEvt');
+    modal.dataset.eventId = evt.id;
+    new bootstrap.Modal(modal).show();
+  }
+
+  /* ===== Calendar ===== */
+  let calendar;
+  async function initCalendar(){
+    const initialEvents = await fetchEventos();
+    const el = document.getElementById('calendar');
+    calendar = new FullCalendar.Calendar(el, {
+      height: 'auto',
+      locale: 'es',
+      firstDay: 1,
+      nowIndicator: true,
+      weekNumbers: true,
+      expandRows: true,
+      initialView: 'dayGridMonth',
+      headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listWeek' },
+      buttonText: { today:'Hoy', month:'Mes', week:'Semana', day:'Día', list:'Lista' },
+      selectable: true,
+      selectMirror: true,
+      select: (info)=> openNuevoModal(info),
+      eventClick: (arg)=> openDetalleModal(arg.event),
+      editable: true,
+      eventDrop: async (arg)=>{
+        try{
+          await actualizarEvento(arg.event.id, {
+            start: toIsoOrNull(arg.event.start),
+            end:   toIsoOrNull(arg.event.end),
+            allDay: arg.event.allDay
+          });
+          showToast({title:'Evento movido', body:arg.event.title, icon:'check2-circle'});
+        }catch(e){ arg.revert(); showToast({title:'Error', body:'No se pudo mover', icon:'exclamation-triangle'}); }
+      },
+      eventResize: async (arg)=>{
+        try{
+          await actualizarEvento(arg.event.id, {
+            start: toIsoOrNull(arg.event.start),
+            end:   toIsoOrNull(arg.event.end)
+          });
+          showToast({title:'Duración actualizada', body:arg.event.title, icon:'check2-circle'});
+        }catch(e){ arg.revert(); showToast({title:'Error', body:'No se pudo cambiar duración', icon:'exclamation-triangle'}); }
+      },
+      events: initialEvents,
+      eventDidMount: (info)=>{
+        const color = info.event.backgroundColor || info.event.color || '#0ea5e9';
+        info.el.style.borderRadius = '8px';
+        info.el.style.borderColor = color;
+        if (info.event.extendedProps?.description){
+          new bootstrap.Tooltip(info.el, { title: info.event.extendedProps.description, placement:'top' });
         }
-      });
-      calendar.render();
-    }
-
-    /* ===== Notificaciones mínimas (recuadro pequeño) ===== */
-    let notifOpen = false;
-    function toggleNotifPanel(){
-      notifOpen = !notifOpen;
-      document.getElementById('notif-panel').style.display = notifOpen ? 'block' : 'none';
-    }
-    async function fetchNotifs(){
-      try{
-        const r = await fetch('/notificaciones?limit=20');
-        if(!r.ok) return;
-        const data = await r.json();
-        renderNotifs(data.items || []);
-        renderBadge(data.total_unread || 0);
-      }catch(e){}
-    }
-    function renderBadge(n){
-      const b = document.getElementById('notif-badge');
-      if(n>0){ b.style.display='inline-block'; b.textContent = n; }
-      else { b.style.display='none'; }
-    }
-    function renderNotifs(items){
-      const list = document.getElementById('notif-list');
-      list.innerHTML = '';
-      if(!items.length){
-        list.innerHTML = '<div class="p-3 text-muted">Sin notificaciones</div>';
-        return;
       }
-      items.forEach(n=>{
-        const div = document.createElement('div');
-        div.className = 'item ' + (!n.leida ? 'unread':'' );
-        div.innerHTML = `<div class="title">${escapeHtml(n.titulo||'Notificación')}</div>
-                         <div class="small">${escapeHtml(n.cuerpo||'')}</div>
-                         <div class="time">${escapeHtml(n.fecha_legible||'')}</div>`;
-        list.appendChild(div);
-      });
-    }
-    async function markAllAsRead(){
-      try{
-        await fetch('/notificaciones/marcar-leidas',{method:'POST'});
-        await fetchNotifs();
-        showToast({title:'Notificaciones', body:'Marcadas como leídas', icon:'check2-circle'});
-      }catch(e){}
-    }
+    });
+    calendar.render();
+  }
 
-    /* ===== Init ===== */
-    window.onload = async ()=>{
-      getUsuario();
-      applyChatState();
-      await initCalendar();
-      await fetchNotifs();
-      setInterval(fetchNotifs, 30000);
-    };
-  </script>
-</body>
-</html>
+  // Crear evento desde modal
+  document.getElementById('evtCreateBtn')?.addEventListener('click', async ()=>{
+    if(!_selectCtx) return;
+    const title = document.getElementById('evtTitle').value.trim();
+    const description = document.getElementById('evtDesc').value.trim();
+    const color = document.getElementById('evtTipo').value;
+    if(!title){ showToast({title:'Falta título', body:'El evento necesita un título.', icon:'exclamation-triangle'}); return; }
+    try{
+      const created = await crearEvento({
+        title, description, start:_selectCtx.startStr, end:_selectCtx.endStr || null, allDay:_selectCtx.allDay, color
+      });
+      calendar.addEvent({ ...created });
+      showToast({title:'Evento creado', body:title, icon:'check2-circle'});
+    }catch(e){ showToast({title:'Error', body:e.message||'No se pudo crear', icon:'exclamation-triangle'}); }
+    bootstrap.Modal.getInstance(document.getElementById('modalNuevoEvt'))?.hide();
+  });
+
+  // Guardar/Eliminar desde modal detalle
+  document.getElementById('evtSaveBtn')?.addEventListener('click', async ()=>{
+    const modal = document.getElementById('modalDetalleEvt');
+    const id = modal.dataset.eventId;
+    const evt = calendar.getEventById(id);
+    if(!evt) return;
+    const title = document.getElementById('evtTitleE').value.trim();
+    const description = document.getElementById('evtDescE').value.trim();
+    const color = document.getElementById('evtColorE').value;
+    try{
+      await actualizarEvento(id, { title, description, color });
+      evt.setProp('title', title);
+      evt.setExtendedProp('description', description);
+      evt.setProp('backgroundColor', color);
+      evt.setProp('borderColor', color);
+      showToast({title:'Evento actualizado', body:title, icon:'check2-circle'});
+      bootstrap.Modal.getInstance(modal)?.hide();
+    }catch(e){ showToast({title:'Error', body:e.message||'No se pudo actualizar', icon:'exclamation-triangle'}); }
+  });
+
+  document.getElementById('evtDelBtn')?.addEventListener('click', async ()=>{
+    const modal = document.getElementById('modalDetalleEvt');
+    const id = modal.dataset.eventId;
+    const evt = calendar.getEventById(id);
+    if(!evt) return;
+    if(!confirm('¿Eliminar este evento?')) return;
+    try{
+      await eliminarEvento(id);
+      const title = evt.title;
+      evt.remove();
+      showToast({title:'Evento eliminado', body:title, icon:'trash'});
+      bootstrap.Modal.getInstance(modal)?.hide();
+    }catch(e){ showToast({title:'Error', body:e.message||'No se pudo eliminar', icon:'exclamation-triangle'}); }
+  });
+
+  /* ===== Init ===== */
+  (async function(){
+    await initCalendar();
+  })();
+</script>
+{% endblock %}

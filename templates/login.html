@@ -5,74 +5,110 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Login - Suizo Argentina</title>
 
+  <!-- Inter -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <!-- Bootstrap & Icons -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
 
   <style>
     :root{
-      --color-azul:#044369;
-      --color-azul-sec:#0d6efd;
-      --color-gris:#eceff4;
-      --color-gris-medio:#c8d0df;
-      --color-gris-oscuro:#354151;
-      --bg:#f6f8ff;
-      --card:#ffffff;
-      --ink:#0a0a0a;
-      --primary:#2f6adf;
-      --primary-ink:#ffffff;
-      --shadow:0 10px 30px rgba(0,0,0,.08);
-      --radius:18px;
-    }
-    @media (prefers-color-scheme: dark){
-      :root{
-        --bg:#0b1020;
-        --card:#0f172a;
-        --ink:#e5e7eb;
-        --color-gris:#111827;
-        --color-gris-medio:#263146;
-        --color-gris-oscuro:#93a3b8;
-        --shadow:0 10px 30px rgba(0,0,0,.4);
-      }
-      .input-group-text{ background:#0f172a!important; color:#e5e7eb; }
-      .form-control{ color:var(--ink); background:#0b1222; }
-      .login-card{ border:1px solid #1f2a44; }
-    }
-    @media (prefers-reduced-motion: reduce){
-      *, *::before, *::after{ animation-duration:.001ms!important; animation-iteration-count:1!important; transition-duration:.001ms!important; scroll-behavior:auto!important; }
+      /* Variables alineadas con base.html */
+      --grad-a:#7c3aed;   /* violeta */
+      --grad-b:#ec4899;   /* magenta */
+      --grad-c:#2563eb;   /* azul */
+
+      --panel:#ffffff;
+      --ink:#0f1222;
+      --muted:#667085;
+      --border:#e7e9f2;
+
+      --accent-a:#8b5cf6; /* violeta claro */
+      --accent-b:#f472b6; /* rosa */
+
+      --radius:22px;
+      --shadow-xl:0 24px 70px rgba(20,15,55,.23);
+      --shadow:0 12px 32px rgba(20,15,55,.16);
+      --ring:0 0 0 3px rgba(139,92,246,.18);
     }
 
+    html, body { height:100%; }
     body{
-      background:linear-gradient(180deg,#f6f8ff 0%, #eef3ff 100%);
-      min-height:100vh; display:grid; place-items:center; color:var(--ink);
-    }
-    @media (prefers-color-scheme: dark){
-      body{ background:linear-gradient(180deg,#0b1020 0%, #0b1328 100%); }
+      margin:0;
+      font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      color:var(--ink);
+      /* Mismo fondo que base.html */
+      background:
+        radial-gradient(1000px 700px at 15% 10%, rgba(236,72,153,.65) 0%, transparent 60%),
+        radial-gradient(1000px 700px at 85% 90%, rgba(124,58,237,.65) 0%, transparent 60%),
+        linear-gradient(135deg, var(--grad-c), var(--grad-a) 55%, var(--grad-b));
+      background-attachment:fixed;
+      display:grid; place-items:center;
     }
 
-    .login-wrap{ width:min(420px, 92vw); }
+    .login-wrap{ width:min(440px, 92vw); }
     .brand{
-      display:flex; align-items:center; justify-content:center; gap:.6rem; margin-bottom:10px; color:var(--color-azul);
+      display:flex; align-items:center; justify-content:center; gap:.6rem; margin-bottom:12px;
+      color:#111827;
       font-weight:700; letter-spacing:.2px;
     }
-    .brand img{ height:40px; }
-    .login-card{ background:var(--card); border:none; border-radius:var(--radius); box-shadow:var(--shadow); }
-    .login-card .card-body{ padding:28px; }
-    .form-control{ border-radius:12px; border-color:var(--color-gris-medio)!important; }
-    .form-control:focus{ box-shadow:0 0 0 .2rem rgba(13,110,253,.15); }
-    .input-group-text{ background:#fff; border-color:var(--color-gris-medio)!important; border-radius:0 12px 12px 0; cursor:pointer; }
-    .btn-primary{ background:var(--color-azul)!important; border:none!important; border-radius:12px!important; padding:.65rem 1rem; }
-    .btn-primary:hover{ background:#022a47!important; }
-    .muted{ color:#6b7280; }
-    .link{ color:var(--color-azul-sec); text-decoration:none; }
+    .brand img{ height:42px; }
+
+    .login-card{
+      background:var(--panel);
+      border:1px solid rgba(255,255,255,.35);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow-xl);
+      overflow:hidden;
+    }
+    .login-card .card-header{
+      background:linear-gradient(0deg, rgba(255,255,255,.92), rgba(255,255,255,.92));
+      border-bottom:1px solid var(--border);
+      text-align:center; font-weight:700;
+      padding:14px 18px;
+    }
+    .login-card .card-body{ padding:26px 22px; }
+
+    .form-control{ border-radius:12px; border-color:var(--border)!important; }
+    .form-control:focus{ box-shadow:var(--ring); border-color:transparent!important; }
+    .input-group-text{
+      background:#fff; border-color:var(--border)!important; border-radius:0 12px 12px 0; cursor:pointer;
+    }
+
+    .btn-primary{
+      background:linear-gradient(135deg, var(--accent-a), var(--accent-b))!important;
+      border:none!important; border-radius:12px!important; padding:.65rem 1rem;
+      box-shadow:0 12px 26px rgba(139,92,246,.25);
+    }
+    .btn-primary:hover{ filter:brightness(1.02); }
+    .muted{ color:var(--muted); }
+    .link{ color:#0f62fe; text-decoration:none; }
     .link:hover{ text-decoration:underline; }
     .caps-hint{ display:none; color:#b45309; font-size:.9rem; }
     .caps-hint.show{ display:block; }
-    .foot{ text-align:center; color:#6b7280; font-size:.85rem; margin-top:12px; }
+    .foot{ text-align:center; color:#e9eef5; font-size:.9rem; margin-top:14px; text-shadow:0 1px 2px rgba(0,0,0,.2); }
+
     .toast-container{ position:fixed; right:16px; bottom:16px; z-index:1200; }
     .toast{ border-radius:12px; box-shadow:var(--shadow); }
     .toast-header{ border-bottom:none; }
+
     .sr-only{ position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); border:0; }
+
+    /* Modo oscuro preferido */
+    @media (prefers-color-scheme: dark){
+      :root{ --panel:#0f172a; --ink:#e5e7eb; --muted:#9aa4b2; --border:#1f2a44; }
+      .brand{ color:#e5e7eb; }
+      .login-card{ border:1px solid #1f2a44; }
+      .input-group-text{ background:#0f172a!important; color:#e5e7eb; }
+      .form-control{ color:var(--ink); background:#0b1222; }
+      .foot{ color:#b7c1d1; }
+    }
+
+    @media (prefers-reduced-motion: reduce){
+      *, *::before, *::after{
+        animation-duration:.001ms!important; animation-iteration-count:1!important; transition-duration:.001ms!important; scroll-behavior:auto!important;
+      }
+    }
   </style>
 </head>
 <body>
@@ -92,9 +128,10 @@
     {% endif %}
 
     <div class="card login-card">
+      <div class="card-header">
+        Inicio de sesión
+      </div>
       <div class="card-body">
-        <h4 class="mb-3 text-center" style="color:var(--color-azul);">Inicio de sesión</h4>
-
         <!-- Región aria-live para estado del envío -->
         <div id="status" class="sr-only" aria-live="polite"></div>
 
@@ -169,7 +206,6 @@
         e.currentTarget.querySelector('i').className = 'bi bi-eye-slash';
       }
       clearTimeout(_pressTimer);
-      // fallback por si queda presionado
       _pressTimer = setTimeout(()=>{}, 1500);
     }
     function releaseShow(){
@@ -189,7 +225,7 @@
       capsHint.classList.toggle('show', !!caps);
     });
     document.getElementById('password').addEventListener('keydown', (e)=>{
-      if(e.key === 'Enter'){ // Enter envía
+      if(e.key === 'Enter'){
         e.preventDefault();
         document.getElementById('loginForm').requestSubmit();
       }
@@ -235,7 +271,7 @@
       btn.querySelector('.spinner-border').classList.remove('d-none');
       status.textContent = 'Enviando…';
 
-      // Fallback: re-habilitar a los 15s por si la red está muy lenta (el servidor igual recargará)
+      // Fallback: re-habilitar a los 15s por si la red está muy lenta
       setTimeout(()=>{
         if(btn.disabled){
           btn.disabled = false;
@@ -274,10 +310,7 @@
       if (p.get('logout') === '1')  showToast({title:'Sesión cerrada', body:'Cerraste sesión correctamente.', icon:'box-arrow-right'});
       if (p.get('expired') === '1') showToast({title:'Sesión expirada', body:'Ingresá nuevamente.', icon:'hourglass-split'});
       if (p.get('needlogin') === '1') showToast({title:'Acceso requerido', body:'Iniciá sesión para continuar.', icon:'lock'});
-      if (p.get('error')){
-        // Sanitizar el mensaje de error de la URL
-        showToast({title:'Error', body: p.get('error'), icon:'exclamation-triangle'});
-      }
+      if (p.get('error')) showToast({title:'Error', body: p.get('error'), icon:'exclamation-triangle'});
     })();
 
     // Autocompleta dominio corporativo al perder foco si falta '@'

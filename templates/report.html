@@ -1,16 +1,140 @@
 
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Informe</title>
-</head>
-<body>
-    <h1>Informe de Licitación</h1>
-    <p><strong>Tipo:</strong> {{ data.tipo }}</p>
-    <p><strong>Objeto:</strong> {{ data.objeto }}</p>
-    <p><strong>Organismo:</strong> {{ data.organismo }}</p>
-    <p><strong>Presupuesto:</strong> {{ data.presupuesto }}</p>
-    <p><strong>Fecha:</strong> {{ data.fecha }}</p>
-</body>
-</html>
+{% extends "base.html" %}
+{% block title %}Informe – Suizo Argentina{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* Vista específica del informe */
+  .report-actions .btn{ border-radius:10px; }
+  .report-kv{ display:grid; grid-template-columns: 180px 1fr; gap:10px 16px; }
+  .report-kv .k{ color:var(--text-2); }
+  .report-kv .v{ color:var(--text-1); font-weight:600; }
+  .report-section + .report-section{ margin-top:18px; }
+  .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+  .table thead{ background:var(--bg-soft); }
+  .badge-doc{ background:#e8efff; color:#1e40af; border:1px solid #cfe0ff; border-radius:999px; padding:.15rem .5rem; font-weight:600; }
+
+  /* Impresión */
+  @media print{
+    header, .fab, .report-actions, .notif-fab, .toast-container{ display:none!important; }
+    main.container{ max-width: 100%!important; margin:0!important; }
+    .card{ box-shadow:none!important; border:1px solid #ddd; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="py-3">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h1 class="hero-title mb-0"><i class="bi bi-file-earmark-text me-2"></i> Informe de Licitación</h1>
+    <div class="report-actions d-flex gap-2">
+      <a href="/" class="btn btn-outline-secondary btn-sm">← Volver</a>
+      <button class="btn btn-outline-primary btn-sm" onclick="descargarJSON()" title="Descargar JSON"><i class="bi bi-braces"></i> JSON</button>
+      <button class="btn btn-primary btn-sm" onclick="window.print()" title="Imprimir / PDF"><i class="bi bi-printer"></i> Imprimir</button>
+    </div>
+  </div>
+
+  <div class="card card-clean shadow-hover">
+    <div class="card-header"><strong>Resumen</strong></div>
+    <div class="card-body">
+      <div class="report-kv">
+        <div class="k">Tipo</div><div class="v">{{ data.tipo or '—' }}</div>
+        <div class="k">Objeto</div><div class="v">{{ data.objeto or '—' }}</div>
+        <div class="k">Organismo</div><div class="v">{{ data.organismo or '—' }}</div>
+        <div class="k">Presupuesto</div><div class="v">{{ data.presupuesto or '—' }}</div>
+        <div class="k">Fecha</div><div class="v">{{ data.fecha or '—' }}</div>
+        {% if data.expediente %}
+          <div class="k">Expediente</div><div class="v">{{ data.expediente }}</div>
+        {% endif %}
+        {% if data.ubicacion %}
+          <div class="k">Ubicación</div><div class="v">{{ data.ubicacion }}</div>
+        {% endif %}
+      </div>
+
+      {% if data.resumen %}
+      <div class="report-section">
+        <label class="form-label text-muted">Resumen / Observaciones</label>
+        <div class="p-3 rounded-3 border mono" style="background:var(--bg-soft); white-space:pre-wrap;">{{ data.resumen }}</div>
+      </div>
+      {% endif %}
+
+      {% if data.documentos %}
+      <div class="report-section">
+        <label class="form-label text-muted">Documentos</label>
+        <div class="d-flex flex-wrap gap-2">
+          {% for d in data.documentos %}
+            <a href="{{ d.url or d.href or '#' }}" target="_blank" rel="noopener" class="badge-doc text-decoration-none">{{ d.nombre or d.titulo or ('Documento ' ~ loop.index) }}</a>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if data.items and data.items|length > 0 %}
+      <div class="report-section">
+        <label class="form-label text-muted">Ítems</label>
+        <div class="table-responsive">
+          <table class="table align-middle">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Descripción</th>
+                <th class="text-nowrap">Unidad</th>
+                <th class="text-end text-nowrap">Cantidad</th>
+                <th class="text-end text-nowrap">Precio Ref.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for it in data.items %}
+              <tr>
+                <td class="text-muted">{{ it.id or loop.index }}</td>
+                <td>{{ it.descripcion or it.desc or '—' }}</td>
+                <td class="text-nowrap">{{ it.unidad or it.u or '—' }}</td>
+                <td class="text-end">{{ it.cantidad or it.cant or '—' }}</td>
+                <td class="text-end">{{ it.precio or it.precio_ref or '—' }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if data.contacto or data.consultas %}
+      <div class="report-section">
+        <label class="form-label text-muted">Contacto</label>
+        <div>{{ data.contacto or data.consultas }}</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- FAB Chat OpenAI (de base.html) -->
+<button class="btn btn-primary fab" onclick="toggleAiWidget()"><i class="bi bi-robot me-2"></i>Chat OpenAI</button>
+{% endblock %}
+
+{% block extra_scripts %}
+{% if data %}<script id="reportData" type="application/json">{{ data|tojson }}</script>{% endif %}
+<script>
+  // Descarga del JSON del informe
+  function descargarJSON(){
+    try{
+      const el = document.getElementById('reportData');
+      const raw = el ? el.textContent : '{}';
+      const blob = new Blob([raw], {type:'application/json;charset=utf-8'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `informe_licitacion_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      (window.showToast||console.log)({title:'Descarga iniciada', body:'Exportado como JSON.', icon:'download'});
+    }catch(e){
+      (window.showToast||console.error)({title:'Error', body:'No se pudo exportar el JSON.', icon:'exclamation-triangle'});
+    }
+  }
+</script>
+{% endblock %}

@@ -1,10 +1,35 @@
 {% extends "base.html" %}
 {% block title %}Incidencias – Suizo Argentina{% endblock %}
 
+{% block extra_head %}
+<style>
+  .inc-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .inc-head .hero-title{ margin:0; }
+
+  .file-hint{ color:var(--text-2); }
+
+  /* Tabla & chips de adjuntos */
+  .table thead th{ position:sticky; top:0; background:#fff; z-index:1; }
+  .chips{ display:flex; flex-wrap:wrap; gap:6px; }
+  .chip{
+    display:inline-flex; align-items:center; gap:6px;
+    padding:4px 8px; border-radius:999px; background:var(--bg-soft);
+    border:1px solid var(--border);
+    font-size:12px;
+  }
+  .chip a{ text-decoration:none; }
+  .chip .bi{ font-size:14px; }
+
+  /* Filtro */
+  #filterInput{ max-width:260px; }
+  mark.hl{ background:#fff3bf; padding:0 .15em; border-radius:4px; }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="py-3">
-  <div class="d-flex align-items-center justify-content-between mb-3">
-    <h1 class="hero-title mb-0"><i class="bi bi-tools me-2"></i> Gestión de incidencias</h1>
+  <div class="inc-head mb-3">
+    <h1 class="hero-title"><i class="bi bi-tools me-2"></i> Gestión de incidencias</h1>
     <a href="/" class="btn btn-outline-secondary btn-sm">← Volver</a>
   </div>
 
@@ -36,7 +61,7 @@
         <div class="col-12">
           <label for="archivo" class="form-label">Adjuntar archivos (opcional)</label>
           <input class="form-control" type="file" name="archivos" id="archivo" multiple>
-          <div class="form-text">Imágenes, PDF, Word, Excel, etc.</div>
+          <div class="form-text file-hint">Imágenes, PDF, Word, Excel, etc.</div>
         </div>
         <div class="col-12">
           <button type="submit" class="btn btn-primary">Crear incidencia</button>
@@ -50,9 +75,10 @@
     <div class="card-header d-flex align-items-center justify-content-between">
       <strong>📋 Incidencias registradas</strong>
       <div class="d-flex gap-2 align-items-center">
-        <input id="filterInput" class="form-control form-control-sm" placeholder="Filtrar por texto..." style="max-width:240px">
+        <input id="filterInput" class="form-control form-control-sm" placeholder="Filtrar por texto…">
       </div>
     </div>
+
     <div class="card-body">
       <div class="table-responsive">
         <table class="table align-middle">
@@ -73,18 +99,23 @@
             {% for ticket in tickets %}
             <tr>
               <td class="text-muted">{{ ticket.id }}</td>
-              <td>{{ ticket.usuario }}</td>
-              <td class="fw-semibold">{{ ticket.titulo }}</td>
-              <td class="small">{{ ticket.descripcion }}</td>
-              <td><span class="badge bg-primary-subtle text-primary">{{ ticket.tipo }}</span></td>
-              <td class="text-nowrap">{{ ticket.fecha_legible }}</td>
-              <td class="small">
+              <td class="campo-usuario">{{ ticket.usuario }}</td>
+              <td class="fw-semibold campo-titulo">{{ ticket.titulo }}</td>
+              <td class="small campo-descripcion">{{ ticket.descripcion }}</td>
+              <td><span class="badge bg-primary-subtle text-primary campo-tipo">{{ ticket.tipo }}</span></td>
+              <td class="text-nowrap campo-fecha">{{ ticket.fecha_legible }}</td>
+              <td class="small campo-adjuntos">
                 {% if ticket.adjuntos %}
-                  {% for file in ticket.adjuntos %}
-                    <a class="d-block" href="/static/adjuntos_incidencias/{{ file }}" download>
-                      📎 {{ file[ file.find('_', file.find('_')+1)+1: ] }}
-                    </a>
-                  {% endfor %}
+                  <div class="chips">
+                    {% for file in ticket.adjuntos %}
+                      <span class="chip">
+                        <i class="bi bi-paperclip"></i>
+                        <a href="/static/adjuntos_incidencias/{{ file }}" download>
+                          {{ file[ file.find('_', file.find('_')+1)+1: ] }}
+                        </a>
+                      </span>
+                    {% endfor %}
+                  </div>
                 {% else %}
                   <span class="text-muted">—</span>
                 {% endif %}
@@ -116,6 +147,7 @@
           </tbody>
         </table>
       </div>
+
       {% if tickets|length == 0 %}
         <div class="text-center text-body-secondary py-3">No hay incidencias registradas.</div>
       {% endif %}
@@ -126,17 +158,43 @@
 
 {% block extra_scripts %}
 <script>
-  // Filtro simple por texto en el listado
+  /* ====== Filtro con resaltado ====== */
   (function(){
-    const input = document.getElementById('filterInput');
-    const body  = document.getElementById('incTableBody');
-    if(!input || !body) return;
-    input.addEventListener('input', ()=>{
-      const q = input.value.toLowerCase();
-      body.querySelectorAll('tr').forEach(tr=>{
-        tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+    const $input = document.getElementById('filterInput');
+    const $body  = document.getElementById('incTableBody');
+    if(!$input || !$body) return;
+
+    let t;
+    const escapeHtml = s => (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const clearMarks = tr => tr.querySelectorAll('mark.hl').forEach(m=> m.replaceWith(document.createTextNode(m.textContent)));
+    const highlight = (el, term) => {
+      if(!term) return;
+      const re = new RegExp('('+term.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')+')','ig');
+      ['.campo-usuario','.campo-titulo','.campo-descripcion','.campo-tipo','.campo-fecha'].forEach(sel=>{
+        const n = el.querySelector(sel); if(!n) return;
+        n.innerHTML = escapeHtml(n.textContent).replace(re,'<mark class="hl">$1</mark>');
       });
-    });
+    };
+
+    function applyFilter(){
+      const q = ($input.value||'').trim().toLowerCase();
+      $body.querySelectorAll('tr').forEach(tr=>{
+        clearMarks(tr);
+        const text = tr.innerText.toLowerCase();
+        const show = !q || text.includes(q);
+        tr.style.display = show ? '' : 'none';
+        if(show && q) highlight(tr, q);
+      });
+    }
+    $input.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(applyFilter, 160); });
+  })();
+
+  /* ====== Toasts por querystring ====== */
+  (function(){
+    const p = new URLSearchParams(location.search);
+    if(p.get('created')==='1')  showToast({title:'Incidencia creada', body:'Se registró correctamente.', icon:'check2-circle'});
+    if(p.get('closed')==='1')   showToast({title:'Incidencia cerrada', body:'Se marcó como resuelta.', icon:'check2-circle'});
+    if(p.get('deleted')==='1')  showToast({title:'Incidencia eliminada', body:'Se eliminó correctamente.', icon:'trash'});
   })();
 </script>
 {% endblock %}
