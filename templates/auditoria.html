@@ -131,25 +131,14 @@
   </div>
 {% endblock %}
 
-{% if logs and logs|length > 0 %}
-  {% block extra_head %}
-    {{ super() }}
-    <script id="logsData" type="application/json">{{ logs|tojson }}</script>
-  {% endblock %}
-{% endif %}
-
 {% block extra_scripts %}
 <script>
+  /* Inyectamos los datos desde el servidor en una constante segura */
+  const RAW = {{ (logs or [])|tojson|safe }};
+
   /* Helpers locales */
   function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function debounce(fn, ms){ let id; return (...a)=>{ clearTimeout(id); id=setTimeout(()=>fn(...a), ms); }; }
-
-  /* Datos desde el servidor */
-  const RAW = (() => {
-    const el = document.getElementById('logsData');
-    if(!el) return [];
-    try{ return JSON.parse(el.textContent || '[]') || []; }catch{ return []; }
-  })();
 
   let STATE = { filtered: RAW.slice(), page: 1, pageSize: 25 };
 
@@ -160,10 +149,10 @@
 
   /* Filtrado */
   function applyFilters(){
-    const term = (document.getElementById('freetext').value || '').toLowerCase().trim();
-    const acc  = document.getElementById('accion').value;
-    const d    = document.getElementById('desde').value;
-    const h    = document.getElementById('hasta').value;
+    const term = (document.getElementById('freetext')?.value || '').toLowerCase().trim();
+    const acc  = document.getElementById('accion')?.value || '';
+    const d    = document.getElementById('desde')?.value || '';
+    const h    = document.getElementById('hasta')?.value || '';
 
     const out = RAW.filter(l=>{
       if(acc && (l.accion||'') !== acc) return false;
@@ -190,11 +179,11 @@
   function paginate(arr, page, size){ const i=(page-1)*size; return arr.slice(i, i+size); }
 
   function render(){
-    const ps = parseInt(document.getElementById('pageSize').value || '25', 10);
+    const ps = parseInt(document.getElementById('pageSize')?.value || '25', 10);
     STATE.pageSize = ps;
 
     const total = STATE.filtered.length;
-    COUNT && (COUNT.textContent = total);
+    if(COUNT) COUNT.textContent = total;
 
     const pages = Math.max(1, Math.ceil(total / ps));
     STATE.page = Math.min(STATE.page, pages);
@@ -233,7 +222,7 @@
 
     const start = total ? ((STATE.page-1)*ps + 1) : 0;
     const end   = total ? Math.min(STATE.page*ps, total) : 0;
-    RANGE && (RANGE.textContent = total ? `Mostrando ${start}-${end} de ${total}` : '—');
+    if(RANGE) RANGE.textContent = total ? `Mostrando ${start}-${end} de ${total}` : '—';
 
     renderPager(pages);
   }
@@ -278,7 +267,7 @@
 
   // Copiar JSON
   document.getElementById('btnCopyJson')?.addEventListener('click', async ()=>{
-    const txt = document.getElementById('jsonCode').textContent || '';
+    const txt = document.getElementById('jsonCode')?.textContent || '';
     try{ await navigator.clipboard.writeText(txt); showToast({title:'Copiado', body:'Contenido copiado al portapapeles.', icon:'clipboard'}); }
     catch{ showToast({title:'Error', body:'No se pudo copiar.', icon:'exclamation-triangle'}); }
   });
