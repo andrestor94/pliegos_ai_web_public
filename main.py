@@ -2,7 +2,7 @@ import os
 import sqlite3
 import uuid
 from typing import List, Optional
-from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException
+from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -317,6 +317,8 @@ async def cambiar_password_submit(request: Request,
 # ================== Admin ==================
 @app.get("/admin", response_class=HTMLResponse)
 async def vista_admin(request: Request):
+    if not request.session.get("rol") != "admin":
+        pass
     if request.session.get("rol") != "admin":
         return RedirectResponse("/")
     return templates.TemplateResponse("admin.html", {"request": request})
@@ -426,6 +428,51 @@ async def chat_openai(request: Request):
 
     respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
     return JSONResponse({"respuesta": respuesta})
+
+# ================== API puente para el drawer (formato reply) ==============
+@app.post("/api/chat-openai")
+async def api_chat_openai(request: Request, payload: dict = Body(...)):
+    """
+    Mantiene /chat-openai intacto y expone un endpoint con el formato que
+    espera el frontend del drawer: {"reply": "..."}.
+    Usa el mismo prompt de utils.responder_chat_openai.
+    """
+    mensaje = (payload or {}).get("message", "").strip()
+    usuario_actual = request.session.get("usuario", "Desconocido")
+
+    if not mensaje:
+        return JSONResponse({"reply": "Decime qué necesitás revisar del pliego 👌"})
+
+    try:
+        historial = obtener_historial_completo()
+    except Exception:
+        historial = []
+
+    ultimo_analisis_usuario = next(
+        (h for h in historial if h.get("usuario") == usuario_actual and h.get("resumen")),
+        None
+    )
+
+    if ultimo_analisis_usuario:
+        ultimo_resumen = f"""
+📌 Último análisis del usuario actual:
+- Fecha: {ultimo_analisis_usuario.get('fecha')}
+- Archivo: {ultimo_analisis_usuario.get('nombre_archivo')}
+- Resumen:
+{ultimo_analisis_usuario.get('resumen')}
+"""
+    else:
+        ultimo_resumen = "(El usuario aún no tiene análisis registrados.)"
+
+    contexto_general = "\n".join([
+        f"- [{h.get('fecha')}] {h.get('usuario')} analizó '{h.get('nombre_archivo')}' y obtuvo:\n{h.get('resumen')}\n"
+        for h in historial if h.get("resumen")
+    ])
+
+    contexto = f"{ultimo_resumen}\n\n📚 Historial completo:\n{contexto_general}"
+
+    respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
+    return JSONResponse({"reply": respuesta})
 
 # Mini vista embebida para el widget del topbar/FAB
 @app.get("/chat_openai_embed", response_class=HTMLResponse)
