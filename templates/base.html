@@ -366,6 +366,12 @@
             <i id="icoTheme" class="bi bi-circle-half"></i>
           </button>
 
+          <!-- NUEVO: Usuarios activos -->
+          <button class="icon-btn" id="btnPresence" title="Usuarios activos">
+            <i class="bi bi-people"></i>
+            <span id="presenceBadge" class="icon-badge">0</span>
+          </button>
+
           <button class="icon-btn" id="btnNotif" title="Notificaciones">
             <i class="bi bi-bell"></i>
             <span id="notifBadge" class="icon-badge">0</span>
@@ -624,7 +630,6 @@
     function updateThemeBtn(){
       const t = getTheme();
       const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const effective = t || (prefersDark ? 'dark*' : 'light*'); // * = desde sistema
       if(t === 'dark'){ icoTheme.className='bi bi-moon-stars'; btnTheme.title='Tema: Oscuro'; }
       else if(t === 'light'){ icoTheme.className='bi bi-brightness-high'; btnTheme.title='Tema: Claro'; }
       else {
@@ -638,11 +643,42 @@
       else if(t === 'dark'){ setTheme('light'); }
       else{ setTheme(null); }
     });
-    // Reaccionar si cambia el sistema
     try{
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', ()=>{ if(getTheme()===null) updateThemeBtn(); });
     }catch(_){}
     updateThemeBtn();
+
+    /* ====== PRESENCIA (usuarios activos) ====== */
+    const presenceBtn   = document.getElementById('btnPresence');
+    const presenceBadge = document.getElementById('presenceBadge');
+    const isAuthScreen  = document.body.getAttribute('data-auth') === '1';
+
+    presenceBtn?.addEventListener('click', ()=>{ location.href = '/usuarios-activos'; });
+
+    async function presencePing(){
+      if(isAuthScreen) return; // no pings en pantalla de login
+      try{ await fetch('/presence/ping', { method:'POST' }); }catch(_){}
+    }
+    async function refreshPresence(){
+      if(isAuthScreen) return;
+      try{
+        const r = await fetch('/presence/online');
+        if(!r.ok) return;
+        const j = await r.json();
+        const n = Array.isArray(j.items) ? j.items.length : 0;
+        presenceBadge.textContent = n>99 ? '99+' : String(n);
+        presenceBadge.style.display = n>0 ? 'inline-block' : 'none';
+        presenceBtn.title = `Usuarios activos: ${n}`;
+      }catch(_){}
+    }
+
+    // Kickoff (solo si no es pantalla de login)
+    if(!isAuthScreen){
+      presencePing();
+      refreshPresence();
+      setInterval(presencePing, 30000);    // marca presencia cada 30s
+      setInterval(refreshPresence, 15000); // refresca contador cada 15s
+    }
   </script>
 
   {% block extra_scripts %}{% endblock %}

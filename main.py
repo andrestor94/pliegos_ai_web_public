@@ -93,12 +93,12 @@ async def _save_upload_stream(upload: UploadFile, dst_path: str) -> int:
     """Guarda el UploadFile en disco por chunks. Devuelve tamaño en bytes."""
     size = 0
     with open(dst_path, "wb") as f:
-        while True:
-            chunk = await upload.read(1024 * 1024)  # 1MB
-            if not chunk:
-                break
-            size += len(chunk)
-            f.write(chunk)
+      while True:
+          chunk = await upload.read(1024 * 1024)  # 1MB
+          if not chunk:
+              break
+          size += len(chunk)
+          f.write(chunk)
     await upload.seek(0)
     return size
 
@@ -681,7 +681,7 @@ async def chat_marcar_leidos(request: Request):
     de = data.get("de")
     yo = request.session.get("usuario")
     if not de:
-        return JSONResponse({"error": "Falta 'de' (email remitente)"}, status_code=400)
+        return JSONResponse({"error": "Falta 'de' (email del contacto)"}, status_code=400)
     try:
         marcar_mensajes_leidos(de_email=de, para_email=yo)
         return JSONResponse({"ok": True})
@@ -957,3 +957,94 @@ async def mark_read(request: Request):
     with cal_conn() as c:
         c.execute("UPDATE notificaciones SET leida=1 WHERE user=?", (user,))
     return {"ok": True}
+
+# =====================================================================
+# ========================== PRESENCIA / ONLINE =======================
+# =====================================================================
+
+def init_presence_db():
+    with cal_conn() as c:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS presence(
+                user TEXT PRIMARY KEY,
+                nombre TEXT,
+                last_seen TEXT NOT NULL,
+                ip TEXT,
+                ua TEXT
+            )
+        """)
+
+# Llamamos a la init de presencia después de la del calendario
+init_presence_db()
+
+# ========================== Endpoints presencia ======================
+
+@app.post("/presence/ping")
+async def presence_ping(request: Request):
+    """
+    El front llama a este endpoint cada ~30s para marcar al usuario como activo.
+    """
+    email = request.session.get("usuario")
+    if not email:
+        return JSONResponse({"ok": False, "error": "No autenticado"}, status_code=401)
+
+    # Intentamos sacar nombre desde la BD de usuarios
+    row = obtener_usuario_por_email(email)
+    nombre = row[1] if row else email
+
+    ip = request.client.host if request.client else None
+    ua = request.headers.get("user-agent", "")
+    now = _now_iso()  # UTC con 'Z'
+
+    with cal_conn() as c:
+        c.execute("""
+            INSERT INTO presence(user, nombre, last_seen, ip, ua)
+            VALUES(?,?,?,?,?)
+            ON CONFLICT(user) DO UPDATE SET
+              nombre=excluded.nombre,
+              last_seen=excluded.last_seen,
+              ip=excluded.ip,
+              ua=excluded.ua
+        """, (email, nombre, now, ip, ua))
+    return {"ok": True}
+
+
+@app.get("/presence/online")
+async def presence_online(minutes: int = 5):
+    """
+    Devuelve usuarios con last_seen dentro de los últimos N minutos (default 5).
+    """
+    threshold_ts = datetime.utcnow().timestamp() - (minutes * 60)
+
+    items = []
+    with cal_conn() as c:
+        cur = c.execute("SELECT user, nombre, last_seen, ip, ua FROM presence ORDER BY last_seen DESC")
+        for r in cur.fetchall():
+            try:
+                dt = datetime.strptime(r["last_seen"], "%Y-%m-%dT%H:%M:%SZ")
+                ts = dt.timestamp()
+            except Exception:
+                ts = 0
+            if ts >= threshold_ts:
+                items.append({
+                    "email": r["user"],
+                    "nombre": r["nombre"] or r["user"],
+                    "last_seen": r["last_seen"],
+                    "ip": r["ip"] or "",
+                    "ua": r["ua"] or ""
+                })
+    return {"items": items}
+
+
+@app.get("/usuarios-activos", response_class=HTMLResponse)
+async def usuarios_activos(request: Request):
+    """
+    Vista HTML con el listado (usa templates/usuarios_activos.html).
+    """
+    if not request.session.get("usuario"):
+        return RedirectResponse("/login")
+    data = await presence_online(minutes=5)  # reutilizamos el JSON
+    return templates.TemplateResponse("usuarios_activos.html", {
+        "request": request,
+        "items": data.get("items", [])
+    })
