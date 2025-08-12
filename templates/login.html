@@ -5,33 +5,35 @@
 <style>
   :root{
     --color-azul:#044369; --color-azul-sec:#0d6efd; --color-gris:#eceff4; --color-gris-medio:#c8d0df; --color-gris-oscuro:#354151;
-    --bg:#f6f8ff; --card:#ffffff; --ink:#0a0a0a; --primary:#2f6adf; --primary-ink:#ffffff; --shadow:0 10px 30px rgba(0,0,0,.08); --radius:18px;
+    --card:#ffffff; --ink:#0a0a0a; --primary:#2f6adf; --primary-ink:#ffffff; --shadow:0 10px 30px rgba(0,0,0,.08); --radius:18px;
   }
   @media (prefers-color-scheme: dark){
-    :root{ --bg:#0b1020; --card:#0f172a; --ink:#e5e7eb; --color-gris:#111827; --color-gris-medio:#263146; --color-gris-oscuro:#93a3b8; --shadow:0 10px 30px rgba(0,0,0,.4); }
+    :root{ --card:#0f172a; --ink:#e5e7eb; --color-gris:#111827; --color-gris-medio:#263146; --color-gris-oscuro:#93a3b8; --shadow:0 10px 30px rgba(0,0,0,.4); }
     .input-group-text{ background:#0f172a!important; color:#e5e7eb; }
     .form-control{ color:var(--ink); background:#0b1222; }
     .login-card{ border:1px solid #1f2a44; }
   }
-  body{ background:linear-gradient(180deg,#f6f8ff 0%, #eef3ff 100%); min-height:100vh; display:grid; place-items:center; color:var(--ink); }
-  @media (prefers-color-scheme: dark){ body{ background:linear-gradient(180deg,#0b1020 0%, #0b1328 100%); } }
+
+  /* Caja del login (el centrado lo hace base: .app.auth .content { place-items:center }) */
   .login-wrap{ width:min(420px, 92vw); }
   .brand{ display:flex; align-items:center; justify-content:center; gap:.6rem; margin-bottom:10px; color:var(--color-azul); font-weight:700; letter-spacing:.2px; }
   .brand img{ height:40px; }
+
   .login-card{ background:var(--card); border:none; border-radius:var(--radius); box-shadow:var(--shadow); }
   .login-card .card-body{ padding:28px; }
+
   .form-control{ border-radius:12px; border-color:var(--color-gris-medio)!important; }
   .input-group-text{ background:#fff; border-color:var(--color-gris-medio)!important; border-radius:0 12px 12px 0; cursor:pointer; }
+
   .btn-primary{ background:var(--color-azul)!important; border:none!important; border-radius:12px!important; padding:.65rem 1rem; }
   .muted{ color:#6b7280; }
   .link{ color:var(--color-azul-sec); text-decoration:none; }
   .link:hover{ text-decoration:underline; }
+
   .caps-hint{ display:none; color:#b45309; font-size:.9rem; }
   .caps-hint.show{ display:block; }
+
   .foot{ text-align:center; color:#6b7280; font-size:.85rem; margin-top:12px; }
-  .toast-container{ position:fixed; right:16px; bottom:16px; z-index:1200; }
-  .toast{ border-radius:12px; box-shadow:var(--shadow); }
-  .toast-header{ border-bottom:none; }
   .sr-only{ position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); border:0; }
 </style>
 {% endblock %}
@@ -100,30 +102,114 @@
 
   <div class="foot">© <span id="yy"></span> Suizo Argentina</div>
 </div>
-
-<div class="toast-container" id="toastContainer"></div>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
   const $$=(s)=>document.querySelector(s);
   function escapeHtml(s){ return (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  // Año en footer
   document.getElementById('yy').textContent = new Date().getFullYear();
-  function toggleVis(el){ const i=$$('#password'); const pass=i.type==='password'; i.type=pass?'text':'password'; el.querySelector('i').className=pass?'bi bi-eye-slash':'bi bi-eye'; i.focus(); }
-  let _pressTimer=null; function pressShow(e){ const i=$$('#password'); if(i.type==='password'){ i.type='text'; e.currentTarget.querySelector('i').className='bi bi-eye-slash'; } clearTimeout(_pressTimer); _pressTimer=setTimeout(()=>{},1500); }
-  function releaseShow(){ clearTimeout(_pressTimer); const i=$$('#password'); const btn=document.querySelector('.input-group-text i'); if(i.type==='text'){ i.type='password'; if(btn) btn.className='bi bi-eye'; } }
-  const capsHint=$$('#capsHint'); $$('#password').addEventListener('keyup', e=>{ const caps=e.getModifierState&&e.getModifierState('CapsLock'); capsHint.classList.toggle('show',!!caps); });
-  $$('#password').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); $$('#loginForm').requestSubmit(); }});
-  $$('#email').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); $$('#password').focus(); }});
-  const LS='suizo_login_email'; window.addEventListener('load',()=>{ const s=localStorage.getItem(LS); if(s){ $$('#email').value=s; $$('#remember').checked=true; }});
-  const form=$$('#loginForm'); const btn=$$('#loginBtn'); const status=document.getElementById('status');
-  form.addEventListener('submit',e=>{ if(!form.checkValidity()){ e.preventDefault(); e.stopPropagation(); form.classList.add('was-validated'); return; }
-    if($$('#remember').checked) localStorage.setItem(LS, $$('#email').value.trim()); else localStorage.removeItem(LS);
-    btn.disabled=true; btn.querySelector('.btn-text').textContent='Ingresando...'; btn.querySelector('.spinner-border').classList.remove('d-none'); status.textContent='Enviando…';
-    setTimeout(()=>{ if(btn.disabled){ btn.disabled=false; btn.querySelector('.btn-text').textContent='Ingresar'; btn.querySelector('.spinner-border').classList.add('d-none'); status.textContent='Tiempo de espera agotado. Intentá nuevamente.'; showToast({title:'Demora inusual', body:'La red tardó demasiado. Verificá tu conexión e intentá otra vez.', icon:'hourglass-split'});} },15000);
+
+  // Mostrar/ocultar contraseña
+  function toggleVis(el){
+    const i=$$('#password'); const pass=i.type==='password';
+    i.type=pass?'text':'password';
+    el.querySelector('i').className=pass?'bi bi-eye-slash':'bi bi-eye';
+    i.focus();
+  }
+  // Mantener presionado (mobile)
+  let _pressTimer=null;
+  function pressShow(e){
+    const i=$$('#password');
+    if(i.type==='password'){ i.type='text'; e.currentTarget.querySelector('i').className='bi bi-eye-slash'; }
+    clearTimeout(_pressTimer); _pressTimer=setTimeout(()=>{},1500);
+  }
+  function releaseShow(){
+    clearTimeout(_pressTimer);
+    const i=$$('#password'); const btn=document.querySelector('.input-group-text i');
+    if(i.type==='text'){ i.type='password'; if(btn) btn.className='bi bi-eye'; }
+  }
+
+  // Caps Lock
+  const capsHint=$$('#capsHint');
+  $$('#password').addEventListener('keyup', e=>{
+    const caps=e.getModifierState&&e.getModifierState('CapsLock');
+    capsHint.classList.toggle('show',!!caps);
   });
-  function showToast({title='Aviso', body='', icon='info', delay=3500}={}){ const cont=document.getElementById('toastContainer'); const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true'); el.innerHTML=`<div class="toast-header"><i class="bi bi-${escapeHtml(icon)} me-1"></i><strong class="me-auto">${escapeHtml(title)}</strong><small>Ahora</small><button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button></div><div class="toast-body">${escapeHtml(body)}</div>`; cont.appendChild(el); const t=new bootstrap.Toast(el,{delay}); t.show(); el.addEventListener('hidden.bs.toast',()=>el.remove()); }
-  (function(){ const p=new URLSearchParams(location.search); if(p.get('logout')==='1') showToast({title:'Sesión cerrada', body:'Cerraste sesión correctamente.', icon:'box-arrow-right'}); if(p.get('expired')==='1') showToast({title:'Sesión expirada', body:'Ingresá nuevamente.', icon:'hourglass-split'}); if(p.get('needlogin')==='1') showToast({title:'Acceso requerido', body:'Iniciá sesión para continuar.', icon:'lock'}); if(p.get('error')) showToast({title:'Error', body:p.get('error'), icon:'exclamation-triangle'});})();
-  const email=$$('#email'); email.addEventListener('blur',()=>{ const v=email.value.trim(); if(v && !v.includes('@') && v.indexOf(' ')===-1) email.value=v+'@suizo.com'; });
+  $$('#password').addEventListener('keydown', e=>{
+    if(e.key==='Enter'){ e.preventDefault(); $$('#loginForm').requestSubmit(); }
+  });
+  $$('#email').addEventListener('keydown', e=>{
+    if(e.key==='Enter'){ e.preventDefault(); $$('#password').focus(); }
+  });
+
+  // Recordarme (email en LocalStorage)
+  const LS='suizo_login_email';
+  window.addEventListener('load',()=>{
+    const s=localStorage.getItem(LS);
+    if(s){ $$('#email').value=s; $$('#remember').checked=true; }
+  });
+
+  // Validación + evitar doble submit
+  const form=$$('#loginForm'); const btn=$$('#loginBtn'); const status=document.getElementById('status');
+  form.addEventListener('submit',e=>{
+    if(!form.checkValidity()){
+      e.preventDefault(); e.stopPropagation(); form.classList.add('was-validated'); return;
+    }
+    if($$('#remember').checked) localStorage.setItem(LS, $$('#email').value.trim());
+    else localStorage.removeItem(LS);
+
+    btn.disabled=true;
+    btn.querySelector('.btn-text').textContent='Ingresando...';
+    btn.querySelector('.spinner-border').classList.remove('d-none');
+    status.textContent='Enviando…';
+
+    // Fallback por red lenta
+    setTimeout(()=>{
+      if(btn.disabled){
+        btn.disabled=false;
+        btn.querySelector('.btn-text').textContent='Ingresar';
+        btn.querySelector('.spinner-border').classList.add('d-none');
+        status.textContent='Tiempo de espera agotado. Intentá nuevamente.';
+        showToast({title:'Demora inusual', body:'La red tardó demasiado. Verificá tu conexión e intentá otra vez.', icon:'hourglass-split'});
+      }
+    },15000);
+  });
+
+  // Toast helper (usa el contenedor de base.html)
+  function showToast({title='Aviso', body='', icon='info', delay=3500}={}){
+    const cont=document.getElementById('toastContainer'); if(!cont) return;
+    const el=document.createElement('div');
+    el.className='toast align-items-center';
+    el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
+    el.innerHTML=`<div class="toast-header">
+      <i class="bi bi-${escapeHtml(icon)} me-1"></i>
+      <strong class="me-auto">${escapeHtml(title)}</strong>
+      <small>Ahora</small>
+      <button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
+    </div>
+    <div class="toast-body">${escapeHtml(body)}</div>`;
+    cont.appendChild(el);
+    const t=new bootstrap.Toast(el,{delay}); t.show();
+    el.addEventListener('hidden.bs.toast',()=>el.remove());
+  }
+
+  // Mensajes por querystring
+  (function(){
+    const p=new URLSearchParams(location.search);
+    if(p.get('logout')==='1') showToast({title:'Sesión cerrada', body:'Cerraste sesión correctamente.', icon:'box-arrow-right'});
+    if(p.get('expired')==='1') showToast({title:'Sesión expirada', body:'Ingresá nuevamente.', icon:'hourglass-split'});
+    if(p.get('needlogin')==='1') showToast({title:'Acceso requerido', body:'Iniciá sesión para continuar.', icon:'lock'});
+    if(p.get('error')) showToast({title:'Error', body:p.get('error'), icon:'exclamation-triangle'});
+  })();
+
+  // Autocompletar dominio si falta '@'
+  const email=$$('#email');
+  email.addEventListener('blur',()=>{
+    const v=email.value.trim();
+    if(v && !v.includes('@') && v.indexOf(' ')===-1) email.value=v+'@suizo.com';
+  });
 </script>
 {% endblock %}
