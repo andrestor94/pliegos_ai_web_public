@@ -55,13 +55,7 @@
   .chat-input { border-top:1px solid var(--border); padding:10px; background:#fff; display:flex; gap:8px; align-items:flex-start; }
   .chat-btn-icon{ display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; border-radius:10px; }
 
-  /* Adjuntos */
-  .chat-dz{
-    flex:1; min-height:42px; border:1px dashed var(--border-strong); border-radius:12px;
-    background:var(--bg-soft); padding:8px 10px; color:var(--text-2);
-    display:flex; align-items:center; justify-content:center; gap:8px; cursor:pointer;
-  }
-  .chat-dz.dragover{ background:#eef6ff; border-color:#85aee6; }
+  /* Chips de adjuntos */
   .chat-chips{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; padding:0 12px 8px; }
   .chat-chip-file{ display:inline-flex; align-items:center; gap:8px; padding:5px 8px; background:var(--bg-soft); border-radius:999px; font-size:12px; }
   .chat-chip-file button{ border:none; background:transparent; line-height:1; font-size:14px; }
@@ -108,11 +102,9 @@
 
         <div class="chat-input">
           <input id="inputMsg" type="text" class="form-control" placeholder="Escribí un mensaje..." />
-          <div id="drop" class="chat-dz" title="Clic o arrastrá archivos">
-            📎 Adjuntar
-            <input id="inputFiles" type="file" multiple style="display:none" />
-          </div>
+          <!-- único botón de adjuntar -->
           <button id="btnPick" class="btn btn-outline-secondary chat-btn-icon" title="Elegir archivos">📎</button>
+          <input id="inputFiles" type="file" multiple hidden />
           <button id="btnEnviar" class="btn btn-primary">Enviar</button>
         </div>
         <div id="chips" class="chat-chips"></div>
@@ -281,15 +273,10 @@
 
   /* ===== Envío ===== */
   const $files = document.getElementById('inputFiles');
-  const $drop  = document.getElementById('drop');
   const $chips = document.getElementById('chips');
   const $btnPick = document.getElementById('btnPick');
 
   $btnPick.onclick = () => $files.click();
-  $drop.onclick = () => $files.click();
-  ['dragenter','dragover'].forEach(ev=> $drop.addEventListener(ev, e=>{ e.preventDefault(); e.stopPropagation(); $drop.classList.add('dragover'); }));
-  ['dragleave','drop'].forEach(ev=>  $drop.addEventListener(ev, e=>{ e.preventDefault(); e.stopPropagation(); $drop.classList.remove('dragover'); }));
-  $drop.addEventListener('drop', (e)=>{ const files=[...(e.dataTransfer?.files||[])]; if(!files.length) return; addFiles(files); });
   $files.addEventListener('change', ()=>{ addFiles([...( $files.files || [] )]); $files.value=''; });
 
   function addFiles(files){
@@ -373,7 +360,6 @@
   function iniciarAutoNoLeidos(){ if(refrescoNoLeidos) clearInterval(refrescoNoLeidos); refrescoNoLeidos = setInterval(cargarNoLeidos, 10000); }
 
   /* ===== Boot ===== */
-  const $sugsEl=document.getElementById('sugs'); // evita warnings si no existe
   (async ()=>{
     await cargarYo();
     await cargarHilos();
