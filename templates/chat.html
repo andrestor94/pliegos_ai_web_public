@@ -15,157 +15,118 @@
     --border-strong: #d9def0;
   }
 
-  .app { min-height: calc(100vh - var(--navbar-h,56px)); display:flex; flex-direction:column; }
-  .chat-wrap { flex:1; display:grid; grid-template-columns: 320px 1fr; gap:16px; }
-  @media (max-width: 900px){ .chat-wrap{ grid-template-columns: 1fr; } }
+  /* === Layout encapsulado del chat (NO usar .app / body) === */
+  .chat-app{ display:grid; grid-template-columns: 320px 1fr; gap:16px; }
+  @media (max-width: 900px){ .chat-app{ grid-template-columns: 1fr; } }
 
-  .panel { background: var(--card); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; border:1px solid var(--border); }
-  .panel .panel-title{ margin:0; padding:14px 16px; color: var(--brand); border-bottom: 1px solid var(--border); font-weight:600; }
+  .chat-panel{ background: var(--card); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; border:1px solid var(--border); }
+  .chat-panel .chat-title{ margin:0; padding:14px 16px; color: var(--brand); border-bottom: 1px solid var(--border); font-weight:600; }
 
   /* Hilos */
-  .hilos { display:flex; flex-direction:column; }
-  .hilos .top { padding:12px; border-bottom:1px solid var(--border); }
-  .auto-wrap{ position:relative; }
-  .auto-list{ position:absolute; z-index:1000; top:100%; left:0; right:0; background:var(--card); border:1px solid var(--border); border-radius:12px; margin-top:.25rem; list-style:none; padding:.25rem 0; display:none; max-height:280px; overflow:auto; box-shadow:var(--shadow); }
-  .auto-li{ padding:.5rem .75rem; cursor:pointer; }
-  .auto-li .nm{ font-weight:600; }
-  .auto-li .em{ font-size:.85rem; color:var(--text-2); }
-  .auto-li.active, .auto-li:hover{ background:var(--bg-soft); }
+  .chat-hilos{ display:flex; flex-direction:column; }
+  .chat-hilos .top { padding:12px; border-bottom:1px solid var(--border); }
+  .chat-auto-wrap{ position:relative; }
+  .chat-auto-list{ position:absolute; z-index:1000; top:100%; left:0; right:0; background:var(--card); border:1px solid var(--border); border-radius:12px; margin-top:.25rem; list-style:none; padding:.25rem 0; display:none; max-height:280px; overflow:auto; box-shadow:var(--shadow); }
+  .chat-auto-li{ padding:.5rem .75rem; cursor:pointer; }
+  .chat-auto-li .nm{ font-weight:600; }
+  .chat-auto-li .em{ font-size:.85rem; color:var(--text-2); }
+  .chat-auto-li.active, .chat-auto-li:hover{ background:var(--bg-soft); }
 
-  .hilos-list { overflow:auto; }
-  .item-hilo { padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; display:flex; gap:8px; align-items:center; }
-  .item-hilo:hover{ background:var(--bg-soft); }
-  .item-hilo.active{ background:var(--bg-strong); }
-  .item-hilo .info { flex:1; min-width:0; }
-  .item-hilo .nombre{ font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .item-hilo .fecha{ font-size:12px; color:var(--text-2); }
-  .item-hilo .btn-del{ border:none; background:transparent; font-size:18px; line-height:1; opacity:.7; }
-  .item-hilo .btn-del:hover{ opacity:1; }
+  .chat-hilos-list { overflow:auto; }
+  .chat-hilo-item { padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; display:flex; gap:8px; align-items:center; }
+  .chat-hilo-item:hover{ background:var(--bg-soft); }
+  .chat-hilo-item.active{ background:var(--bg-strong); }
+  .chat-hilo-item .info { flex:1; min-width:0; }
+  .chat-hilo-item .nombre{ font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .chat-hilo-item .fecha{ font-size:12px; color:var(--text-2); }
+  .chat-hilo-item .btn-del{ border:none; background:transparent; font-size:18px; line-height:1; opacity:.7; }
+  .chat-hilo-item .btn-del:hover{ opacity:1; }
 
-  /* Chat */
-  .chat { display:flex; flex-direction:column; }
+  /* Ventana de chat */
+  .chat-window{ display:flex; flex-direction:column; }
   .chat-head { padding:8px 12px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; }
-  .chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; background:var(--bg-soft); border-radius:999px; font-size:14px;}
-  .chat-body { flex:1; overflow:auto; padding:16px; background:var(--bg); border-radius:0; }
-  .msg { max-width: 70%; margin-bottom:12px; padding:10px 12px; border-radius:14px; background:#fff; box-shadow: 0 2px 8px rgba(0,0,0,.04);}
-  .msg.you { margin-left:auto; background:var(--brand-soft); }
-  .msg .meta{ font-size:12px; color:var(--text-2); margin-bottom:4px;}
-  .empty { color:var(--text-2); padding:16px; }
+  .chat-chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; background:var(--bg-soft); border-radius:999px; font-size:14px;}
+  .chat-body { flex:1; overflow:auto; padding:16px; background:var(--bg); }
+  .chat-msg { max-width: 70%; margin-bottom:12px; padding:10px 12px; border-radius:14px; background:#fff; box-shadow: 0 2px 8px rgba(0,0,0,.04);}
+  .chat-msg.me { margin-left:auto; background:var(--brand-soft); }
+  .chat-msg .meta{ font-size:12px; color:var(--text-2); margin-bottom:4px;}
+  .chat-empty { color:var(--text-2); padding:16px; }
 
   .chat-input { border-top:1px solid var(--border); padding:10px; background:#fff; display:flex; gap:8px; align-items:flex-start; }
-  .btn-icon{ display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; border-radius:10px; }
+  .chat-btn-icon{ display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; border-radius:10px; }
 
-  /* Adjuntos múltiples */
-  .dz{
+  /* Adjuntos */
+  .chat-dz{
     flex:1; min-height:42px; border:1px dashed var(--border-strong); border-radius:12px;
     background:var(--bg-soft); padding:8px 10px; color:var(--text-2);
     display:flex; align-items:center; justify-content:center; gap:8px; cursor:pointer;
   }
-  .dz.dragover{ background:#eef6ff; border-color:#85aee6; }
-  .chips{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; padding:0 12px 8px; }
-  .chip-file{ display:inline-flex; align-items:center; gap:8px; padding:5px 8px; background:var(--bg-soft); border-radius:999px; font-size:12px; }
-  .chip-file button{ border:none; background:transparent; line-height:1; font-size:14px; }
-  .chip-thumb{ width:26px; height:26px; border-radius:6px; object-fit:cover; background:#fff; border:1px solid var(--border); }
+  .chat-dz.dragover{ background:#eef6ff; border-color:#85aee6; }
+  .chat-chips{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; padding:0 12px 8px; }
+  .chat-chip-file{ display:inline-flex; align-items:center; gap:8px; padding:5px 8px; background:var(--bg-soft); border-radius:999px; font-size:12px; }
+  .chat-chip-file button{ border:none; background:transparent; line-height:1; font-size:14px; }
+  .chat-chip-thumb{ width:26px; height:26px; border-radius:6px; object-fit:cover; background:#fff; border:1px solid var(--border); }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="app">
-  <div class="chat-wrap">
-    <!-- Sidebar: Hilos -->
-    <aside class="panel hilos">
-      <h5 class="panel-title">Conversaciones</h5>
-      <div class="top">
-        <div class="auto-wrap">
-          <div class="input-group">
-            <span class="input-group-text">@</span>
-            <input id="nuevoPara" type="text" class="form-control" placeholder="Nombre o email..." autocomplete="off" />
-            <button id="btnAbrir" class="btn btn-primary">Abrir</button>
+<div class="grid">
+  <section class="col-12">
+    <div class="chat-app">
+
+      <!-- Sidebar: Hilos -->
+      <aside class="chat-panel chat-hilos">
+        <h5 class="chat-title">Conversaciones</h5>
+        <div class="top">
+          <div class="chat-auto-wrap">
+            <div class="input-group">
+              <span class="input-group-text">@</span>
+              <input id="nuevoPara" type="text" class="form-control" placeholder="Nombre o email..." autocomplete="off" />
+              <button id="btnAbrir" class="btn btn-primary">Abrir</button>
+            </div>
+            <ul id="sugs" class="chat-auto-list" role="listbox" aria-label="Sugerencias"></ul>
           </div>
-          <ul id="sugs" class="auto-list" role="listbox" aria-label="Sugerencias"></ul>
         </div>
-      </div>
-      <div id="listaHilos" class="hilos-list"></div>
-    </aside>
+        <div id="listaHilos" class="chat-hilos-list"></div>
+      </aside>
 
-    <!-- Main: Chat -->
-    <section class="panel chat">
-      <div class="chat-head">
-        <div class="chip">Conversando con: <strong id="conEmail">—</strong></div>
-        <button id="btnEliminarChat" class="btn btn-sm btn-outline-danger ms-2" title="Eliminar chat (ocultar)">🗑</button>
-        <button id="btnRefrescar" class="btn btn-sm btn-outline-secondary ms-auto">Refrescar</button>
-        <span id="noLeidosWrap" class="chip ms-2" title="Mensajes no leídos">
-          🔔 <span id="noLeidosBadge" class="badge bg-secondary rounded-pill">0</span>
-        </span>
-        <span class="chip d-none d-md-inline"><span id="yoEmail">...</span></span>
-      </div>
-
-      <div id="chatBody" class="chat-body">
-        <div class="empty">Seleccioná una conversación o creá una nueva desde la izquierda.</div>
-      </div>
-
-      <div class="chat-input">
-        <input id="inputMsg" type="text" class="form-control" placeholder="Escribe un mensaje..." />
-        <div id="drop" class="dz" title="Clic o arrastrá archivos">
-          📎 Adjuntar
-          <input id="inputFiles" type="file" multiple style="display:none" />
+      <!-- Ventana principal -->
+      <section class="chat-panel chat-window">
+        <div class="chat-head">
+          <div class="chat-chip">Conversando con: <strong id="conEmail">—</strong></div>
+          <button id="btnEliminarChat" class="btn btn-sm btn-outline-danger ms-2" title="Eliminar chat (ocultar)">🗑</button>
+          <button id="btnRefrescar" class="btn btn-sm btn-outline-secondary ms-auto">Refrescar</button>
+          <span id="noLeidosWrap" class="chat-chip ms-2" title="Mensajes no leídos">
+            🔔 <span id="noLeidosBadge" class="badge bg-secondary rounded-pill">0</span>
+          </span>
+          <span class="chat-chip d-none d-md-inline"><span id="yoEmail">...</span></span>
         </div>
-        <button id="btnPick" class="btn btn-outline-secondary btn-icon" title="Elegir archivos">📎</button>
-        <button id="btnEnviar" class="btn btn-primary">Enviar</button>
-      </div>
-      <div id="chips" class="chips"></div>
-    </section>
-  </div>
+
+        <div id="chatBody" class="chat-body">
+          <div class="chat-empty">Seleccioná una conversación o creá una nueva desde la izquierda.</div>
+        </div>
+
+        <div class="chat-input">
+          <input id="inputMsg" type="text" class="form-control" placeholder="Escribí un mensaje..." />
+          <div id="drop" class="chat-dz" title="Clic o arrastrá archivos">
+            📎 Adjuntar
+            <input id="inputFiles" type="file" multiple style="display:none" />
+          </div>
+          <button id="btnPick" class="btn btn-outline-secondary chat-btn-icon" title="Elegir archivos">📎</button>
+          <button id="btnEnviar" class="btn btn-primary">Enviar</button>
+        </div>
+        <div id="chips" class="chat-chips"></div>
+      </section>
+
+    </div>
+  </section>
 </div>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-  /* ===== Helpers UI ===== */
+  /* ===== Helpers ===== */
   function escapeHtml(str){ return (str||'').toString().replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
-
-  // Navbar user state
-  (async function getUsuario(){
-    try{
-      const r = await fetch("/usuario-actual");
-      const d = await r.json();
-      const el = document.getElementById("usuario-nombre");
-      if(el) el.textContent = `👤 ${d.usuario}`;
-      document.getElementById("admin-link-desktop")?.classList.toggle("d-none", (d.rol||'').toLowerCase()!=="admin");
-      document.getElementById("admin-link-mobile")?.classList.toggle("d-none", (d.rol||'').toLowerCase()!=="admin");
-    }catch(e){}
-  })();
-
-  // Close offcanvas on nav click
-  document.addEventListener('click', (e)=>{
-    const link = e.target.closest('.offcanvas .nav-link-mobile, .offcanvas .btn, .offcanvas .dropdown-item');
-    if (!link) return;
-    const offcanvasEl = document.getElementById('menuOffcanvas');
-    if (!offcanvasEl) return;
-    const offcanvas = bootstrap.Offcanvas.getInstance(offcanvasEl);
-    if (offcanvas) offcanvas.hide();
-  });
-  function logout(){ fetch("/logout", { method: "POST" }).then(() => window.location.href = "/login"); }
-
-  /* ===== Config adjuntos desde backend ===== */
-  let CONFIG = { allowed_ext: ['pdf','png','jpg','jpeg','gif','webp','txt','csv','xlsx','xls','docx','doc','pptx'], max_files: 10, max_total_mb: 50 };
-  (async function cargarConfig(){
-    try{
-      const r = await fetch('/chat/config');
-      if(r.ok){
-        const cfg = await r.json();
-        if(cfg?.allowed_ext) CONFIG = cfg;
-      }
-    }catch(e){}
-    // ya no mostramos ningún texto de límites en la UI
-  })();
-  function extPermitida(name){ const ext=(name.split('.').pop()||'').toLowerCase(); return CONFIG.allowed_ext.includes(ext); }
-  function isImage(name){ return /\.(png|jpg|jpeg|gif|webp)$/i.test(name); }
-
-  /* ===== Estado global ===== */
-  let yo = null, con = null, refresco = null, refrescoNoLeidos = null;
-  let selectedFiles = [];
-
   async function getJSON(url){ const r=await fetch(url); if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }
   async function postJSON(url,data){
     const r=await fetch(url,{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
@@ -174,9 +135,21 @@
     return payload;
   }
 
-  /* ===== Sidebar: hilos y autocompletar ===== */
+  /* ===== Config adjuntos ===== */
+  let CONFIG = { allowed_ext: ['pdf','png','jpg','jpeg','gif','webp','txt','csv','xlsx','xls','docx','doc','pptx'], max_files: 10, max_total_mb: 50 };
+  (async function(){
+    try{ const r = await fetch('/chat/config'); if(r.ok){ const cfg=await r.json(); if(cfg?.allowed_ext) CONFIG=cfg; } }catch(e){}
+  })();
+  function extPermitida(name){ const ext=(name.split('.').pop()||'').toLowerCase(); return CONFIG.allowed_ext.includes(ext); }
+  function isImage(name){ return /\.(png|jpg|jpeg|gif|webp)$/i.test(name); }
+
+  /* ===== Estado ===== */
+  let yo = null, con = null, refresco = null, refrescoNoLeidos = null;
+  let selectedFiles = [];
+
+  /* ===== Sidebar: hilos ===== */
   function setActiveHilo(email){
-    document.querySelectorAll('.item-hilo').forEach(el=> el.classList.toggle('active', el.dataset.email === email));
+    document.querySelectorAll('.chat-hilo-item').forEach(el=> el.classList.toggle('active', el.dataset.email === email));
   }
   function renderHilos(hilos){
     const cont = document.getElementById('listaHilos');
@@ -184,7 +157,7 @@
     if(!hilos?.length){ cont.innerHTML = '<div class="p-3 text-muted">Sin conversaciones aún.</div>'; return; }
     hilos.forEach(h=>{
       const div = document.createElement('div');
-      div.className = 'item-hilo';
+      div.className = 'chat-hilo-item';
       div.dataset.email = h.con;
       div.innerHTML = `
         <div class="info">
@@ -216,7 +189,7 @@
     if(!sugItems.length){ $sugs.style.display='none'; return; }
     sugItems.forEach((it,i)=>{
       const li=document.createElement('li');
-      li.className = 'auto-li' + (i===sugIdx?' active':'' );
+      li.className = 'chat-auto-li' + (i===sugIdx?' active':'' );
       li.role='option';
       li.innerHTML = `<div class="nm">${escapeHtml(it.nombre || '(Sin nombre)')}</div><div class="em">${escapeHtml(it.email)}</div>`;
       li.onclick = ()=> seleccionarSugerencia(i);
@@ -236,16 +209,16 @@
     else if(e.key==='Enter'){ if(sugIdx>=0){ e.preventDefault(); seleccionarSugerencia(sugIdx); } }
     else if(e.key==='Escape'){ $sugs.style.display='none'; }
   });
-  document.addEventListener('click', (e)=>{ if(!e.target.closest('.auto-wrap')) $sugs.style.display='none'; });
+  document.addEventListener('click', (e)=>{ if(!e.target.closest('.chat-auto-wrap')) $sugs.style.display='none'; });
 
-  /* ===== Chat: mensajes ===== */
+  /* ===== Mensajes ===== */
   function renderMensajes(mensajes){
     const body = document.getElementById('chatBody');
     body.innerHTML = '';
-    if(!mensajes?.length){ body.innerHTML = '<div class="empty">No hay mensajes aún. ¡Escribe el primero!</div>'; return; }
+    if(!mensajes?.length){ body.innerHTML = '<div class="chat-empty">No hay mensajes aún. ¡Escribí el primero!</div>'; return; }
     mensajes.forEach(m=>{
       const div = document.createElement('div');
-      div.className = 'msg' + (m.de === yo ? ' you' : '');
+      div.className = 'chat-msg' + (m.de === yo ? ' me' : '');
       const meta = `<div class="meta">${escapeHtml(m.de)} • ${m.fecha}</div>`;
       const txt  = m.texto ? `<div class="txt">${escapeHtml(m.texto)}</div>` : '';
       let adj = '';
@@ -298,7 +271,7 @@
       await postJSON('/chat/ocultar', { con: email });
       if(con === email){
         con=null; document.getElementById('conEmail').textContent='—';
-        document.getElementById('chatBody').innerHTML='<div class="empty">Seleccioná una conversación o creá una nueva desde la izquierda.</div>';
+        document.getElementById('chatBody').innerHTML='<div class="chat-empty">Seleccioná una conversación o creá una nueva desde la izquierda.</div>';
         if(refresco) clearInterval(refresco);
       }
       await cargarHilos(); await cargarNoLeidos();
@@ -306,7 +279,7 @@
   }
   async function marcarLeidos(remitente){ if(!remitente) return; try{ await postJSON('/chat/marcar-leidos', { de: remitente }); }catch(e){} }
 
-  /* ===== Envío de mensajes y adjuntos ===== */
+  /* ===== Envío ===== */
   const $files = document.getElementById('inputFiles');
   const $drop  = document.getElementById('drop');
   const $chips = document.getElementById('chips');
@@ -328,16 +301,15 @@
     limitTotal(); renderChips();
   }
   function limitTotal(){
-    // Se respeta el límite total silenciosamente (sin texto en UI)
     const maxBytes = CONFIG.max_total_mb*1024*1024;
     while(selectedFiles.reduce((a,b)=>a+b.size,0) > maxBytes){ selectedFiles.pop(); }
   }
   function renderChips(){
     $chips.innerHTML=''; if(!selectedFiles.length) return;
     selectedFiles.forEach((f, idx)=>{
-      const chip=document.createElement('span'); chip.className='chip-file';
+      const chip=document.createElement('span'); chip.className='chat-chip-file';
       if(isImage(f.name)){
-        const img=document.createElement('img'); img.className='chip-thumb'; img.alt=f.name;
+        const img=document.createElement('img'); img.className='chat-chip-thumb'; img.alt=f.name;
         const fr=new FileReader(); fr.onload=e=> img.src=e.target.result; fr.readAsDataURL(f); chip.appendChild(img);
       }
       const label=document.createElement('span'); label.innerHTML=`${escapeHtml(f.name)} <small class="muted">${Math.round(f.size/1024)} KB</small>`;
@@ -379,14 +351,13 @@
   }
   function toggleSending(sending){ const btn=document.getElementById('btnEnviar'); btn.disabled=sending; btn.textContent = sending ? 'Enviando…' : 'Enviar'; }
 
-  // Eventos envío
   document.getElementById('btnEnviar').onclick = enviar;
   document.getElementById('inputMsg').addEventListener('keypress', (e)=>{ if(e.key === 'Enter') enviar(); });
   document.getElementById('btnRefrescar').onclick = ()=> { cargarMensajes(); cargarHilos(); };
   document.getElementById('btnAbrir').onclick = ()=>{ const email = $input.value.trim(); if(!email) return; abrirChat(email); };
   document.getElementById('btnEliminarChat').onclick = ()=> ocultar(con);
 
-  /* ===== No leídos + auto refresh ===== */
+  /* ===== No leídos & auto refresh ===== */
   async function cargarNoLeidos(){
     try{
       const data = await getJSON('/chat/no-leidos');
@@ -401,53 +372,13 @@
   function iniciarAutoRefresh(){ if(refresco) clearInterval(refresco); refresco = setInterval(cargarMensajes, 5000); }
   function iniciarAutoNoLeidos(){ if(refrescoNoLeidos) clearInterval(refrescoNoLeidos); refrescoNoLeidos = setInterval(cargarNoLeidos, 10000); }
 
-  /* ===== Notificaciones flotantes (campana) ===== */
-  function showToast({title="Aviso", body="", icon="info"}){
-    const container=document.getElementById('toastContainer'); if(!container) return;
-    const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
-    el.innerHTML=`<div class="toast-header">
-      <i class="bi bi-${icon} me-1"></i>
-      <strong class="me-auto">${title}</strong>
-      <small>Ahora</small>
-      <button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
-    </div><div class="toast-body">${body}</div>`;
-    container.appendChild(el); const t=new bootstrap.Toast(el,{delay:3000}); t.show(); el.addEventListener('hidden-bs.toast',()=>el.remove());
-  }
-  let notifOpen=false;
-  function toggleNotifPanel(){ notifOpen=!notifOpen; const p=document.getElementById('notif-panel'); if(p) p.style.display = notifOpen ? 'block':'none'; }
-  function renderBadge(n){
-    const b=document.getElementById('notif-badge');
-    if(!b) return;
-    if(n>0){ b.style.display='inline-block'; b.textContent=n; } else { b.style.display='none'; }
-  }
-  function renderNotifs(items){
-    const list=document.getElementById('notif-list'); if(!list) return; list.innerHTML='';
-    if(!items?.length){ list.innerHTML='<div class="p-3 text-muted">Sin notificaciones</div>'; return; }
-    items.forEach(n=>{
-      const div=document.createElement('div'); div.className='item '+(!n.leida?'unread':''); div.style.padding='10px 12px'; div.style.borderBottom='1px solid #f0f2f5';
-      div.innerHTML=`<div style="font-weight:600">${escapeHtml(n.titulo||'Notificación')}</div>
-                     <div class="small">${escapeHtml(n.cuerpo||'')}</div>
-                     <div class="small text-muted">${escapeHtml(n.fecha_legible||'')}</div>`;
-      list.appendChild(div);
-    });
-  }
-  async function fetchNotifs(){
-    try{
-      const r=await fetch('/notificaciones?limit=20'); if(!r.ok) return;
-      const data=await r.json();
-      renderNotifs(data.items||[]);
-      renderBadge(data.total_unread||0);
-    }catch(e){}
-  }
-
   /* ===== Boot ===== */
+  const $sugsEl=document.getElementById('sugs'); // evita warnings si no existe
   (async ()=>{
     await cargarYo();
     await cargarHilos();
     await cargarNoLeidos();
     iniciarAutoNoLeidos();
-    fetchNotifs();
-    setInterval(fetchNotifs, 30000);
   })();
 </script>
 {% endblock %}
