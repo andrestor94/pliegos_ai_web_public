@@ -1,61 +1,65 @@
 {% extends "base.html" %}
-{% block title %}Login - Suizo Argentina{% endblock %}
+{% block title %}Login – Suizo Argentina{% endblock %}
 
 {% block extra_head %}
 <style>
-  :root{
-    --color-azul:#044369; --color-azul-sec:#0d6efd; --color-gris:#eceff4; --color-gris-medio:#c8d0df; --color-gris-oscuro:#354151;
-    --card:#ffffff; --ink:#0a0a0a; --primary:#2f6adf; --primary-ink:#ffffff; --shadow:0 10px 30px rgba(0,0,0,.08); --radius:18px;
+  .login-wrap{ width:min(440px, 92vw); position:relative; }
+
+  .brand-login{
+    display:flex; align-items:center; justify-content:center; gap:.6rem;
+    margin-bottom:12px; color:var(--text); font-weight:700; letter-spacing:.2px;
   }
-  @media (prefers-color-scheme: dark){
-    :root{ --card:#0f172a; --ink:#e5e7eb; --color-gris:#111827; --color-gris-medio:#263146; --color-gris-oscuro:#93a3b8; --shadow:0 10px 30px rgba(0,0,0,.4); }
-    .input-group-text{ background:#0f172a!important; color:#e5e7eb; }
-    .form-control{ color:var(--ink); background:#0b1222; }
-    .login-card{ border:1px solid #1f2a44; }
+  .brand-login img{ height:42px; width:auto; }
+
+  .cardx { background:var(--card); border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow); }
+  .cardx .cardx-body{ padding:22px; }
+
+  .form-control, .form-select{ border-radius:12px; border:1px solid var(--border); background:var(--card); color:var(--text); }
+  .form-control:focus, .form-select:focus{
+    border-color: var(--accent-a);
+    box-shadow: 0 0 0 .15rem rgba(139,92,246,.20);
   }
 
-  /* Caja del login (el centrado lo hace base: .app.auth .content { place-items:center }) */
-  .login-wrap{ width:min(420px, 92vw); }
-  .brand{ display:flex; align-items:center; justify-content:center; gap:.6rem; margin-bottom:10px; color:var(--color-azul); font-weight:700; letter-spacing:.2px; }
-  .brand img{ height:40px; }
+  .input-group .form-control{ border-top-left-radius:12px; border-bottom-left-radius:12px; }
+  .input-group .input-group-text{
+    border-top-right-radius:12px; border-bottom-right-radius:12px;
+    cursor:pointer; background:var(--card); border:1px solid var(--border);
+  }
 
-  .login-card{ background:var(--card); border:none; border-radius:var(--radius); box-shadow:var(--shadow); }
-  .login-card .card-body{ padding:28px; }
+  .btn-grad{
+    border:none; border-radius:12px;
+    background:linear-gradient(135deg, var(--accent-a), var(--accent-b));
+    color:#fff; box-shadow:0 12px 26px rgba(139,92,246,.22);
+    padding:.65rem 1rem;
+  }
+  .btn-grad:hover{ filter:brightness(.98); }
 
-  .form-control{ border-radius:12px; border-color:var(--color-gris-medio)!important; }
-  .input-group-text{ background:#fff; border-color:var(--color-gris-medio)!important; border-radius:0 12px 12px 0; cursor:pointer; }
-
-  .btn-primary{ background:var(--color-azul)!important; border:none!important; border-radius:12px!important; padding:.65rem 1rem; }
-  .muted{ color:#6b7280; }
-  .link{ color:var(--color-azul-sec); text-decoration:none; }
-  .link:hover{ text-decoration:underline; }
-
+  .muted{ color:var(--muted); }
   .caps-hint{ display:none; color:#b45309; font-size:.9rem; }
   .caps-hint.show{ display:block; }
 
-  .foot{ text-align:center; color:#6b7280; font-size:.85rem; margin-top:12px; }
+  .foot{ text-align:center; color:var(--muted); font-size:.85rem; margin-top:12px; }
   .sr-only{ position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); border:0; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="login-wrap">
-  <div class="brand" aria-label="Marca">
+  <div class="brand-login" aria-label="Marca">
     <img src="/static/logo-suizo.png" alt="Logo Suizo"/>
-    <span>Suizo Argentina <b>- Licitaciones IA</b></span>
+    <span>Suizo Argentina <b>— Licitaciones IA</b></span>
   </div>
 
   {% if mensaje %}<div class="alert alert-success mb-3" role="alert">{{ mensaje }}</div>{% endif %}
   {% if error %}  <div class="alert alert-danger mb-3" role="alert">{{ error }}</div>{% endif %}
 
-  <div class="card login-card">
-    <div class="card-body">
-      <h4 class="mb-3 text-center" style="color:var(--color-azul);">Inicio de sesión</h4>
+  <div class="cardx">
+    <div class="cardx-body">
+      <h4 class="mb-3 text-center">Inicio de sesión</h4>
 
       <div id="status" class="sr-only" aria-live="polite"></div>
 
       <form id="loginForm" method="post" action="/login" novalidate>
-        {# CSRF OPCIONAL: solo si el backend lo provee #}
         {% if csrf_token is defined %}
           <input type="hidden" name="csrf_token"
                  value="{{ csrf_token() if csrf_token is callable else csrf_token }}">
@@ -89,10 +93,10 @@
             <input class="form-check-input" type="checkbox" id="remember" name="remember">
             <label class="form-check-label" for="remember">Recordarme</label>
           </div>
-          <a class="link small" href="/cambiar-password">Cambiar contraseña</a>
+          <a class="small" href="/cambiar-password">Cambiar contraseña</a>
         </div>
 
-        <button id="loginBtn" type="submit" class="btn btn-primary w-100" aria-describedby="status">
+        <button id="loginBtn" type="submit" class="btn btn-grad w-100" aria-describedby="status">
           <span class="btn-text">Ingresar</span>
           <span class="spinner-border spinner-border-sm ms-2 d-none" role="status" aria-hidden="true"></span>
         </button>
@@ -107,19 +111,14 @@
 {% block extra_scripts %}
 <script>
   const $$=(s)=>document.querySelector(s);
-  function escapeHtml(s){ return (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-
-  // Año en footer
   document.getElementById('yy').textContent = new Date().getFullYear();
 
-  // Mostrar/ocultar contraseña
   function toggleVis(el){
     const i=$$('#password'); const pass=i.type==='password';
     i.type=pass?'text':'password';
     el.querySelector('i').className=pass?'bi bi-eye-slash':'bi bi-eye';
     i.focus();
   }
-  // Mantener presionado (mobile)
   let _pressTimer=null;
   function pressShow(e){
     const i=$$('#password');
@@ -132,12 +131,12 @@
     if(i.type==='text'){ i.type='password'; if(btn) btn.className='bi bi-eye'; }
   }
 
-  // Caps Lock
   const capsHint=$$('#capsHint');
   $$('#password').addEventListener('keyup', e=>{
     const caps=e.getModifierState&&e.getModifierState('CapsLock');
     capsHint.classList.toggle('show',!!caps);
   });
+
   $$('#password').addEventListener('keydown', e=>{
     if(e.key==='Enter'){ e.preventDefault(); $$('#loginForm').requestSubmit(); }
   });
@@ -145,14 +144,12 @@
     if(e.key==='Enter'){ e.preventDefault(); $$('#password').focus(); }
   });
 
-  // Recordarme (email en LocalStorage)
   const LS='suizo_login_email';
   window.addEventListener('load',()=>{
     const s=localStorage.getItem(LS);
     if(s){ $$('#email').value=s; $$('#remember').checked=true; }
   });
 
-  // Validación + evitar doble submit
   const form=$$('#loginForm'); const btn=$$('#loginBtn'); const status=document.getElementById('status');
   form.addEventListener('submit',e=>{
     if(!form.checkValidity()){
@@ -166,46 +163,17 @@
     btn.querySelector('.spinner-border').classList.remove('d-none');
     status.textContent='Enviando…';
 
-    // Fallback por red lenta
     setTimeout(()=>{
       if(btn.disabled){
         btn.disabled=false;
         btn.querySelector('.btn-text').textContent='Ingresar';
         btn.querySelector('.spinner-border').classList.add('d-none');
-        status.textContent='Tiempo de espera agotado. Intentá nuevamente.';
-        showToast({title:'Demora inusual', body:'La red tardó demasiado. Verificá tu conexión e intentá otra vez.', icon:'hourglass-split'});
+        status.textContent='Tiempo de espera agotado.';
+        showToast({title:'Demora inusual', body:'La red tardó demasiado.', icon:'hourglass-split'});
       }
     },15000);
   });
 
-  // Toast helper (usa el contenedor de base.html)
-  function showToast({title='Aviso', body='', icon='info', delay=3500}={}){
-    const cont=document.getElementById('toastContainer'); if(!cont) return;
-    const el=document.createElement('div');
-    el.className='toast align-items-center';
-    el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
-    el.innerHTML=`<div class="toast-header">
-      <i class="bi bi-${escapeHtml(icon)} me-1"></i>
-      <strong class="me-auto">${escapeHtml(title)}</strong>
-      <small>Ahora</small>
-      <button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
-    </div>
-    <div class="toast-body">${escapeHtml(body)}</div>`;
-    cont.appendChild(el);
-    const t=new bootstrap.Toast(el,{delay}); t.show();
-    el.addEventListener('hidden.bs.toast',()=>el.remove());
-  }
-
-  // Mensajes por querystring
-  (function(){
-    const p=new URLSearchParams(location.search);
-    if(p.get('logout')==='1') showToast({title:'Sesión cerrada', body:'Cerraste sesión correctamente.', icon:'box-arrow-right'});
-    if(p.get('expired')==='1') showToast({title:'Sesión expirada', body:'Ingresá nuevamente.', icon:'hourglass-split'});
-    if(p.get('needlogin')==='1') showToast({title:'Acceso requerido', body:'Iniciá sesión para continuar.', icon:'lock'});
-    if(p.get('error')) showToast({title:'Error', body:p.get('error'), icon:'exclamation-triangle'});
-  })();
-
-  // Autocompletar dominio si falta '@'
   const email=$$('#email');
   email.addEventListener('blur',()=>{
     const v=email.value.trim();
