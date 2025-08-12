@@ -42,19 +42,14 @@
     /* ===== Sidebar más corta y centrada ===== */
     .sidebar{
       grid-area:sidebar;
-      display:flex;
-      flex-direction:column;
-      align-items:center;
-      width:74px;
-      padding:14px 8px;
+      display:flex; flex-direction:column; align-items:center;
+      width:74px; padding:14px 8px;
       background: linear-gradient(180deg, #0f172a, #0b1220);
       border-radius: 0 26px 26px 0;
       box-shadow: 0 10px 26px rgba(2,6,23,.34), inset 0 0 0 1px rgba(255,255,255,.04);
       color:#fff;
-
-      /* 📌 Altura más corta + centrado vertical */
-      height: 70%;
-      margin: auto 0;
+      height: 70%;          /* altura más corta */
+      margin: auto 0;       /* centrado vertical con aire arriba/abajo */
     }
 
     .side-logo{
@@ -137,19 +132,58 @@
 
     /* ===== LOGIN / AUTH MODE ===== */
     body[data-auth="1"] .app{
-      grid-template-columns: 1fr;
-      grid-template-rows: 1fr;
-      grid-template-areas: "content";
+      grid-template-columns: 1fr; grid-template-rows: 1fr; grid-template-areas: "content";
     }
-    body[data-auth="1"] .sidebar,
-    body[data-auth="1"] .header{ display:none !important; }
+    body[data-auth="1"] .sidebar, body[data-auth="1"] .header{ display:none !important; }
     body[data-auth="1"] .content{
-      display:grid; place-items:center;
-      padding:24px;
+      display:grid; place-items:center; padding:24px;
       background: linear-gradient(180deg,#f6f8ff 0%, #eef3ff 100%);
     }
     @media (prefers-color-scheme: dark){
       body[data-auth="1"] .content{ background: linear-gradient(180deg,#0b1020 0%, #0b1328 100%); }
+    }
+
+    /* ===== Chat IA (drawer derecho) ===== */
+    .chat-ia-overlay{
+      position:fixed; inset:0; background:rgba(15,18,34,.28); backdrop-filter: blur(2px);
+      opacity:0; pointer-events:none; transition:opacity .2s ease; z-index:1200;
+    }
+    .chat-ia{
+      position:fixed; top:0; right:-480px; height:100%; width:480px; max-width:100%;
+      background:#fff; border-left:1px solid var(--border); box-shadow: var(--shadow);
+      display:flex; flex-direction:column; transition:right .28s ease; z-index:1201;
+    }
+    .chat-ia.open{ right:0; }
+    .chat-ia-overlay.open{ opacity:1; pointer-events:auto; }
+
+    .chat-ia__header{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:12px 14px; border-bottom:1px solid var(--border);
+      background:linear-gradient(0deg, rgba(255,255,255,.96), rgba(255,255,255,.96));
+    }
+    .chat-ia__title{ font-weight:700; display:flex; align-items:center; gap:8px; }
+    .chat-ia__close{ border:1px solid var(--border); background:#fff; border-radius:10px; width:36px; height:36px; display:grid; place-items:center; }
+
+    .chat-ia__body{
+      flex:1; overflow:auto; padding:14px; background:
+      radial-gradient(700px 520px at 84% 12%, rgba(236,72,153,.10), transparent 60%),
+      radial-gradient(600px 420px at 8% 88%, rgba(37,99,235,.10), transparent 60%),
+      #f8f9ff;
+    }
+    .msg{ background:#fff; border:1px solid var(--border); border-radius:14px; padding:10px 12px; margin-bottom:10px; }
+    .msg.ai{ background:linear-gradient(180deg,#ffffff,#fbfdff); }
+    .msg.me{ background:#eff4ff; border-color:#dfe6ff; }
+
+    .chat-ia__composer{
+      padding:12px; border-top:1px solid var(--border); display:flex; gap:8px; background:#fff;
+    }
+    .chat-ia__composer textarea{
+      resize:none; height:46px; flex:1; border:1px solid var(--border); border-radius:12px; padding:10px 12px;
+    }
+    .chat-ia__send{
+      border:none; border-radius:999px; padding:0 16px; min-width:120px;
+      background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); color:#fff;
+      box-shadow:0 12px 26px rgba(139,92,246,.22);
     }
   </style>
 
@@ -227,8 +261,25 @@
   <!-- Toasts -->
   <div class="toast-container" id="toastContainer"></div>
 
+  <!-- ===== Drawer Chat IA ===== -->
+  <div id="chatIaOverlay" class="chat-ia-overlay"></div>
+  <aside id="chatIa" class="chat-ia" aria-hidden="true">
+    <div class="chat-ia__header">
+      <div class="chat-ia__title"><i class="bi bi-robot"></i> Chat OpenAI</div>
+      <button id="chatIaClose" class="chat-ia__close" title="Cerrar"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <div id="chatIaBody" class="chat-ia__body">
+      <div class="msg ai"><b>IA:</b> ¿En qué te ayudo con licitaciones?</div>
+    </div>
+    <form id="chatIaForm" class="chat-ia__composer">
+      <textarea id="chatIaInput" placeholder="Escribe tu mensaje…"></textarea>
+      <button class="chat-ia__send" type="submit"><i class="bi bi-send"></i> Enviar</button>
+    </form>
+  </aside>
+
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
+    /* Usuario en header */
     async function getUsuario(){
       try{
         const r=await fetch('/usuario-actual'); if(!r.ok) return;
@@ -238,9 +289,11 @@
       }catch(_){}
     }
 
+    /* Logout */
     function logout(){ fetch('/logout',{method:'POST'}).then(()=> location.href='/login?logout=1'); }
     document.getElementById('btnSalir')?.addEventListener('click', (e)=>{ e.preventDefault(); logout(); });
 
+    /* Notificaciones */
     const notifBtn = document.getElementById('btnNotif');
     const notifPanel = document.getElementById('notif-panel');
     notifBtn?.addEventListener('click', ()=>{ if(!notifPanel) return; notifPanel.style.display = (notifPanel.style.display==='block'?'none':'block'); });
@@ -255,9 +308,67 @@
       }catch(_){}
     });
 
-    const CHAT_STATE_KEY='chatboxState';
-    function openChatAndExpand(){ localStorage.setItem(CHAT_STATE_KEY,'open'); showToast({title:'Chat OpenAI', body:'Abierto.', icon:'robot'}); }
+    /* ===== Chat IA (funcional) ===== */
+    const CHAT_STATE_KEY = 'chatboxState';
+    const chatIa = document.getElementById('chatIa');
+    const chatIaOverlay = document.getElementById('chatIaOverlay');
+    const chatIaClose = document.getElementById('chatIaClose');
+    const chatIaInput = document.getElementById('chatIaInput');
+    const chatIaBody  = document.getElementById('chatIaBody');
+    const chatIaForm  = document.getElementById('chatIaForm');
 
+    function openChatIA(persist=true){
+      if(!chatIa) return;
+      chatIa.classList.add('open');
+      chatIaOverlay.classList.add('open');
+      chatIa.setAttribute('aria-hidden','false');
+      setTimeout(()=> chatIaInput?.focus(), 50);
+      if(persist) localStorage.setItem(CHAT_STATE_KEY, 'open');
+    }
+    function closeChatIA(){
+      if(!chatIa) return;
+      chatIa.classList.remove('open');
+      chatIaOverlay.classList.remove('open');
+      chatIa.setAttribute('aria-hidden','true');
+      localStorage.removeItem(CHAT_STATE_KEY);
+    }
+    function openChatAndExpand(){ openChatIA(true); } // usado por el botón del header
+
+    chatIaOverlay?.addEventListener('click', closeChatIA);
+    chatIaClose?.addEventListener('click', closeChatIA);
+    document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeChatIA(); });
+
+    if(localStorage.getItem(CHAT_STATE_KEY)==='open'){ openChatIA(false); }
+
+    chatIaForm?.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const text = (chatIaInput?.value || '').trim();
+      if(!text) return;
+      appendMsg('me', text);
+      chatIaInput.value = '';
+      try{
+        const r = await fetch('/api/chat-openai', {   // <-- ajusta si tu endpoint es otro
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ message: text })
+        });
+        const data = await r.json().catch(()=> ({}));
+        appendMsg('ai', data?.reply || 'Listo.');
+      }catch(err){
+        appendMsg('ai', 'Hubo un error al contactar la IA.');
+      }
+    });
+
+    function appendMsg(who, text){
+      const el = document.createElement('div');
+      el.className = 'msg ' + (who==='ai'?'ai':'me');
+      el.innerHTML = (who==='ai' ? '<b>IA:</b> ' : '<b>Yo:</b> ') + escapeHTML(text);
+      chatIaBody.appendChild(el);
+      chatIaBody.scrollTop = chatIaBody.scrollHeight;
+    }
+    function escapeHTML(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+    /* Link activo */
     (function markActive(){
       const path=location.pathname;
       document.querySelectorAll('.side-btn[data-match]').forEach(a=>{
@@ -267,6 +378,7 @@
       });
     })();
 
+    /* Toast helper */
     function showToast({title='Aviso', body='', icon='info', delay=3200}={}){
       const cont=document.getElementById('toastContainer'); if(!cont) return;
       const esc=(s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
