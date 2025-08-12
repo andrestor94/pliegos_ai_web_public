@@ -1,326 +1,235 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Login - Suizo Argentina</title>
+{% extends "base.html" %}
+{% block title %}Login - Suizo Argentina{% endblock %}
 
-  <!-- Inter -->
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <!-- Bootstrap & Icons -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"/>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
+{% block extra_head %}
+<style>
+  :root{
+    --color-azul:#044369; --color-azul-sec:#0d6efd; --color-gris:#eceff4; --color-gris-medio:#c8d0df; --color-gris-oscuro:#354151;
+    --bg:#f6f8ff; --card:#ffffff; --ink:#0a0a0a; --primary:#2f6adf; --primary-ink:#ffffff; --shadow:0 10px 30px rgba(0,0,0,.08); --radius:18px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0b1020; --card:#0f172a; --ink:#e5e7eb; --color-gris:#111827; --color-gris-medio:#263146; --color-gris-oscuro:#93a3b8; --shadow:0 10px 30px rgba(0,0,0,.4); }
+    .input-group-text{ background:#0f172a!important; color:#e5e7eb; }
+    .form-control{ color:var(--ink); background:#0b1222; }
+    .login-card{ border:1px solid #1f2a44; }
+  }
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{ animation-duration:.001ms!important; animation-iteration-count:1!important; transition-duration:.001ms!important; scroll-behavior:auto!important; }
+  }
 
-  <style>
-    :root{
-      /* Variables alineadas con base.html */
-      --grad-a:#7c3aed;   /* violeta */
-      --grad-b:#ec4899;   /* magenta */
-      --grad-c:#2563eb;   /* azul */
+  body{ background:linear-gradient(180deg,#f6f8ff 0%, #eef3ff 100%); min-height:100vh; display:grid; place-items:center; color:var(--ink); }
+  @media (prefers-color-scheme: dark){ body{ background:linear-gradient(180deg,#0b1020 0%, #0b1328 100%); } }
 
-      --panel:#ffffff;
-      --ink:#0f1222;
-      --muted:#667085;
-      --border:#e7e9f2;
+  .login-wrap{ width:min(420px, 92vw); }
+  .brand{ display:flex; align-items:center; justify-content:center; gap:.6rem; margin-bottom:10px; color:var(--color-azul); font-weight:700; letter-spacing:.2px; }
+  .brand img{ height:40px; }
+  .login-card{ background:var(--card); border:none; border-radius:var(--radius); box-shadow:var(--shadow); }
+  .login-card .card-body{ padding:28px; }
+  .form-control{ border-radius:12px; border-color:var(--color-gris-medio)!important; }
+  .form-control:focus{ box-shadow:0 0 0 .2rem rgba(13,110,253,.15); }
+  .input-group-text{ background:#fff; border-color:var(--color-gris-medio)!important; border-radius:0 12px 12px 0; cursor:pointer; }
+  .btn-primary{ background:var(--color-azul)!important; border:none!important; border-radius:12px!important; padding:.65rem 1rem; }
+  .btn-primary:hover{ background:#022a47!important; }
+  .muted{ color:#6b7280; }
+  .link{ color:var(--color-azul-sec); text-decoration:none; }
+  .link:hover{ text-decoration:underline; }
+  .caps-hint{ display:none; color:#b45309; font-size:.9rem; }
+  .caps-hint.show{ display:block; }
+  .foot{ text-align:center; color:#6b7280; font-size:.85rem; margin-top:12px; }
+  .toast-container{ position:fixed; right:16px; bottom:16px; z-index:1200; }
+  .toast{ border-radius:12px; box-shadow:var(--shadow); }
+  .toast-header{ border-bottom:none; }
+  .sr-only{ position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); border:0; }
+</style>
+{% endblock %}
 
-      --accent-a:#8b5cf6; /* violeta claro */
-      --accent-b:#f472b6; /* rosa */
-
-      --radius:22px;
-      --shadow-xl:0 24px 70px rgba(20,15,55,.23);
-      --shadow:0 12px 32px rgba(20,15,55,.16);
-      --ring:0 0 0 3px rgba(139,92,246,.18);
-    }
-
-    html, body { height:100%; }
-    body{
-      margin:0;
-      font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      color:var(--ink);
-      /* Mismo fondo que base.html */
-      background:
-        radial-gradient(1000px 700px at 15% 10%, rgba(236,72,153,.65) 0%, transparent 60%),
-        radial-gradient(1000px 700px at 85% 90%, rgba(124,58,237,.65) 0%, transparent 60%),
-        linear-gradient(135deg, var(--grad-c), var(--grad-a) 55%, var(--grad-b));
-      background-attachment:fixed;
-      display:grid; place-items:center;
-    }
-
-    .login-wrap{ width:min(440px, 92vw); }
-    .brand{
-      display:flex; align-items:center; justify-content:center; gap:.6rem; margin-bottom:12px;
-      color:#111827;
-      font-weight:700; letter-spacing:.2px;
-    }
-    .brand img{ height:42px; }
-
-    .login-card{
-      background:var(--panel);
-      border:1px solid rgba(255,255,255,.35);
-      border-radius:var(--radius);
-      box-shadow:var(--shadow-xl);
-      overflow:hidden;
-    }
-    .login-card .card-header{
-      background:linear-gradient(0deg, rgba(255,255,255,.92), rgba(255,255,255,.92));
-      border-bottom:1px solid var(--border);
-      text-align:center; font-weight:700;
-      padding:14px 18px;
-    }
-    .login-card .card-body{ padding:26px 22px; }
-
-    .form-control{ border-radius:12px; border-color:var(--border)!important; }
-    .form-control:focus{ box-shadow:var(--ring); border-color:transparent!important; }
-    .input-group-text{
-      background:#fff; border-color:var(--border)!important; border-radius:0 12px 12px 0; cursor:pointer;
-    }
-
-    .btn-primary{
-      background:linear-gradient(135deg, var(--accent-a), var(--accent-b))!important;
-      border:none!important; border-radius:12px!important; padding:.65rem 1rem;
-      box-shadow:0 12px 26px rgba(139,92,246,.25);
-    }
-    .btn-primary:hover{ filter:brightness(1.02); }
-    .muted{ color:var(--muted); }
-    .link{ color:#0f62fe; text-decoration:none; }
-    .link:hover{ text-decoration:underline; }
-    .caps-hint{ display:none; color:#b45309; font-size:.9rem; }
-    .caps-hint.show{ display:block; }
-    .foot{ text-align:center; color:#e9eef5; font-size:.9rem; margin-top:14px; text-shadow:0 1px 2px rgba(0,0,0,.2); }
-
-    .toast-container{ position:fixed; right:16px; bottom:16px; z-index:1200; }
-    .toast{ border-radius:12px; box-shadow:var(--shadow); }
-    .toast-header{ border-bottom:none; }
-
-    .sr-only{ position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); border:0; }
-
-    /* Modo oscuro preferido */
-    @media (prefers-color-scheme: dark){
-      :root{ --panel:#0f172a; --ink:#e5e7eb; --muted:#9aa4b2; --border:#1f2a44; }
-      .brand{ color:#e5e7eb; }
-      .login-card{ border:1px solid #1f2a44; }
-      .input-group-text{ background:#0f172a!important; color:#e5e7eb; }
-      .form-control{ color:var(--ink); background:#0b1222; }
-      .foot{ color:#b7c1d1; }
-    }
-
-    @media (prefers-reduced-motion: reduce){
-      *, *::before, *::after{
-        animation-duration:.001ms!important; animation-iteration-count:1!important; transition-duration:.001ms!important; scroll-behavior:auto!important;
-      }
-    }
-  </style>
-</head>
-<body>
-
-  <div class="login-wrap">
-    <div class="brand" aria-label="Marca">
-      <img src="/static/logo-suizo.png" alt="Logo Suizo"/>
-      <span>Suizo Argentina <b>- Licitaciones IA</b></span>
-    </div>
-
-    <!-- Mensajes del backend -->
-    {% if mensaje %}
-      <div class="alert alert-success mb-3" role="alert">{{ mensaje }}</div>
-    {% endif %}
-    {% if error %}
-      <div class="alert alert-danger mb-3" role="alert">{{ error }}</div>
-    {% endif %}
-
-    <div class="card login-card">
-      <div class="card-header">
-        Inicio de sesión
-      </div>
-      <div class="card-body">
-        <!-- Región aria-live para estado del envío -->
-        <div id="status" class="sr-only" aria-live="polite"></div>
-
-        <form id="loginForm" method="post" action="/login" novalidate>
-          <!-- Si usás CSRF en backend, habilitá esto:
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          -->
-          <div class="mb-3">
-            <label class="form-label" for="email">Correo electrónico</label>
-            <input autofocus type="email" class="form-control" id="email" name="email" placeholder="usuario@suizo.com" required autocomplete="username" inputmode="email" aria-describedby="emailHelp">
-            <div id="emailHelp" class="form-text muted">Usá tu correo corporativo.</div>
-            <div class="invalid-feedback">Ingresá un email válido.</div>
-          </div>
-
-          <div class="mb-1">
-            <label class="form-label" for="password">Contraseña</label>
-            <div class="input-group">
-              <input type="password" class="form-control" id="password" name="password" placeholder="••••••••" required autocomplete="current-password" aria-describedby="capsHint">
-              <button class="input-group-text" type="button" onclick="toggleVis(this)" onpointerdown="pressShow(event)" onpointerup="releaseShow()" onpointerleave="releaseShow()" title="Mostrar/ocultar contraseña" aria-label="Mostrar u ocultar contraseña">
-                <i class="bi bi-eye" aria-hidden="true"></i>
-              </button>
-              <div class="invalid-feedback">Ingresá tu contraseña.</div>
-            </div>
-          </div>
-          <div id="capsHint" class="caps-hint mb-2"><i class="bi bi-exclamation-triangle"></i> Bloq Mayús está activado.</div>
-
-          <div class="d-flex justify-content-between align-items-center mb-3">
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="remember" name="remember">
-              <label class="form-check-label" for="remember">Recordarme</label>
-            </div>
-            <a class="link small" href="/cambiar-password">Cambiar contraseña</a>
-          </div>
-
-          <button id="loginBtn" type="submit" class="btn btn-primary w-100" aria-describedby="status">
-            <span class="btn-text">Ingresar</span>
-            <span class="spinner-border spinner-border-sm ms-2 d-none" role="status" aria-hidden="true"></span>
-          </button>
-        </form>
-      </div>
-    </div>
-
-    <div class="foot">© <span id="yy"></span> Suizo Argentina</div>
+{% block content %}
+<div class="login-wrap">
+  <div class="brand" aria-label="Marca">
+    <!-- Asegurate que el asset exista; si no, cambiá a logo-suizo.png -->
+    <img src="/static/logo-suizo.png" alt="Logo Suizo"/>
+    <span>Suizo Argentina <b>- Licitaciones IA</b></span>
   </div>
 
-  <!-- Toasts -->
-  <div class="toast-container" id="toastContainer"></div>
+  {% if mensaje %}<div class="alert alert-success mb-3" role="alert">{{ mensaje }}</div>{% endif %}
+  {% if error %}  <div class="alert alert-danger mb-3" role="alert">{{ error }}</div>{% endif %}
 
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script>
-    /* ===== Util ===== */
-    const $$ = (sel)=>document.querySelector(sel);
-    function escapeHtml(str){ return (str??'').toString().replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
+  <div class="card login-card">
+    <div class="card-body">
+      <h4 class="mb-3 text-center" style="color:var(--color-azul);">Inicio de sesión</h4>
 
-    // Año footer
-    document.getElementById('yy').textContent = new Date().getFullYear();
+      <div id="status" class="sr-only" aria-live="polite"></div>
 
-    // Mostrar/ocultar contraseña (click)
-    function toggleVis(el){
-      const input = document.getElementById('password');
-      const isPass = input.type === 'password';
-      input.type = isPass ? 'text' : 'password';
-      el.querySelector('i').className = isPass ? 'bi bi-eye-slash' : 'bi bi-eye';
-      input.focus();
-    }
-    // Mantener presionado para mostrar en mobile
-    let _pressTimer=null;
-    function pressShow(e){
-      const input = document.getElementById('password');
-      if(input.type === 'password'){
-        input.type = 'text';
-        e.currentTarget.querySelector('i').className = 'bi bi-eye-slash';
-      }
-      clearTimeout(_pressTimer);
-      _pressTimer = setTimeout(()=>{}, 1500);
-    }
-    function releaseShow(){
-      clearTimeout(_pressTimer);
-      const input = document.getElementById('password');
-      const btn = document.querySelector('.input-group-text i');
-      if(input.type === 'text'){
-        input.type = 'password';
-        if(btn) btn.className = 'bi bi-eye';
-      }
-    }
+      <form id="loginForm" method="post" action="/login" novalidate>
+        {# CSRF opcional y a prueba de entorno sin CSRF #}
+        {% if csrf_token is defined %}
+          <input type="hidden" name="csrf_token"
+                 value="{{ csrf_token() if csrf_token is callable else csrf_token }}">
+        {% endif %}
 
-    // Detector de Bloq Mayús
-    const capsHint = document.getElementById('capsHint');
-    document.getElementById('password').addEventListener('keyup', (e)=>{
-      const caps = e.getModifierState && e.getModifierState('CapsLock');
-      capsHint.classList.toggle('show', !!caps);
-    });
-    document.getElementById('password').addEventListener('keydown', (e)=>{
-      if(e.key === 'Enter'){
-        e.preventDefault();
-        document.getElementById('loginForm').requestSubmit();
-      }
-    });
-
-    // Enter en email pasa a password
-    document.getElementById('email').addEventListener('keydown', (e)=>{
-      if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('password').focus(); }
-    });
-
-    // Recordar email en LocalStorage si marcan "Recordarme"
-    const LS_KEY_EMAIL = 'suizo_login_email';
-    window.addEventListener('load', ()=>{
-      const saved = localStorage.getItem(LS_KEY_EMAIL);
-      if(saved){
-        const em = document.getElementById('email');
-        em.value = saved;
-        document.getElementById('remember').checked = true;
-      }
-    });
-
-    // Validación + evitar doble submit + fallback
-    const form = document.getElementById('loginForm');
-    const btn = document.getElementById('loginBtn');
-    const status = document.getElementById('status');
-
-    form.addEventListener('submit', (e)=>{
-      if(!form.checkValidity()){
-        e.preventDefault();
-        e.stopPropagation();
-        form.classList.add('was-validated');
-        return;
-      }
-      // Recordar email si corresponde
-      const remember = document.getElementById('remember').checked;
-      const emailVal = document.getElementById('email').value.trim();
-      if(remember) localStorage.setItem(LS_KEY_EMAIL, emailVal);
-      else localStorage.removeItem(LS_KEY_EMAIL);
-
-      // bloquear múltiples envíos
-      btn.disabled = true;
-      btn.querySelector('.btn-text').textContent = 'Ingresando...';
-      btn.querySelector('.spinner-border').classList.remove('d-none');
-      status.textContent = 'Enviando…';
-
-      // Fallback: re-habilitar a los 15s por si la red está muy lenta
-      setTimeout(()=>{
-        if(btn.disabled){
-          btn.disabled = false;
-          btn.querySelector('.btn-text').textContent = 'Ingresar';
-          btn.querySelector('.spinner-border').classList.add('d-none');
-          status.textContent = 'Tiempo de espera agotado. Intentá nuevamente.';
-          showToast({title:'Demora inusual', body:'La red tardó demasiado. Verificá tu conexión e intentá otra vez.', icon:'hourglass-split'});
-        }
-      }, 15000);
-    });
-
-    // Toast helper (con escape)
-    function showToast({title='Aviso', body='', icon='info', delay=3500}={}){
-      const cont = document.getElementById('toastContainer');
-      const el = document.createElement('div');
-      el.className = 'toast align-items-center';
-      el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
-      el.innerHTML = `
-        <div class="toast-header">
-          <i class="bi bi-${escapeHtml(icon)} me-1"></i>
-          <strong class="me-auto">${escapeHtml(title)}</strong>
-          <small>Ahora</small>
-          <button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
+        <div class="mb-3">
+          <label class="form-label" for="email">Correo electrónico</label>
+          <input autofocus type="email" class="form-control" id="email" name="email"
+                 placeholder="usuario@suizo.com" required autocomplete="username" inputmode="email" aria-describedby="emailHelp">
+          <div id="emailHelp" class="form-text muted">Usá tu correo corporativo.</div>
+          <div class="invalid-feedback">Ingresá un email válido.</div>
         </div>
-        <div class="toast-body">${escapeHtml(body)}</div>
-      `;
-      cont.appendChild(el);
-      const t = new bootstrap.Toast(el, { delay });
-      t.show();
-      el.addEventListener('hidden.bs.toast', ()=> el.remove());
+
+        <div class="mb-1">
+          <label class="form-label" for="password">Contraseña</label>
+          <div class="input-group">
+            <input type="password" class="form-control" id="password" name="password"
+                   placeholder="••••••••" required autocomplete="current-password" aria-describedby="capsHint">
+            <button class="input-group-text" type="button" onclick="toggleVis(this)"
+                    onpointerdown="pressShow(event)" onpointerup="releaseShow()" onpointerleave="releaseShow()"
+                    title="Mostrar/ocultar contraseña" aria-label="Mostrar u ocultar contraseña">
+              <i class="bi bi-eye" aria-hidden="true"></i>
+            </button>
+            <div class="invalid-feedback">Ingresá tu contraseña.</div>
+          </div>
+        </div>
+        <div id="capsHint" class="caps-hint mb-2"><i class="bi bi-exclamation-triangle"></i> Bloq Mayús está activado.</div>
+
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="remember" name="remember">
+            <label class="form-check-label" for="remember">Recordarme</label>
+          </div>
+          <a class="link small" href="/cambiar-password">Cambiar contraseña</a>
+        </div>
+
+        <button id="loginBtn" type="submit" class="btn btn-primary w-100" aria-describedby="status">
+          <span class="btn-text">Ingresar</span>
+          <span class="spinner-border spinner-border-sm ms-2 d-none" role="status" aria-hidden="true"></span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div class="foot">© <span id="yy"></span> Suizo Argentina</div>
+</div>
+
+<!-- Toasts -->
+<div class="toast-container" id="toastContainer"></div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const $$ = (sel)=>document.querySelector(sel);
+  function escapeHtml(str){ return (str??'').toString().replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
+
+  // Año footer
+  document.getElementById('yy').textContent = new Date().getFullYear();
+
+  // Mostrar/ocultar contraseña
+  function toggleVis(el){
+    const input = document.getElementById('password');
+    const isPass = input.type === 'password';
+    input.type = isPass ? 'text' : 'password';
+    el.querySelector('i').className = isPass ? 'bi bi-eye-slash' : 'bi bi-eye';
+    input.focus();
+  }
+  let _pressTimer=null;
+  function pressShow(e){
+    const input = document.getElementById('password');
+    if(input.type === 'password'){
+      input.type = 'text';
+      e.currentTarget.querySelector('i').className = 'bi bi-eye-slash';
     }
+    clearTimeout(_pressTimer); _pressTimer = setTimeout(()=>{}, 1500);
+  }
+  function releaseShow(){
+    clearTimeout(_pressTimer);
+    const input = document.getElementById('password');
+    const btn = document.querySelector('.input-group-text i');
+    if(input.type === 'text'){ input.type = 'password'; if(btn) btn.className = 'bi bi-eye'; }
+  }
 
-    // Mensajes por querystring: ?logout=1, ?expired=1, ?needlogin=1, ?error=mensaje
-    (function checkQueryToasts(){
-      const p = new URLSearchParams(location.search);
-      if (p.get('logout') === '1')  showToast({title:'Sesión cerrada', body:'Cerraste sesión correctamente.', icon:'box-arrow-right'});
-      if (p.get('expired') === '1') showToast({title:'Sesión expirada', body:'Ingresá nuevamente.', icon:'hourglass-split'});
-      if (p.get('needlogin') === '1') showToast({title:'Acceso requerido', body:'Iniciá sesión para continuar.', icon:'lock'});
-      if (p.get('error')) showToast({title:'Error', body: p.get('error'), icon:'exclamation-triangle'});
-    })();
+  // Caps Lock
+  const capsHint = document.getElementById('capsHint');
+  document.getElementById('password').addEventListener('keyup', (e)=>{
+    const caps = e.getModifierState && e.getModifierState('CapsLock');
+    capsHint.classList.toggle('show', !!caps);
+  });
+  document.getElementById('password').addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('loginForm').requestSubmit(); }
+  });
+  // Enter en email → password
+  document.getElementById('email').addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('password').focus(); }
+  });
 
-    // Autocompleta dominio corporativo al perder foco si falta '@'
-    const email = document.getElementById('email');
-    email.addEventListener('blur', ()=>{
-      const v = email.value.trim();
-      if(v && !v.includes('@') && v.indexOf(' ') === -1){
-        email.value = v + '@suizo.com';
+  // Recordar email
+  const LS_KEY_EMAIL = 'suizo_login_email';
+  window.addEventListener('load', ()=>{
+    const saved = localStorage.getItem(LS_KEY_EMAIL);
+    if(saved){ const em = document.getElementById('email'); em.value = saved; document.getElementById('remember').checked = true; }
+  });
+
+  // Validación / bloqueo doble submit / fallback
+  const form = document.getElementById('loginForm');
+  const btn = document.getElementById('loginBtn');
+  const status = document.getElementById('status');
+
+  form.addEventListener('submit', (e)=>{
+    if(!form.checkValidity()){
+      e.preventDefault(); e.stopPropagation(); form.classList.add('was-validated'); return;
+    }
+    const remember = document.getElementById('remember').checked;
+    const emailVal = document.getElementById('email').value.trim();
+    if(remember) localStorage.setItem(LS_KEY_EMAIL, emailVal); else localStorage.removeItem(LS_KEY_EMAIL);
+
+    btn.disabled = true;
+    btn.querySelector('.btn-text').textContent = 'Ingresando...';
+    btn.querySelector('.spinner-border').classList.remove('d-none');
+    status.textContent = 'Enviando…';
+
+    setTimeout(()=>{
+      if(btn.disabled){
+        btn.disabled = false;
+        btn.querySelector('.btn-text').textContent = 'Ingresar';
+        btn.querySelector('.spinner-border').classList.add('d-none');
+        status.textContent = 'Tiempo de espera agotado. Intentá nuevamente.';
+        showToast({title:'Demora inusual', body:'La red tardó demasiado. Verificá tu conexión e intentá otra vez.', icon:'hourglass-split'});
       }
-    });
-  </script>
-</body>
-</html>
+    }, 15000);
+  });
+
+  // Toast helper
+  function showToast({title='Aviso', body='', icon='info', delay=3500}={}){
+    const cont = document.getElementById('toastContainer');
+    const el = document.createElement('div');
+    el.className = 'toast align-items-center';
+    el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
+    el.innerHTML = `
+      <div class="toast-header">
+        <i class="bi bi-${escapeHtml(icon)} me-1"></i>
+        <strong class="me-auto">${escapeHtml(title)}</strong>
+        <small>Ahora</small>
+        <button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
+      </div>
+      <div class="toast-body">${escapeHtml(body)}</div>
+    `;
+    cont.appendChild(el);
+    const t = new bootstrap.Toast(el, { delay });
+    t.show();
+    el.addEventListener('hidden.bs.toast', ()=> el.remove());
+  }
+
+  // Mensajes ?logout=1, ?expired=1, ?needlogin=1, ?error=mensaje
+  (function checkQueryToasts(){
+    const p = new URLSearchParams(location.search);
+    if (p.get('logout') === '1')  showToast({title:'Sesión cerrada', body:'Cerraste sesión correctamente.', icon:'box-arrow-right'});
+    if (p.get('expired') === '1') showToast({title:'Sesión expirada', body:'Ingresá nuevamente.', icon:'hourglass-split'});
+    if (p.get('needlogin') === '1') showToast({title:'Acceso requerido', body:'Iniciá sesión para continuar.', icon:'lock'});
+    if (p.get('error')) showToast({title:'Error', body: p.get('error'), icon:'exclamation-triangle'});
+  })();
+
+  // Autocompleta dominio corporativo
+  const email = document.getElementById('email');
+  email.addEventListener('blur', ()=>{
+    const v = email.value.trim();
+    if(v && !v.includes('@') && v.indexOf(' ') === -1) email.value = v + '@suizo.com';
+  });
+</script>
+{% endblock %}
