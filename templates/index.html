@@ -26,7 +26,7 @@
   <div class="row g-3 px-1">
 
     <!-- ===== 1) ANALIZAR (PRIMERO) ===== -->
-    <div class="col-12">
+    <div class="col-12" id="analisis">
       <div class="cardx">
         <div class="title mb-2"><i class="bi bi-upload me-2"></i> Subir pliegos para análisis</div>
         <form id="form-analyze" class="mb-2">
@@ -50,7 +50,7 @@
     </div>
 
     <!-- ===== 2) HISTORIAL (INMEDIATAMENTE DEBAJO) ===== -->
-    <div class="col-12">
+    <div class="col-12" id="historial">
       <div class="cardx">
         <div class="d-flex align-items-center justify-content-between mb-2">
           <div class="title"><i class="bi bi-clock-history me-2"></i> Historial de análisis</div>
@@ -86,7 +86,7 @@
         <div class="d-grid gap-2">
           <a class="btn btn-primary" href="/incidencias"><i class="bi bi-tools me-1"></i> Crear incidencia</a>
           <a class="btn btn-outline-primary" href="/chat"><i class="bi bi-chat-dots me-1"></i> Abrir chat interno</a>
-          <a class="btn btn-outline-primary" href="/analisis/nuevo"><i class="bi bi-diagram-3 me-1"></i> Nuevo análisis de pliego</a>
+          <a class="btn btn-outline-primary" href="#analisis"><i class="bi bi-diagram-3 me-1"></i> Nuevo análisis de pliego</a>
         </div>
       </div>
       <div class="cardx">
@@ -196,7 +196,7 @@
       document.getElementById("result").innerHTML = `<div class="alert alert-success"><strong>✅ Análisis completo.</strong><br><br>${resumenGlobal}</div>`;
       await loadHistorial(); // refresca historial justo debajo
       // Hace scroll suave al historial para ver el nuevo item
-      document.getElementById('historial-list')?.scrollIntoView({behavior:'smooth', block:'start'});
+      document.getElementById('historial')?.scrollIntoView({behavior:'smooth', block:'start'});
     }else{
       document.getElementById("result").innerHTML = `<div class="alert alert-danger">❌ ${j.error||'No se pudo analizar.'}</div>`;
     }
