@@ -6,111 +6,100 @@
   <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css" rel="stylesheet"/>
   <style>
     .segmented .btn{ border-radius:999px; }
-    .segmented .btn.active{ background:var(--brand-soft); border-color:var(--brand); color:var(--brand); }
-    .fab{
-      position:fixed; right:20px; bottom:20px; z-index:999;
-      border-radius:999px; box-shadow:var(--shadow);
-    }
-    /* calendario dentro de card */
-    #calendar .fc .fc-toolbar-title{ font-weight:700; color:var(--brand); }
-    #calendar .fc .fc-button{ border-radius:10px; }
+    .segmented .btn.active{ background:var(--pill); border-color:var(--accent-a); color:var(--accent-a); }
+    /* Calendario compacto dentro de una card (apoya los estilos globales del base) */
+    #calendar.calendar-compact .fc .fc-view-harness{ min-height: 520px; }
+    #calendar.calendar-compact .fc .fc-toolbar{ margin:8px 0 12px; }
   </style>
 {% endblock %}
 
 {% block content %}
 <div class="py-3">
-  <!-- Encabezado + selector de vista -->
-  <div class="d-flex align-items-center justify-content-between mb-3">
+  <!-- Encabezado -->
+  <div class="d-flex align-items-center justify-content-between mb-3 px-1">
     <div>
       <h1 class="hero-title mb-1">Panel principal</h1>
       <div class="subtle" id="todayLabel"></div>
     </div>
-    <div class="segmented">
-      <button class="btn btn-sm btn-light active" data-calview="dayGridMonth">Mes</button>
-      <button class="btn btn-sm btn-light" data-calview="timeGridWeek">Semana</button>
-      <button class="btn btn-sm btn-light" data-calview="listWeek">Lista</button>
-    </div>
   </div>
 
-  <div class="row g-3">
-    <!-- Calendario -->
-    <div class="col-lg-8">
-      <div class="card card-clean shadow-hover">
-        <div class="card-header d-flex align-items-center justify-content-between">
-          <strong><i class="bi bi-calendar3 me-2"></i> Calendario</strong>
-          <div class="d-flex align-items-center gap-2">
+  <div class="row g-3 px-1">
+
+    <!-- ===== 1) ANALIZAR (PRIMERO) ===== -->
+    <div class="col-12">
+      <div class="cardx">
+        <div class="title mb-2"><i class="bi bi-upload me-2"></i> Subir pliegos para análisis</div>
+        <form id="form-analyze" class="mb-2">
+          <input type="file" id="file-hidden" class="form-control d-none" multiple>
+          <div class="mb-2">
+            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="agregarArchivos()">+ Agregar archivo</button>
+          </div>
+          <ul id="lista-archivos" class="list-group mb-3"></ul>
+          <div class="d-flex flex-wrap gap-2">
+            <button type="button" id="analyze-btn" class="btn btn-primary">
+              <i class="bi bi-rocket-takeoff me-1"></i> Analizar
+            </button>
+            <button type="button" id="generate-btn" class="btn btn-outline-primary">
+              <i class="bi bi-file-earmark-arrow-down me-1"></i> Descargar último PDF
+            </button>
+            <button type="button" class="btn btn-outline-secondary" onclick="limpiar()">Limpiar</button>
+          </div>
+        </form>
+        <div id="result"></div>
+      </div>
+    </div>
+
+    <!-- ===== 2) HISTORIAL (INMEDIATAMENTE DEBAJO) ===== -->
+    <div class="col-12">
+      <div class="cardx">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <div class="title"><i class="bi bi-clock-history me-2"></i> Historial de análisis</div>
+          <input type="text" id="search-input" class="form-control form-control-sm" placeholder="Buscar en el historial..." style="max-width:260px"/>
+        </div>
+        <div id="historial-list"></div>
+      </div>
+    </div>
+
+    <!-- ===== 3) SECCIÓN SECUNDARIA: CALENDARIO + ACCIONES / RESUMEN ===== -->
+    <div class="col-12 col-xl-8">
+      <div class="cardx calendar-card">
+        <div class="title mb-2"><i class="bi bi-calendar3 me-2"></i> Calendario</div>
+        <div id="calendar" class="calendar-compact"></div>
+        <div class="d-flex align-items-center gap-2 mt-2">
+          <div class="segmented">
+            <button class="btn btn-sm btn-light active" data-calview="dayGridMonth">Mes</button>
+            <button class="btn btn-sm btn-light" data-calview="timeGridWeek">Semana</button>
+            <button class="btn btn-sm btn-light" data-calview="listWeek">Lista</button>
+          </div>
+          <div class="ms-auto d-flex align-items-center gap-2">
             <button class="btn btn-sm btn-outline-secondary" id="prevBtn"><i class="bi bi-chevron-left"></i></button>
             <button class="btn btn-sm btn-outline-secondary" id="todayBtn">Hoy</button>
             <button class="btn btn-sm btn-outline-secondary" id="nextBtn"><i class="bi bi-chevron-right"></i></button>
           </div>
         </div>
-        <div class="card-body p-2">
-          <div id="calendar"></div>
-        </div>
       </div>
     </div>
 
-    <!-- Acciones + Resumen -->
-    <div class="col-lg-4">
-      <div class="card card-clean mb-3 shadow-hover">
-        <div class="card-header"><strong>Acciones rápidas</strong></div>
-        <div class="card-body d-grid gap-2">
+    <div class="col-12 col-xl-4">
+      <div class="cardx mb-3">
+        <div class="title mb-2"><i class="bi bi-lightning-charge me-2"></i> Acciones rápidas</div>
+        <div class="d-grid gap-2">
           <a class="btn btn-primary" href="/incidencias"><i class="bi bi-tools me-1"></i> Crear incidencia</a>
           <a class="btn btn-outline-primary" href="/chat"><i class="bi bi-chat-dots me-1"></i> Abrir chat interno</a>
-          <a class="btn btn-outline-primary" href="/report"><i class="bi bi-file-earmark-text me-1"></i> Nuevo análisis de pliego</a>
+          <a class="btn btn-outline-primary" href="/analisis/nuevo"><i class="bi bi-diagram-3 me-1"></i> Nuevo análisis de pliego</a>
         </div>
       </div>
-      <div class="card card-clean shadow-hover">
-        <div class="card-header"><strong>Resumen</strong></div>
-        <div class="card-body">
-          <ul class="list-unstyled mb-0">
-            <li class="mb-2"><span class="badge bg-primary-subtle text-primary me-2">•</span> Incidencias abiertas: <strong>{{ incidencias_abiertas or 0 }}</strong></li>
-            <li class="mb-2"><span class="badge bg-warning-subtle text-warning me-2">•</span> Eventos esta semana: <strong id="kpiSemana">—</strong></li>
-            <li><span class="badge bg-success-subtle text-success me-2">•</span> Último análisis: <strong>{{ ultimo_analisis or '—' }}</strong></li>
-          </ul>
-        </div>
-      </div>
-    </div>
-
-    <!-- Subir pliegos para análisis -->
-    <div class="col-12">
-      <div class="card card-clean shadow-hover">
-        <div class="card-header"><strong><i class="bi bi-upload me-2"></i>Subir pliegos para análisis</strong></div>
-        <div class="card-body">
-          <form id="form-analyze" class="mb-2">
-            <input type="file" id="file-hidden" class="form-control d-none" multiple>
-            <div class="mb-2">
-              <button type="button" class="btn btn-outline-secondary btn-sm" onclick="agregarArchivos()">+ Agregar archivo</button>
-            </div>
-            <ul id="lista-archivos" class="list-group mb-3"></ul>
-            <div class="d-flex flex-wrap gap-2">
-              <button type="button" id="analyze-btn" class="btn btn-primary">Analizar</button>
-              <button type="button" id="generate-btn" class="btn btn-outline-primary">Descargar último PDF</button>
-              <button type="button" class="btn btn-outline-secondary" onclick="limpiar()">Limpiar</button>
-            </div>
-          </form>
-          <div id="result"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Historial -->
-    <div class="col-12">
-      <div class="card card-clean shadow-hover">
-        <div class="card-header d-flex align-items-center justify-content-between">
-          <strong>📚 Historial de análisis</strong>
-          <input type="text" id="search-input" class="form-control form-control-sm" placeholder="Buscar en el historial..." style="max-width:260px"/>
-        </div>
-        <div class="card-body">
-          <div id="historial-list"></div>
-        </div>
+      <div class="cardx">
+        <div class="title mb-2"><i class="bi bi-list-check me-2"></i> Resumen</div>
+        <ul class="list-unstyled mb-0">
+          <li class="mb-1"><span class="badge bg-primary-subtle text-primary me-2">•</span> Incidencias abiertas: <strong>{{ incidencias_abiertas or 0 }}</strong></li>
+          <li class="mb-1"><span class="badge bg-warning-subtle text-warning me-2">•</span> Eventos esta semana: <strong id="kpiSemana">—</strong></li>
+          <li><span class="badge bg-success-subtle text-success me-2">•</span> Último análisis: <strong>{{ ultimo_analisis or '—' }}</strong></li>
+        </ul>
       </div>
     </div>
   </div>
 </div>
-
-<!-- FAB Chat OpenAI -->
-<button class="btn btn-primary fab" onclick="openChatAndExpand()"><i class="bi bi-robot me-2"></i>Chat OpenAI</button>
 {% endblock %}
 
 {% block extra_scripts %}
@@ -121,10 +110,10 @@
   (function(){
     const el=document.getElementById('todayLabel');
     const fmt=new Intl.DateTimeFormat('es-AR',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
-    el.textContent = fmt.format(new Date());
+    if(el) el.textContent = fmt.format(new Date());
   })();
 
-  // FullCalendar
+  // ===== FullCalendar (compacto; colores se heredan del base) =====
   let calendar;
   (function(){
     const el=document.getElementById('calendar');
@@ -144,7 +133,9 @@
           successCallback(j.events || []);
           // KPI semana
           const start=new Date(); const end=new Date(); end.setDate(start.getDate()+7);
-          const cnt=(j.events||[]).filter(e=>{const d=new Date(e.start||e.date); return d>=start && d<=end;}).length;
+          const cnt=(j.events||[]).filter(e=>{
+            const d=new Date(e.start||e.date); return d>=start && d<=end;
+          }).length;
           document.getElementById('kpiSemana').textContent = cnt;
         }catch(e){
           successCallback([]); document.getElementById('kpiSemana').textContent='0';
@@ -154,7 +145,7 @@
     });
     calendar.render();
 
-    // Controles
+    // Controles y vistas
     document.querySelectorAll('[data-calview]').forEach(btn=>{
       btn.addEventListener('click',()=>{
         document.querySelectorAll('[data-calview]').forEach(b=>b.classList.remove('active'));
@@ -162,9 +153,9 @@
         calendar.changeView(btn.getAttribute('data-calview'));
       });
     });
-    document.getElementById('prevBtn').addEventListener('click',()=>calendar.prev());
-    document.getElementById('nextBtn').addEventListener('click',()=>calendar.next());
-    document.getElementById('todayBtn').addEventListener('click',()=>calendar.today());
+    document.getElementById('prevBtn')?.addEventListener('click',()=>calendar.prev());
+    document.getElementById('nextBtn')?.addEventListener('click',()=>calendar.next());
+    document.getElementById('todayBtn')?.addEventListener('click',()=>calendar.today());
   })();
 
   // ====== Módulo análisis ======
@@ -203,7 +194,9 @@
     if(r.ok){
       resumenGlobal=j.resumen; ultimoPDF=j.pdf;
       document.getElementById("result").innerHTML = `<div class="alert alert-success"><strong>✅ Análisis completo.</strong><br><br>${resumenGlobal}</div>`;
-      await loadHistorial();
+      await loadHistorial(); // refresca historial justo debajo
+      // Hace scroll suave al historial para ver el nuevo item
+      document.getElementById('historial-list')?.scrollIntoView({behavior:'smooth', block:'start'});
     }else{
       document.getElementById("result").innerHTML = `<div class="alert alert-danger">❌ ${j.error||'No se pudo analizar.'}</div>`;
     }
@@ -222,8 +215,13 @@
     const hist = await r.json();
     const cont = document.getElementById("historial-list");
     cont.innerHTML="";
+    if(!Array.isArray(hist) || !hist.length){
+      cont.innerHTML = '<div class="text-muted">Sin análisis aún.</div>';
+      return;
+    }
     hist.forEach(entry=>{
-      const fecha=entry.fecha_legible || "—";
+      const fecha=entry.fecha_legible || entry.fecha || "—";
+      const pdfName = (entry.ruta_pdf||'').split('/').pop() || entry.nombre_archivo || '';
       const div=document.createElement("div");
       div.className="mb-3 p-3 border rounded-3";
       div.style.borderColor="var(--border)";
@@ -232,7 +230,7 @@
         <div><strong>🕓 Fecha:</strong> ${fecha}</div>
         <div><strong>👤 Usuario:</strong> ${entry.usuario}</div>
         <div class="d-flex gap-2 mt-2">
-          <a href="/descargar/${entry.ruta_pdf.split('/').pop()}" class="btn btn-sm btn-primary">Descargar PDF</a>
+          <a href="/descargar/${pdfName}" class="btn btn-sm btn-primary">Descargar PDF</a>
           <button class="btn btn-sm btn-outline-danger" onclick="eliminarHist('${entry.timestamp}')">Eliminar</button>
         </div>`;
       cont.appendChild(div);
