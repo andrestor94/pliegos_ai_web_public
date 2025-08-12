@@ -32,49 +32,44 @@
     .app{
       height:100%;
       display:grid;
-      grid-template-columns: 86px 1fr;          /* ⬅️ más angosto */
+      grid-template-columns: 74px 1fr;
       grid-template-rows: 76px 1fr;
       grid-template-areas:
         "sidebar header"
         "sidebar content";
     }
 
-    /* ===== Sidebar - modo rail compacto ===== */
+    /* ===== Sidebar más corta y centrada ===== */
     .sidebar{
       grid-area:sidebar;
       display:flex;
+      flex-direction:column;
       align-items:center;
-      justify-content:center;                   /* centra verticalmente el rail */
-      padding:0 8px;
-      background:transparent;                   /* sin bloque oscuro de lado a lado */
-    }
-    .side-rail{
-      display:flex; flex-direction:column; align-items:center;
-      gap:10px;
-      width:68px;                               /* ancho del rail */
-      padding:14px 10px;
-      margin:24px 0;                            /* deja aire arriba/abajo */
-      border-radius:28px;                       /* extremos redondeados */
+      width:74px;
+      padding:14px 8px;
       background: linear-gradient(180deg, #0f172a, #0b1220);
-      box-shadow: 0 12px 28px rgba(2,6,23,.36), inset 0 0 0 1px rgba(255,255,255,.04);
+      border-radius: 0 26px 26px 0;
+      box-shadow: 0 10px 26px rgba(2,6,23,.34), inset 0 0 0 1px rgba(255,255,255,.04);
       color:#fff;
-      height: calc(100% - 48px);                /* mantiene espacio superior/inferior */
-      max-height: 840px;                        /* evita ocupar toda la altura en pantallas grandes */
+
+      /* 📌 Altura más corta + centrado vertical */
+      height: 70%;
+      margin: auto 0;
     }
 
     .side-logo{
-      width:50px; height:50px; border-radius:14px;
+      width:46px; height:46px; border-radius:12px;
       background:#fff; display:grid; place-items:center;
       box-shadow: inset 0 0 0 1px rgba(0,0,0,.06);
     }
-    .side-logo img{ width:32px; height:32px; object-fit:contain; }
+    .side-logo img{ width:30px; height:30px; object-fit:contain; }
 
-    .side-nav{ display:flex; flex-direction:column; gap:10px; align-items:center; width:100%; margin-top:6px; }
+    .side-nav{ display:flex; flex-direction:column; gap:8px; align-items:center; width:100%; margin-top:8px; }
 
     .side-btn{
-      width:48px; height:48px;                  /* ⬅️ iconos más chicos */
-      border-radius:14px; display:grid; place-items:center;
-      color:#cbd5e1; font-size:20px;
+      width:44px; height:44px;
+      border-radius:12px; display:grid; place-items:center;
+      color:#cbd5e1; font-size:18px;
       border:1px solid rgba(255,255,255,.08);
       background:rgba(255,255,255,.03);
       transition: transform .06s ease, box-shadow .2s ease, background .2s ease, color .2s ease;
@@ -163,7 +158,6 @@
 <body data-auth="{{ '1' if request and request.url.path.startswith('/login') else '' }}"
       data-route="{{ request.url.path if request else '' }}">
 
-  <!-- Fallback JS por si no llega request en el template -->
   <script>
     (function(){
       try{
@@ -175,29 +169,27 @@
 
   <div class="shell">
     <div class="app">
-      <!-- ===== Sidebar (rail) ===== -->
+      <!-- ===== Sidebar ===== -->
       <aside class="sidebar">
-        <div class="side-rail">
-          <div class="side-logo" title="Suizo Argentina">
-            <img src="/static/logo-suizo.png" alt="Suizo"/>
-          </div>
-
-          <nav class="side-nav">
-            <a class="side-btn" data-match="/"               href="/"               title="Inicio"><i class="bi bi-house"></i></a>
-            <a class="side-btn" data-match="/chat"           href="/chat"           title="Chat interno"><i class="bi bi-chat-dots"></i></a>
-            <a class="side-btn" data-match="/incidencias"    href="/incidencias"    title="Incidencias"><i class="bi bi-bug"></i></a>
-            <a class="side-btn" data-match="/calendario"     href="/calendario"     title="Calendario"><i class="bi bi-calendar-event"></i></a>
-            <a class="side-btn" data-match="/historia"       href="/historia"       title="Historial"><i class="bi bi-clock-history"></i></a>
-            <a class="side-btn" data-match="/auditoria"      href="/auditoria"      title="Auditoría"><i class="bi bi-clipboard-data"></i></a>
-            <a class="side-btn" data-match="/admin"          href="/admin"          title="Admin"><i class="bi bi-gear"></i></a>
-          </nav>
-
-          <div class="side-spacer"></div>
-
-          <a class="side-btn" data-match="/cambiar-password" href="/cambiar-password" title="Cambiar contraseña"><i class="bi bi-key"></i></a>
-          <a class="side-btn" href="#" id="btnSalir" title="Salir"><i class="bi bi-box-arrow-right"></i></a>
-          <div class="side-small">v1</div>
+        <div class="side-logo" title="Suizo Argentina">
+          <img src="/static/logo-suizo.png" alt="Suizo"/>
         </div>
+
+        <nav class="side-nav">
+          <a class="side-btn" data-match="/"               href="/"               title="Inicio"><i class="bi bi-house"></i></a>
+          <a class="side-btn" data-match="/chat"           href="/chat"           title="Chat interno"><i class="bi bi-chat-dots"></i></a>
+          <a class="side-btn" data-match="/incidencias"    href="/incidencias"    title="Incidencias"><i class="bi bi-bug"></i></a>
+          <a class="side-btn" data-match="/calendario"     href="/calendario"     title="Calendario"><i class="bi bi-calendar-event"></i></a>
+          <a class="side-btn" data-match="/historia"       href="/historia"       title="Historial"><i class="bi bi-clock-history"></i></a>
+          <a class="side-btn" data-match="/auditoria"      href="/auditoria"      title="Auditoría"><i class="bi bi-clipboard-data"></i></a>
+          <a class="side-btn" data-match="/admin"          href="/admin"          title="Admin"><i class="bi bi-gear"></i></a>
+        </nav>
+
+        <div class="side-spacer"></div>
+
+        <a class="side-btn" data-match="/cambiar-password" href="/cambiar-password" title="Cambiar contraseña"><i class="bi bi-key"></i></a>
+        <a class="side-btn" href="#" id="btnSalir" title="Salir"><i class="bi bi-box-arrow-right"></i></a>
+        <div class="side-small">v1</div>
       </aside>
 
       <!-- ===== Header ===== -->
@@ -237,7 +229,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    /* Usuario en header */
     async function getUsuario(){
       try{
         const r=await fetch('/usuario-actual'); if(!r.ok) return;
@@ -247,11 +238,9 @@
       }catch(_){}
     }
 
-    /* Logout */
     function logout(){ fetch('/logout',{method:'POST'}).then(()=> location.href='/login?logout=1'); }
     document.getElementById('btnSalir')?.addEventListener('click', (e)=>{ e.preventDefault(); logout(); });
 
-    /* Notificaciones */
     const notifBtn = document.getElementById('btnNotif');
     const notifPanel = document.getElementById('notif-panel');
     notifBtn?.addEventListener('click', ()=>{ if(!notifPanel) return; notifPanel.style.display = (notifPanel.style.display==='block'?'none':'block'); });
@@ -266,11 +255,9 @@
       }catch(_){}
     });
 
-    /* Chat IA */
     const CHAT_STATE_KEY='chatboxState';
     function openChatAndExpand(){ localStorage.setItem(CHAT_STATE_KEY,'open'); showToast({title:'Chat OpenAI', body:'Abierto.', icon:'robot'}); }
 
-    /* Link activo */
     (function markActive(){
       const path=location.pathname;
       document.querySelectorAll('.side-btn[data-match]').forEach(a=>{
@@ -280,7 +267,6 @@
       });
     })();
 
-    /* Toast helper */
     function showToast({title='Aviso', body='', icon='info', delay=3200}={}){
       const cont=document.getElementById('toastContainer'); if(!cont) return;
       const esc=(s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
