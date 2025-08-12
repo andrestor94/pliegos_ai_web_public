@@ -169,10 +169,24 @@
       radial-gradient(700px 520px at 84% 12%, rgba(236,72,153,.10), transparent 60%),
       radial-gradient(600px 420px at 8% 88%, rgba(37,99,235,.10), transparent 60%),
       #f8f9ff;
+      scroll-behavior: smooth; /* autoscroll suave nativo */
     }
     .msg{ background:#fff; border:1px solid var(--border); border-radius:14px; padding:10px 12px; margin-bottom:10px; }
     .msg.ai{ background:linear-gradient(180deg,#ffffff,#fbfdff); }
     .msg.me{ background:#eff4ff; border-color:#dfe6ff; }
+
+    /* Indicador escribiendo… */
+    .msg.typing{ display:flex; align-items:center; gap:8px; }
+    .typing-dot{
+      display:inline-block; width:6px; height:6px; border-radius:50%;
+      background:#94a3b8; opacity:.6; animation: blink 1s infinite ease-in-out;
+    }
+    .typing-dot:nth-child(2){ animation-delay:.15s; }
+    .typing-dot:nth-child(3){ animation-delay:.3s; }
+    @keyframes blink{
+      0%, 60%, 100%{ transform: translateY(0); opacity:.35; }
+      30%{ transform: translateY(-3px); opacity:.9; }
+    }
 
     .chat-ia__composer{
       padding:12px; border-top:1px solid var(--border); display:flex; gap:8px; background:#fff;
@@ -272,7 +286,8 @@
       <div class="msg ai"><b>IA:</b> ¿En qué te ayudo con licitaciones?</div>
     </div>
     <form id="chatIaForm" class="chat-ia__composer">
-      <textarea id="chatIaInput" placeholder="Escribe tu mensaje…"></textarea>
+      <!-- hint móvil y accesibilidad -->
+      <textarea id="chatIaInput" placeholder="Escribe tu mensaje…" enterkeyhint="send"></textarea>
       <button class="chat-ia__send" type="submit"><i class="bi bi-send"></i> Enviar</button>
     </form>
   </aside>
@@ -340,32 +355,96 @@
 
     if(localStorage.getItem(CHAT_STATE_KEY)==='open'){ openChatIA(false); }
 
+    // Autoscroll helper (fallback para navegadores sin scroll-behavior)
+    function scrollToBottom(smooth=true){
+      try{
+        chatIaBody.scrollTo({ top: chatIaBody.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+      }catch(_){
+        chatIaBody.scrollTop = chatIaBody.scrollHeight;
+      }
+    }
+
+    // Enviar con Enter (Shift+Enter = salto). Evita envío durante composición IME.
+    let isComposing = false;
+    chatIaInput?.addEventListener('compositionstart', ()=>{ isComposing = true; });
+    chatIaInput?.addEventListener('compositionend',  ()=>{ isComposing = false; });
+    chatIaInput?.addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter' && !e.shiftKey && !isComposing){
+        e.preventDefault();
+        chatIaForm?.requestSubmit();
+      }
+    });
+
     chatIaForm?.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const text = (chatIaInput?.value || '').trim();
       if(!text) return;
+
       appendMsg('me', text);
       chatIaInput.value = '';
+
+      // Indicador "escribiendo…"
+      const thinkingNode = addTyping();
+
       try{
-        const r = await fetch('/api/chat-openai', {   // <-- ajusta si tu endpoint es otro
+        const r = await fetch('/api/chat-openai', {
           method:'POST',
           headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ message: text })
         });
-        const data = await r.json().catch(()=> ({}));
-        appendMsg('ai', data?.reply || 'Listo.');
+
+        let data = null, bodyText = '';
+        try { data = await r.json(); } catch { bodyText = await r.text(); }
+        const reply = pickReply(data, bodyText) || 'No recibí respuesta del servidor.';
+        replaceMsg(thinkingNode, 'ai', reply);
       }catch(err){
-        appendMsg('ai', 'Hubo un error al contactar la IA.');
+        replaceMsg(thinkingNode, 'ai', 'Hubo un error al contactar la IA.');
       }
     });
+
+    // Soporta varios formatos de backend
+    function pickReply(json, fallbackText){
+      if(json){
+        if(typeof json.reply === 'string') return json.reply;
+        if(typeof json.respuesta === 'string') return json.respuesta;
+        const c = json.choices?.[0];
+        if(c?.message?.content) return c.message.content;
+        if(c?.text) return c.text;
+        if(json.data?.reply) return json.data.reply;
+      }
+      if(typeof fallbackText === 'string' && fallbackText.trim()) return fallbackText.trim();
+      return '';
+    }
 
     function appendMsg(who, text){
       const el = document.createElement('div');
       el.className = 'msg ' + (who==='ai'?'ai':'me');
       el.innerHTML = (who==='ai' ? '<b>IA:</b> ' : '<b>Yo:</b> ') + escapeHTML(text);
       chatIaBody.appendChild(el);
-      chatIaBody.scrollTop = chatIaBody.scrollHeight;
+      scrollToBottom(true);
+      return el;
     }
+
+    // Indicador escribiendo…
+    function addTyping(){
+      const el = document.createElement('div');
+      el.className = 'msg ai typing';
+      el.innerHTML = '<b>IA:</b> ' +
+        '<span class="typing-dot"></span>' +
+        '<span class="typing-dot"></span>' +
+        '<span class="typing-dot"></span>';
+      chatIaBody.appendChild(el);
+      scrollToBottom(true);
+      return el;
+    }
+
+    function replaceMsg(node, who, text){
+      if(!node) return appendMsg(who, text);
+      node.className = 'msg ' + (who==='ai'?'ai':'me');
+      node.innerHTML = (who==='ai' ? '<b>IA:</b> ' : '<b>Yo:</b> ') + escapeHTML(text);
+      scrollToBottom(true);
+    }
+
     function escapeHTML(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
     /* Link activo */
