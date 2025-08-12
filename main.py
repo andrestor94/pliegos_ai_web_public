@@ -3,7 +3,7 @@ import sqlite3
 import uuid
 from typing import List, Optional
 from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware import Middleware
@@ -56,6 +56,7 @@ inicializar_bd()
 inicializar_bd_orm()
 
 # Static
+# Si tus archivos están en backend/static, cambia a directory="backend/static"
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="generated_pdfs")
 
@@ -133,13 +134,21 @@ async def login_form(request: Request):
 async def login(request: Request, email: str = Form(...), password: str = Form(...)):
     usuario = obtener_usuario_por_email(email)
     if usuario and usuario[3] == password:
-        request.session["usuario"] = usuario[2]
+        # Guardamos ambas claves para compatibilidad con plantillas
+        request.session["usuario"] = usuario[2]   # email
+        request.session["email"] = usuario[2]
         request.session["rol"] = usuario[4]
         return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse("login.html", {"request": request, "error": "Credenciales incorrectas"})
 
+# Logout por POST (existente) y por GET (para el link del menú)
 @app.post("/logout")
-async def logout(request: Request):
+async def logout_post(request: Request):
+    request.session.clear()
+    return RedirectResponse("/login", status_code=303)
+
+@app.get("/logout")
+async def logout_get(request: Request):
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
 
@@ -417,6 +426,40 @@ async def chat_openai(request: Request):
 
     respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
     return JSONResponse({"respuesta": respuesta})
+
+# Mini vista embebida para el widget del topbar/FAB
+@app.get("/chat_openai_embed", response_class=HTMLResponse)
+async def chat_openai_embed(request: Request):
+    if not request.session.get("usuario"):
+        return HTMLResponse("<div style='padding:12px'>Iniciá sesión para usar el chat.</div>")
+    # UI mínima; podés reemplazarla por tu chat real
+    html = """
+    <!doctype html><html><head>
+    <meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+    </head><body class="p-2" style="background:transparent">
+      <div id="log" class="mb-2" style="height:410px; overflow:auto; background:#f6f8fb; border-radius:12px; padding:8px;"></div>
+      <form id="f" class="d-flex gap-2">
+        <input id="t" class="form-control" placeholder="Escribe tu pregunta..." autocomplete="off">
+        <button class="btn btn-primary">Enviar</button>
+      </form>
+      <script>
+        const log = document.getElementById('log');
+        function add(b){ const p=document.createElement('div'); p.innerHTML=b; log.appendChild(p); log.scrollTop=log.scrollHeight; }
+        document.getElementById('f').addEventListener('submit', async (e)=>{
+          e.preventDefault();
+          const v = document.getElementById('t').value.trim();
+          if(!v) return;
+          add('<div><b>Tú:</b> '+v+'</div>');
+          document.getElementById('t').value='';
+          const r = await fetch('/chat-openai', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mensaje:v})});
+          const j = await r.json();
+          add('<div class="mt-1"><b>IA:</b> '+(j.respuesta||'')+'</div>');
+        });
+      </script>
+    </body></html>
+    """
+    return HTMLResponse(html)
 
 # ================== Chat interno (UI) ==================
 @app.get("/chat", response_class=HTMLResponse)
@@ -740,6 +783,12 @@ async def cal_list():
         cur = c.execute("SELECT * FROM eventos ORDER BY start ASC")
         rows = [ _event_row_to_dict(r) for r in cur.fetchall() ]
     return rows
+
+# Alias para la Home (index) que espera {events:[...]}
+@app.get("/api/calendar/events")
+async def cal_list_alias():
+    items = await cal_list()
+    return {"events": items}
 
 @app.post("/calendario/eventos")
 async def cal_create(request: Request):

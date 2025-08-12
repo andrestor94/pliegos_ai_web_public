@@ -1,473 +1,142 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <title>Gestión de incidencias</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+{% extends "base.html" %}
+{% block title %}Incidencias – Suizo Argentina{% endblock %}
 
-  <!-- Bootstrap & Icons -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
-
-  <style>
-    :root{
-      --color-azul:#044369;
-      --color-azul-sec:#0d6efd;
-      --color-gris:#eceff4;
-      --color-gris-medio:#c8d0df;
-      --color-gris-oscuro:#354151;
-      --color-verde:#1b7b5a;
-      --color-rojo:#c62828;
-
-      --bg:#f6f8ff;
-      --card:#ffffff;
-      --ink:#0a0a0a;
-      --primary:#2f6adf;
-      --primary-ink:#ffffff;
-      --ring:rgba(47,106,223,.35);
-      --shadow:0 10px 30px rgba(0,0,0,.06);
-      --radius:16px;
-    }
-
-    body{ background:var(--bg); color:var(--ink); }
-    .container{ max-width: 1000px; margin-top:56px; }
-
-    /* Navbar + Offcanvas */
-    .navbar-wrap{ background:#fff; border-bottom:1.5px solid var(--color-azul-sec); box-shadow:0 2px 8px rgba(4,67,105,0.05); }
-    .navbar-brand{ color:var(--color-azul)!important; font-weight:600; }
-    .logo{ height:32px; margin-right:8px; }
-    .btn-solid{
-      background:var(--primary); color:var(--primary-ink); border:0; padding:.5rem .85rem; border-radius:12px;
-      transition:transform .08s ease, box-shadow .2s ease; box-shadow:0 6px 16px rgba(47,106,223,.25);
-    }
-    .btn-solid:hover{ transform:translateY(-1px); }
-    .btn-ghost{ background:transparent; border:1px solid #e5e7eb; padding:.5rem .8rem; border-radius:12px; }
-    .btn-ghost:hover{ background:#f3f4f6; }
-    .navbar-toggler-icon{
-      display:inline-block; width:1.5rem; height:1.5rem;
-      background-image:url("data:image/svg+xml,%3csvg viewBox='0 0 30 30' xmlns='http://www.w3.org/2000/svg'%3e%3cpath stroke='rgba(0,0,0,.7)' stroke-width='2' stroke-linecap='round' stroke-miterlimit='10' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
-      background-repeat:no-repeat; background-position:center;
-    }
-    .offcanvas{ border-radius:0 var(--radius) var(--radius) 0; }
-    .offcanvas .nav-link-mobile{
-      display:flex; align-items:center; gap:.6rem; padding:.7rem .8rem; border-radius:12px; color:var(--ink); text-decoration:none;
-    }
-    .offcanvas .nav-link-mobile:hover{ background:#f3f4f6; }
-    .offcanvas .nav-link-mobile.active{ background:#e8efff; color:#1e40af; }
-
-    /* Tarjetas, badges, tabla */
-    .card{ border-radius:18px; border:none; box-shadow:0 4px 24px rgba(4,67,105,0.09); background:var(--card); }
-    h2{ color:var(--color-azul); font-weight:700; }
-    .form-control, .form-select{ border-radius:7px!important; border-color:var(--color-gris-medio)!important; }
-
-    .badge{ font-size:.93em; border-radius:7px; padding:6px 14px; }
-    .badge.bg-warning{ background:#e3ecf5!important; color:var(--color-azul)!important; font-weight:600; border:1px solid #b6d1ea; }
-    .badge.bg-success{ background:#1b7b5a!important; color:#fff!important; font-weight:500; }
-
-    .btn{ border-radius:7px!important; font-weight:500; }
-    .btn-primary{ background:var(--color-azul)!important; border:none!important; color:#fff!important; }
-    .btn-primary:hover{ background:#022a47!important; }
-    .btn-outline-secondary{ border-color:var(--color-azul)!important; color:var(--color-azul)!important; }
-    .btn-outline-secondary:hover{ background:var(--color-azul)!important; color:#fff!important; }
-    .btn-outline-dark{ border-color:var(--color-gris-oscuro)!important; color:var(--color-gris-oscuro)!important; }
-    .btn-outline-dark:hover{ background:var(--color-gris-oscuro)!important; color:#fff!important; }
-    .btn-outline-success{ border-color:var(--color-verde)!important; color:var(--color-verde)!important; }
-    .btn-outline-success:hover{ background:var(--color-verde)!important; color:#fff!important; }
-    .btn-outline-danger{ border-color:var(--color-rojo)!important; color:var(--color-rojo)!important; }
-    .btn-outline-danger:hover{ background:var(--color-rojo)!important; color:#fff!important; }
-
-    .table thead{ background:#f3f8fc; }
-    .table th, .table td{ vertical-align:middle; border-bottom:1.5px solid #e9eef5!important; }
-    .table-responsive{ border-radius:12px; overflow:hidden; }
-    .adjuntos{ max-width: 140px; word-wrap: break-word; overflow-wrap: break-word; }
-    .adjuntos a{ display:block; font-size:.9em; color:var(--color-azul-sec); text-decoration: underline dotted; }
-    .adjuntos a:hover{ color:var(--color-azul); }
-
-    /* Chat IA flotante */
-    #chatbox{
-      position:fixed; bottom:20px; right:20px; width:350px; height:450px; border-radius:16px; background:#fff;
-      box-shadow:0 0 20px rgba(4,67,105,0.12); display:none; flex-direction:column; overflow:hidden; z-index:1000;
-      border:1.5px solid var(--color-azul);
-    }
-    #chatbox-header{
-      background:var(--color-azul); color:#fff; padding:10px; font-weight:600; font-size:1.05em; letter-spacing:.03em;
-      display:flex; align-items:center; justify-content:space-between;
-    }
-    #chat-messages{ flex:1; padding:12px 14px; overflow-y:auto; background:#f7fbff; }
-    #chat-input-ai{ border-top:1px solid #e2e5ec; display:flex; }
-    #chat-input-ai input{ flex:1; padding:10px; border:none; outline:none; font-size:1em; }
-    #chat-input-ai button{ background:var(--color-azul); color:#fff; border:none; padding:10px 16px; border-radius:0 0 12px 0; }
-    #chat-fab{
-      position:fixed; right:20px; bottom:20px; z-index:999; display:none;
-      border-radius:999px; padding:.6rem .9rem; box-shadow:0 8px 18px rgba(4,67,105,0.18);
-    }
-
-    /* Notificaciones */
-    #notif-fab{
-      position:fixed; right:20px; bottom:88px; z-index:999; border-radius:999px; padding:.55rem .75rem;
-      box-shadow:0 8px 18px rgba(4,67,105,0.18); background:#fff; border:1px solid #e5e7eb;
-    }
-    #notif-badge{ transform: translate(20%, -40%); }
-    #notif-panel{
-      position:fixed; right:20px; bottom:148px; width:320px; max-height:50vh; overflow:auto; z-index:1000; background:#fff;
-      border:1px solid #e5e7eb; border-radius:14px; box-shadow:0 12px 28px rgba(0,0,0,.12); display:none;
-    }
-
-    /* Toasts */
-    .toast-container{ position: fixed; right: 16px; bottom: 16px; z-index: 1200; }
-    .toast{ border-radius:12px; box-shadow:var(--shadow); }
-    .toast-header{ border-bottom:none; }
-    .toast .bi{ margin-right:.4rem; }
-
-    @media (max-width: 900px){ .container{ max-width: 98vw; } }
-    @media (max-width:700px){
-      #chatbox{ right:5vw; width:94vw; height:60vh; }
-      #notif-panel{ right:5vw; width:90vw; }
-    }
-  </style>
-</head>
-<body>
-
-  <!-- ===== Header / Navbar ===== -->
-  <header class="navbar-wrap sticky-top">
-    <nav class="navbar navbar-expand-lg px-3">
-      <button class="btn-ghost d-lg-none me-2" type="button" data-bs-toggle="offcanvas" data-bs-target="#menuOffcanvas" aria-controls="menuOffcanvas" aria-label="Abrir menú">
-        <span class="navbar-toggler-icon"></span>
-      </button>
-
-      <a class="navbar-brand d-flex align-items-center" href="/">
-        <img src="/static/logo-suizo.png" class="logo" alt="Logo Suizo"/>
-        <span>Suizo Argentina <b>- Licitaciones IA</b></span>
-      </a>
-
-      <div class="ms-auto d-none d-lg-flex align-items-center gap-2">
-        <span id="usuario-nombre" class="small me-2"></span>
-        <a href="/chat" class="btn-ghost">💬 Chat interno</a>
-        <button class="btn-ghost" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Chat OpenAI</button>
-        <a href="/calendario" class="btn-ghost">Calendario</a>
-        <a href="/incidencias" class="btn-ghost">Incidencias</a>
-        <a href="/cambiar-password" class="btn-ghost">Cambiar contraseña</a>
-        <a href="/admin" class="btn-ghost d-none" id="admin-link-desktop">Panel Admin</a>
-        <button class="btn-ghost text-danger" onclick="logout()"><i class="bi bi-box-arrow-right"></i> Salir</button>
-      </div>
-    </nav>
-  </header>
-
-  <!-- ===== Offcanvas (móvil) ===== -->
-  <div class="offcanvas offcanvas-start" tabindex="-1" id="menuOffcanvas" aria-labelledby="menuOffcanvasLabel">
-    <div class="offcanvas-header">
-      <h5 id="menuOffcanvasLabel" class="m-0">Menú</h5>
-      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Cerrar"></button>
-    </div>
-    <div class="offcanvas-body d-flex flex-column gap-2">
-      <div class="mb-2"><div id="usuario-nombre-mobile" class="small text-muted"></div></div>
-
-      <a class="nav-link-mobile" href="/"><i class="bi bi-house"></i> Inicio</a>
-      <a class="nav-link-mobile" href="/historia"><i class="bi bi-clock-history"></i> Historial</a>
-      <a class="nav-link-mobile" href="/chat"><i class="bi bi-chat-dots"></i> Chat interno</a>
-      <a class="nav-link-mobile" href="/calendario"><i class="bi bi-calendar-event"></i> Calendario</a>
-      <a class="nav-link-mobile" href="/incidencias"><i class="bi bi-bug"></i> Incidencias</a>
-      <a class="nav-link-mobile" href="/cambiar-password"><i class="bi bi-key"></i> Cambiar contraseña</a>
-      <a class="nav-link-mobile d-none" id="admin-link-mobile" href="/admin"><i class="bi bi-gear"></i> Administración</a>
-
-      <button class="btn-solid mt-3" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Abrir Chat OpenAI</button>
-
-      <div class="mt-auto pt-3 border-top">
-        <button class="nav-link-mobile text-danger" onclick="logout()"><i class="bi bi-box-arrow-right"></i> Salir</button>
-      </div>
-    </div>
+{% block content %}
+<div class="py-3">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h1 class="hero-title mb-0"><i class="bi bi-tools me-2"></i> Gestión de incidencias</h1>
+    <a href="/" class="btn btn-outline-secondary btn-sm">← Volver</a>
   </div>
 
-  <!-- ===== Contenido ===== -->
-  <main class="container">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-      <h2 class="mb-0">🛠️ Gestión de incidencias</h2>
-      <a href="/" class="btn btn-outline-secondary btn-sm">← Volver</a>
+  <!-- Crear incidencia -->
+  <div class="card card-clean shadow-hover mb-3">
+    <div class="card-header d-flex align-items-center justify-content-between">
+      <strong>Nueva incidencia</strong>
+      <span class="subtle">Reportá un problema o solicitud</span>
     </div>
-
-    <!-- Formulario para nueva incidencia -->
-    <div class="card shadow-sm mb-4">
-      <div class="card-body">
-        <form method="post" action="/incidencias" enctype="multipart/form-data">
-          <div class="mb-3">
-            <label for="titulo" class="form-label">Título de la incidencia</label>
-            <input type="text" class="form-control" id="titulo" name="titulo" required>
-          </div>
-          <div class="mb-3">
-            <label for="descripcion" class="form-label">Descripción</label>
-            <textarea class="form-control" id="descripcion" name="descripcion" rows="4" required></textarea>
-          </div>
-          <div class="mb-3">
-            <label for="tipo" class="form-label">Categoría</label>
-            <select class="form-select" id="tipo" name="tipo" required>
-              <option value="Técnica">Técnica</option>
-              <option value="Acceso">Acceso</option>
-              <option value="Datos">Datos</option>
-              <option value="Otro">Otro</option>
-            </select>
-          </div>
-          <div class="mb-3">
-            <label for="archivo" class="form-label">Adjuntar archivos (opcional)</label>
-            <input class="form-control" type="file" name="archivos" id="archivo" multiple>
-            <div class="form-text">Podés subir imágenes, PDFs, Word u otros archivos relacionados a la incidencia.</div>
-          </div>
+    <div class="card-body">
+      <form method="post" action="/incidencias" enctype="multipart/form-data" class="row g-3">
+        <div class="col-12 col-md-6">
+          <label for="titulo" class="form-label">Título</label>
+          <input type="text" class="form-control" id="titulo" name="titulo" required>
+        </div>
+        <div class="col-12 col-md-3">
+          <label for="tipo" class="form-label">Categoría</label>
+          <select class="form-select" id="tipo" name="tipo" required>
+            <option value="Técnica">Técnica</option>
+            <option value="Acceso">Acceso</option>
+            <option value="Datos">Datos</option>
+            <option value="Otro">Otro</option>
+          </select>
+        </div>
+        <div class="col-12">
+          <label for="descripcion" class="form-label">Descripción</label>
+          <textarea class="form-control" id="descripcion" name="descripcion" rows="4" required></textarea>
+        </div>
+        <div class="col-12">
+          <label for="archivo" class="form-label">Adjuntar archivos (opcional)</label>
+          <input class="form-control" type="file" name="archivos" id="archivo" multiple>
+          <div class="form-text">Imágenes, PDF, Word, Excel, etc.</div>
+        </div>
+        <div class="col-12">
           <button type="submit" class="btn btn-primary">Crear incidencia</button>
-        </form>
-      </div>
-    </div>
-
-    <!-- Lista de incidencias -->
-    <div class="card shadow-sm">
-      <div class="card-body">
-        <h5 class="mb-3" style="color:var(--color-azul);font-weight:700;">📋 Incidencias registradas</h5>
-        <div class="table-responsive">
-          <table class="table table-hover align-middle" style="table-layout: fixed;">
-            <thead>
-              <tr>
-                <th style="width: 5%;">ID</th>
-                <th style="width: 15%;">Usuario</th>
-                <th style="width: 10%;">Título</th>
-                <th style="width: 15%;">Descripción</th>
-                <th style="width: 10%;">Categoría</th>
-                <th style="width: 12%;">Fecha</th>
-                <th style="width: 15%;">Adjuntos</th>
-                <th style="width: 10%;">Estado</th>
-                <th style="width: 18%;">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for ticket in tickets %}
-              <tr>
-                <td>{{ ticket.id }}</td>
-                <td>{{ ticket.usuario }}</td>
-                <td>{{ ticket.titulo }}</td>
-                <td>{{ ticket.descripcion }}</td>
-                <td>{{ ticket.tipo }}</td>
-                <td>{{ ticket.fecha_legible }}</td>
-                <td class="adjuntos">
-                  {% if ticket.adjuntos %}
-                    {% for file in ticket.adjuntos %}
-                      <a href="/static/adjuntos_incidencias/{{ file }}" download>📎 {{ file[ file.find('_', file.find('_')+1)+1: ] }}</a>
-                    {% endfor %}
-                  {% else %}
-                    <span class="text-muted small">-</span>
-                  {% endif %}
-                </td>
-                <td>
-                  {% if ticket.estado == 'Abierto' %}
-                    <span class="badge bg-warning text-dark">Abierto</span>
-                  {% else %}
-                    <span class="badge bg-success">Resuelto</span>
-                  {% endif %}
-                </td>
-                <td class="d-flex gap-2">
-                  {% if ticket.estado == 'Abierto' %}
-                  <form method="post" action="/incidencias/cerrar/{{ ticket.id }}">
-                    <button type="submit" class="btn btn-sm btn-outline-success">Cerrar</button>
-                  </form>
-                  {% else %}
-                  <span class="text-muted small">-</span>
-                  {% endif %}
-
-                  {% if usuario_actual.rol == 'admin' %}
-                  <form method="post" action="/incidencias/eliminar/{{ ticket.id }}">
-                    <button type="submit" class="btn btn-sm btn-outline-danger">Eliminar</button>
-                  </form>
-                  {% endif %}
-                </td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
         </div>
-      </div>
-    </div>
-  </main>
-
-  <!-- ===== Chat IA flotante ===== -->
-  <div id="chatbox" aria-live="polite">
-    <div id="chatbox-header">
-      <span>Chat con OpenAI</span>
-      <div class="d-flex align-items-center gap-2">
-        <button class="btn btn-sm btn-light" title="Minimizar" onclick="minimizeChat()" style="border-radius:8px;">
-          <i class="bi bi-dash-lg"></i>
-        </button>
-        <button class="btn btn-sm btn-light" title="Cerrar" onclick="closeChat()" style="border-radius:8px;">
-          <i class="bi bi-x-lg"></i>
-        </button>
-      </div>
-    </div>
-    <div id="chat-messages"></div>
-    <div id="chat-input-ai">
-      <input type="text" id="chat-text" placeholder="Escribe tu pregunta...">
-      <button onclick="enviarChatIA()">Enviar</button>
-    </div>
-  </div>
-  <button id="chat-fab" class="btn btn-solid" onclick="expandChat()">
-    <i class="bi bi-robot"></i> Chat IA
-  </button>
-
-  <!-- ===== Notificaciones (campanita + panel) ===== -->
-  <button id="notif-fab" class="btn" title="Notificaciones" onclick="toggleNotifPanel()">
-    <i class="bi bi-bell"></i>
-    <span id="notif-badge" class="badge text-bg-danger rounded-pill" style="display:none;">0</span>
-  </button>
-  <div id="notif-panel" class="small">
-    <div class="p-2 border-bottom d-flex align-items-center justify-content-between">
-      <strong>Notificaciones</strong>
-      <button class="btn btn-sm btn-ghost" onclick="markAllAsRead()">Marcar leídas</button>
-    </div>
-    <div id="notif-list"></div>
-    <div class="p-2 text-center">
-      <a href="/notificaciones" class="small">Ver todas</a>
+      </form>
     </div>
   </div>
 
-  <!-- Toasts -->
-  <div class="toast-container" id="toastContainer"></div>
+  <!-- Listado -->
+  <div class="card card-clean shadow-hover">
+    <div class="card-header d-flex align-items-center justify-content-between">
+      <strong>📋 Incidencias registradas</strong>
+      <div class="d-flex gap-2 align-items-center">
+        <input id="filterInput" class="form-control form-control-sm" placeholder="Filtrar por texto..." style="max-width:240px">
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead>
+            <tr>
+              <th class="text-nowrap">ID</th>
+              <th class="text-nowrap">Usuario</th>
+              <th class="text-nowrap">Título</th>
+              <th>Descripción</th>
+              <th class="text-nowrap">Categoría</th>
+              <th class="text-nowrap">Fecha</th>
+              <th class="text-nowrap">Adjuntos</th>
+              <th class="text-nowrap">Estado</th>
+              <th class="text-nowrap">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="incTableBody">
+            {% for ticket in tickets %}
+            <tr>
+              <td class="text-muted">{{ ticket.id }}</td>
+              <td>{{ ticket.usuario }}</td>
+              <td class="fw-semibold">{{ ticket.titulo }}</td>
+              <td class="small">{{ ticket.descripcion }}</td>
+              <td><span class="badge bg-primary-subtle text-primary">{{ ticket.tipo }}</span></td>
+              <td class="text-nowrap">{{ ticket.fecha_legible }}</td>
+              <td class="small">
+                {% if ticket.adjuntos %}
+                  {% for file in ticket.adjuntos %}
+                    <a class="d-block" href="/static/adjuntos_incidencias/{{ file }}" download>
+                      📎 {{ file[ file.find('_', file.find('_')+1)+1: ] }}
+                    </a>
+                  {% endfor %}
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if ticket.estado == 'Abierto' %}
+                  <span class="badge bg-warning-subtle text-warning">Abierto</span>
+                {% else %}
+                  <span class="badge bg-success-subtle text-success">Resuelto</span>
+                {% endif %}
+              </td>
+              <td class="text-nowrap">
+                {% if ticket.estado == 'Abierto' %}
+                <form method="post" action="/incidencias/cerrar/{{ ticket.id }}" class="d-inline">
+                  <button type="submit" class="btn btn-sm btn-outline-success">Cerrar</button>
+                </form>
+                {% else %}
+                <span class="text-muted small">—</span>
+                {% endif %}
 
-  <!-- ===== JS ===== -->
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script>
-    /* ===== Usuario / Navbar ===== */
-    async function getUsuario() {
-      try{
-        const res = await fetch("/usuario-actual");
-        const data = await res.json();
-        document.getElementById("usuario-nombre").textContent = `👤 ${data.usuario}`;
-        const mobileName = document.getElementById("usuario-nombre-mobile");
-        if (mobileName) mobileName.textContent = `👤 ${data.usuario}`;
-        if (data.rol && data.rol.toLowerCase() === "admin") {
-          document.getElementById("admin-link-desktop")?.classList.remove("d-none");
-          document.getElementById("admin-link-mobile")?.classList.remove("d-none");
-        }
-      }catch(e){ console.error(e); }
-    }
+                {% if usuario_actual.rol == 'admin' %}
+                <form method="post" action="/incidencias/eliminar/{{ ticket.id }}" class="d-inline ms-1" onsubmit="return confirm('¿Eliminar incidencia #{{ ticket.id }}?');">
+                  <button type="submit" class="btn btn-sm btn-outline-danger">Eliminar</button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if tickets|length == 0 %}
+        <div class="text-center text-body-secondary py-3">No hay incidencias registradas.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
 
-    // Cerrar offcanvas al navegar
-    document.addEventListener('click', (e) => {
-      const link = e.target.closest('.offcanvas .nav-link-mobile, .offcanvas .btn, .offcanvas .dropdown-item');
-      if (!link) return;
-      const offcanvasEl = document.getElementById('menuOffcanvas');
-      if (!offcanvasEl) return;
-      const offcanvas = bootstrap.Offcanvas.getInstance(offcanvasEl);
-      if (offcanvas) offcanvas.hide();
-    });
-
-    function logout(){ fetch("/logout", { method: "POST" }).then(() => window.location.href = "/login"); }
-
-    /* ===== Chat IA flotante (persistencia) ===== */
-    const CHAT_STATE_KEY = 'chatboxState'; // 'open' | 'min' | 'closed'
-    function applyChatState(){
-      const state = localStorage.getItem(CHAT_STATE_KEY) || 'closed';
-      const box = document.getElementById('chatbox');
-      const fab = document.getElementById('chat-fab');
-      if (state === 'open'){ box.style.display='flex'; fab.style.display='none'; }
-      else if (state === 'min'){ box.style.display='none'; fab.style.display='inline-flex'; }
-      else { box.style.display='none'; fab.style.display='none'; }
-    }
-    function openChatAndExpand(){ localStorage.setItem(CHAT_STATE_KEY,'open'); applyChatState(); }
-    function closeChat(){ localStorage.setItem(CHAT_STATE_KEY,'closed'); applyChatState(); }
-    function minimizeChat(){ localStorage.setItem(CHAT_STATE_KEY,'min'); applyChatState(); }
-    function expandChat(){ localStorage.setItem(CHAT_STATE_KEY,'open'); applyChatState(); }
-
-    async function enviarChatIA() {
-      const input = document.getElementById("chat-text");
-      const msg = input.value.trim();
-      if (!msg) return;
-      const chat = document.getElementById("chat-messages");
-      chat.innerHTML += `<div><b>Tú:</b> ${msg}</div>`;
-      input.value = "";
-      const res = await fetch("/chat-openai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mensaje: msg })
+{% block extra_scripts %}
+<script>
+  // Filtro simple por texto en el listado
+  (function(){
+    const input = document.getElementById('filterInput');
+    const body  = document.getElementById('incTableBody');
+    if(!input || !body) return;
+    input.addEventListener('input', ()=>{
+      const q = input.value.toLowerCase();
+      body.querySelectorAll('tr').forEach(tr=>{
+        tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
       });
-      const data = await res.json();
-      chat.innerHTML += `<div><b>IA:</b> ${data.respuesta}</div>`;
-      chat.scrollTop = chat.scrollHeight;
-    }
-    document.addEventListener('keydown', (e) => {
-      if (e.key === "Enter" && document.activeElement?.id === "chat-text") enviarChatIA();
     });
-
-    /* ===== Toasts (notificaciones locales por querystring) ===== */
-    function showToast({title="Aviso", body="", icon="info"}) {
-      const container = document.getElementById('toastContainer');
-      const el = document.createElement('div');
-      el.className = 'toast align-items-center';
-      el.setAttribute('role','alert');
-      el.setAttribute('aria-live','assertive');
-      el.setAttribute('aria-atomic','true');
-      el.innerHTML = `
-        <div class="toast-header">
-          <i class="bi bi-${icon} me-1"></i>
-          <strong class="me-auto">${title}</strong>
-          <small>Ahora</small>
-          <button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
-        </div>
-        <div class="toast-body">${body}</div>
-      `;
-      container.appendChild(el);
-      const t = new bootstrap.Toast(el, { delay: 3500 });
-      t.show();
-      el.addEventListener('hidden.bs.toast', ()=> el.remove());
-    }
-
-    function checkQueryToasts(){
-      const p = new URLSearchParams(location.search);
-      if (p.get('created') === '1')  showToast({title:'Incidencia creada', body:'Se registró correctamente.', icon:'check-circle'});
-      if (p.get('closed')  === '1')  showToast({title:'Incidencia cerrada', body:'Marcada como resuelta.', icon:'check2-circle'});
-      if (p.get('deleted') === '1')  showToast({title:'Incidencia eliminada', body:'Se eliminó correctamente.', icon:'trash'});
-      if (p.get('error'))           showToast({title:'Error', body: p.get('error'), icon:'exclamation-triangle'});
-    }
-
-    /* ===== Notificaciones (UI + polling) ===== */
-    function toggleNotifPanel(){
-      const p=document.getElementById('notif-panel');
-      p.style.display = (p.style.display==='block') ? 'none' : 'block';
-    }
-    function renderBadge(n){
-      const b=document.getElementById('notif-badge');
-      if(n>0){ b.style.display='inline-block'; b.textContent=n; } else { b.style.display='none'; }
-    }
-    function renderNotifs(items){
-      const list=document.getElementById('notif-list'); list.innerHTML='';
-      if(!items?.length){ list.innerHTML='<div class="p-3 text-muted">Sin notificaciones</div>'; return; }
-      items.forEach(n=>{
-        const div=document.createElement('div');
-        div.style.padding='10px 12px'; div.style.borderBottom='1px solid #f0f2f5';
-        div.innerHTML=`<div style="font-weight:600">${escapeHtml(n.titulo||'Notificación')}</div>
-                       <div class="small">${escapeHtml(n.cuerpo||'')}</div>
-                       <div class="small text-muted">${escapeHtml(n.fecha_legible||'')}</div>`;
-        list.appendChild(div);
-      });
-    }
-    async function fetchNotifs(){
-      try{
-        const r=await fetch('/notificaciones?limit=20'); if(!r.ok) return;
-        const data=await r.json();
-        renderNotifs(data.items||[]);
-        renderBadge(data.total_unread||0);
-      }catch(_){}
-    }
-    async function markAllAsRead(){
-      try{
-        await fetch('/notificaciones/marcar-leidas',{method:'POST'});
-        await fetchNotifs();
-        showToast({title:'Notificaciones', body:'Marcadas como leídas', icon:'check2-circle'});
-      }catch(_){}
-    }
-    function escapeHtml(str){ return (str||'').toString().replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
-
-    /* ===== Init ===== */
-    window.onload = () => {
-      getUsuario();
-      applyChatState();
-      checkQueryToasts();
-      fetchNotifs();
-      setInterval(fetchNotifs, 30000); // polling cada 30s
-    };
-  </script>
-</body>
-</html>
+  })();
+</script>
+{% endblock %}

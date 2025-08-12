@@ -8,27 +8,20 @@
   <!-- Bootstrap & Icons -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
+
+  <!-- (Opcional) Tema global si lo estás usando en otras vistas -->
+  <link rel="stylesheet" href="{{ url_for('static', path='suizo-theme.css') }}">
+
   <!-- Axios -->
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 
   <style>
     :root{
-      --color-azul:#044369;
-      --color-azul-sec:#0d6efd;
-      --color-gris:#eceff4;
-      --color-gris-medio:#c8d0df;
-      --color-gris-oscuro:#354151;
-      --color-verde:#1b7b5a;
-      --color-rojo:#c62828;
-
-      --bg:#f6f8ff;
-      --card:#ffffff;
-      --ink:#0a0a0a;
-      --primary:#2f6adf;
-      --primary-ink:#ffffff;
-      --ring:rgba(47,106,223,.35);
-      --shadow:0 10px 30px rgba(0,0,0,.06);
-      --radius:16px;
+      --color-azul:#044369; --color-azul-sec:#0d6efd; --color-gris:#eceff4; --color-gris-medio:#c8d0df;
+      --color-gris-oscuro:#354151; --color-verde:#1b7b5a; --color-rojo:#c62828;
+      --bg:#f6f8ff; --card:#ffffff; --ink:#0a0a0a; --primary:#2f6adf; --primary-ink:#ffffff;
+      --ring:rgba(47,106,223,.35); --shadow:0 10px 30px rgba(0,0,0,.06); --radius:16px;
+      --border:#e9eef5;
     }
 
     body{ background:var(--bg); color:var(--ink); }
@@ -43,9 +36,7 @@
       transition:transform .08s ease, box-shadow .2s ease; box-shadow:0 6px 16px rgba(47,106,223,.25);
     }
     .btn-solid:hover{ transform:translateY(-1px); }
-    .btn-ghost{
-      background:transparent; border:1px solid #e5e7eb; padding:.5rem .8rem; border-radius:12px;
-    }
+    .btn-ghost{ background:transparent; border:1px solid #e5e7eb; padding:.5rem .8rem; border-radius:12px; }
     .btn-ghost:hover{ background:#f3f4f6; }
     .navbar-toggler-icon{
       display:inline-block; width:1.5rem; height:1.5rem;
@@ -88,7 +79,7 @@
 
     /* Tabla */
     .table thead{ background:#f3f8fc; }
-    .table th, .table td{ vertical-align:middle; border-bottom:1.5px solid #e9eef5!important; }
+    .table th, .table td{ vertical-align:middle; border-bottom:1.5px solid var(--border)!important; }
     .table-responsive{ border-radius:12px; overflow:hidden; }
 
     /* Chat flotante */
@@ -237,7 +228,7 @@
               </tr>
             </thead>
             <tbody id="tablaUsuarios">
-              <!-- Se llenará dinámicamente -->
+              <!-- Se llena por JS -->
             </tbody>
           </table>
         </div>
@@ -295,19 +286,19 @@
       try{
         const res = await fetch("/usuario-actual");
         const data = await res.json();
-        document.getElementById("usuario-nombre").textContent = 👤 ${data.usuario};
+        const desktop = document.getElementById("usuario-nombre");
+        if (desktop) desktop.textContent = `👤 ${data.usuario}`;
         const mobileName = document.getElementById("usuario-nombre-mobile");
-        if (mobileName) mobileName.textContent = 👤 ${data.usuario};
+        if (mobileName) mobileName.textContent = `👤 ${data.usuario}`;
 
-        // Mostrar enlaces admin si corresponde
-        if (data.rol && data.rol.toLowerCase() === "admin") {
+        if ((data.rol||'').toLowerCase() === "admin") {
           document.getElementById("admin-link-desktop")?.classList.remove("d-none");
           document.getElementById("admin-link-mobile")?.classList.remove("d-none");
         }
       }catch(e){ console.error(e); }
     }
 
-    // Cerrar offcanvas al hacer click en un link/botón interno
+    // Cerrar offcanvas al tocar un link/botón interno
     document.addEventListener('click', (e) => {
       const link = e.target.closest('.offcanvas .nav-link-mobile, .offcanvas .btn, .offcanvas .dropdown-item');
       if (!link) return;
@@ -327,60 +318,73 @@
       tabla.innerHTML = "";
 
       const res = await axios.get("/admin/usuarios");
-      res.data.forEach(usuario => {
+      (res.data || []).forEach(usuario => {
         const tr = document.createElement("tr");
-        tr.innerHTML = 
-          <td>${usuario.nombre}</td>
-          <td>${usuario.email}</td>
-          <td><span class="badge bg-secondary">${usuario.rol}</span></td>
-          <td><span class="badge ${usuario.activo ? 'bg-success' : 'bg-inactivo'}">${usuario.activo ? 'Activo' : 'Inactivo'}</span></td>
+        const activo = !!usuario.activo;
+        tr.innerHTML = `
+          <td>${escapeHtml(usuario.nombre || '')}</td>
+          <td>${escapeHtml(usuario.email || '')}</td>
+          <td><span class="badge bg-secondary">${escapeHtml(usuario.rol || '')}</span></td>
+          <td><span class="badge ${activo ? 'bg-success' : 'bg-inactivo'}">${activo ? 'Activo' : 'Inactivo'}</span></td>
           <td class="d-flex flex-wrap gap-2">
-            <button class="btn btn-sm btn-action" onclick="${usuario.activo ? desactivarUsuario('${usuario.email}') : activarUsuario('${usuario.email}')}">
-              ${usuario.activo ? '⛔ Desactivar' : '🟢 Activar'}
+            <button class="btn btn-sm btn-action" onclick="${activo ? `desactivarUsuario('${encodeURIComponent(usuario.email)}')` : `activarUsuario('${encodeURIComponent(usuario.email)}')`}">
+              ${activo ? '⛔ Desactivar' : '🟢 Activar'}
             </button>
-            <button class="btn btn-sm btn-outline-dark" onclick="blanquearPassword('${usuario.email}')">🔑 Blanquear contraseña</button>
-            <button class="btn btn-sm btn-outline-danger" onclick="eliminarUsuario('${usuario.email}')">🗑️ Eliminar</button>
+            <button class="btn btn-sm btn-outline-dark" onclick="blanquearPassword('${encodeURIComponent(usuario.email)}')">🔑 Blanquear contraseña</button>
+            <button class="btn btn-sm btn-outline-danger" onclick="eliminarUsuario('${encodeURIComponent(usuario.email)}')">🗑️ Eliminar</button>
           </td>
-        ;
+        `;
         tabla.appendChild(tr);
       });
     }
 
     document.getElementById("crearUsuarioForm").addEventListener("submit", async (e) => {
       e.preventDefault();
-      const nombre = document.getElementById("nombre").value;
-      const email = document.getElementById("email").value;
+      const nombre = document.getElementById("nombre").value.trim();
+      const email = document.getElementById("email").value.trim();
       const rol = document.getElementById("rol").value;
 
       try {
         const res = await axios.post("/admin/crear-usuario", { nombre, email, rol });
-        document.getElementById("mensaje").innerHTML = <div class="alert alert-success">${res.data.mensaje}</div>;
+        document.getElementById("mensaje").innerHTML = `<div class="alert alert-success">${escapeHtml(res.data.mensaje || 'Usuario creado')}</div>`;
         document.getElementById("crearUsuarioForm").reset();
         cargarUsuarios();
         showToast({title:'Usuario creado', body:email, icon:'check2-circle'});
       } catch (err) {
         const msg = err?.response?.data?.error || "Error al crear el usuario";
-        document.getElementById("mensaje").innerHTML = <div class="alert alert-danger">${msg}</div>;
+        document.getElementById("mensaje").innerHTML = `<div class="alert alert-danger">${escapeHtml(msg)}</div>`;
         showToast({title:'Error', body:msg, icon:'exclamation-triangle'});
       }
     });
 
-    async function blanquearPassword(email) {
+    async function blanquearPassword(emailEnc) {
+      const email = decodeURIComponent(emailEnc);
       await axios.post("/admin/blanquear-password", { email });
-      showToast({title:'Password blanqueado', body:Usuario: ${email}, icon:'key'});
+      showToast({title:'Password blanqueado', body:`Usuario: ${email}`, icon:'key'});
       alert("Contraseña blanqueada a 1234");
     }
-    async function desactivarUsuario(email) { await axios.post("/admin/desactivar-usuario", { email }); cargarUsuarios(); showToast({title:'Usuario desactivado', body:email, icon:'person-dash'}); }
-    async function activarUsuario(email)   { await axios.post("/admin/activar-usuario",   { email }); cargarUsuarios(); showToast({title:'Usuario activado',   body:email, icon:'person-check'}); }
-    async function eliminarUsuario(email)  {
-      if (confirm("¿Estás seguro de eliminar este usuario?")) {
+    async function desactivarUsuario(emailEnc) {
+      const email = decodeURIComponent(emailEnc);
+      await axios.post("/admin/desactivar-usuario", { email });
+      await cargarUsuarios();
+      showToast({title:'Usuario desactivado', body:email, icon:'person-dash'});
+    }
+    async function activarUsuario(emailEnc) {
+      const email = decodeURIComponent(emailEnc);
+      await axios.post("/admin/activar-usuario",   { email });
+      await cargarUsuarios();
+      showToast({title:'Usuario activado', body:email, icon:'person-check'});
+    }
+    async function eliminarUsuario(emailEnc)  {
+      const email = decodeURIComponent(emailEnc);
+      if (confirm(`¿Eliminar definitivamente a ${email}?`)) {
         await axios.post("/admin/eliminar-usuario", { email });
-        cargarUsuarios();
+        await cargarUsuarios();
         showToast({title:'Usuario eliminado', body:email, icon:'trash'});
       }
     }
 
-    /* ====== Chat flotante: estado persistente ====== */
+    /* ====== Chat OpenAI (flotante) ====== */
     const CHAT_STATE_KEY = 'chatboxState'; // 'open' | 'min' | 'closed'
     function applyChatState(){
       const state = localStorage.getItem(CHAT_STATE_KEY) || 'closed';
@@ -401,7 +405,7 @@
       if (!message) return;
 
       const chat = document.getElementById("chat-messages");
-      chat.innerHTML += <div><b>Tú:</b> ${message}</div>;
+      chat.innerHTML += `<div><b>Tú:</b> ${escapeHtml(message)}</div>`;
       input.value = "";
 
       const res = await fetch("/chat-openai", {
@@ -410,7 +414,7 @@
         body: JSON.stringify({ mensaje: message })
       });
       const data = await res.json();
-      chat.innerHTML += <div><b>IA:</b> ${data.respuesta}</div>;
+      chat.innerHTML += `<div><b>IA:</b> ${escapeHtml(data.respuesta || '')}</div>`;
       chat.scrollTop = chat.scrollHeight;
     }
 
@@ -422,27 +426,31 @@
     function showToast({title="Aviso", body="", icon="info"}){
       const container=document.getElementById('toastContainer'); if(!container) return;
       const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
-      el.innerHTML=<div class="toast-header">
+      el.innerHTML=`<div class="toast-header">
         <i class="bi bi-${icon} me-1"></i>
         <strong class="me-auto">${title}</strong>
         <small>Ahora</small>
         <button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
-      </div><div class="toast-body">${body}</div>;
+      </div><div class="toast-body">${body}</div>`;
       container.appendChild(el); const t=new bootstrap.Toast(el,{delay:3000}); t.show(); el.addEventListener('hidden.bs.toast',()=>el.remove());
     }
-
-    let notifOpen=false;
-    function toggleNotifPanel(){ notifOpen=!notifOpen; const p=document.getElementById('notif-panel'); if(p) p.style.display = notifOpen ? 'block':'none'; }
-    function renderBadge(n){ const b=document.getElementById('notif-badge'); if(!b) return; if(n>0){ b.style.display='inline-block'; b.textContent=n; } else { b.style.display='none'; } }
+    function toggleNotifPanel(){
+      const p=document.getElementById('notif-panel');
+      p.style.display = (p.style.display==='block') ? 'none' : 'block';
+    }
+    function renderBadge(n){
+      const b=document.getElementById('notif-badge');
+      if(n>0){ b.style.display='inline-block'; b.textContent=n; } else { b.style.display='none'; }
+    }
     function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
     function renderNotifs(items){
       const list=document.getElementById('notif-list'); if(!list) return; list.innerHTML='';
       if(!items?.length){ list.innerHTML='<div class="p-3 text-muted">Sin notificaciones</div>'; return; }
       items.forEach(n=>{
         const div=document.createElement('div'); div.className='item '+(!n.leida?'unread':''); div.style.padding='10px 12px'; div.style.borderBottom='1px solid #f0f2f5';
-        div.innerHTML=<div style="font-weight:600">${escapeHtml(n.titulo||'Notificación')}</div>
+        div.innerHTML=`<div style="font-weight:600">${escapeHtml(n.titulo||'Notificación')}</div>
                        <div class="small">${escapeHtml(n.cuerpo||'')}</div>
-                       <div class="small text-muted">${escapeHtml(n.fecha_legible||'')}</div>;
+                       <div class="small text-muted">${escapeHtml(n.fecha_legible||'')}</div>`;
         list.appendChild(div);
       });
     }
@@ -468,7 +476,7 @@
       cargarUsuarios();
       applyChatState();
       fetchNotifs();
-      setInterval(fetchNotifs, 30000); // polling cada 30s
+      setInterval(fetchNotifs, 30000);
     };
   </script>
 </body>

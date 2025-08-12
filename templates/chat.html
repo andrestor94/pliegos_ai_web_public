@@ -1,651 +1,446 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8" />
-  <title>Chat interno</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+{% extends "base.html" %}
+{% block title %}Chat interno – Suizo Argentina{% endblock %}
 
-  <!-- Bootstrap & Icons -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
+{% block extra_head %}
+<style>
+  .app { min-height: calc(100vh - var(--navbar-h,56px)); display:flex; flex-direction:column; }
+  .chat-wrap { flex:1; display:grid; grid-template-columns: 320px 1fr; gap:16px; }
+  @media (max-width: 900px){ .chat-wrap{ grid-template-columns: 1fr; } }
 
-  <!-- Theme global Suizo -->
-  <link rel="stylesheet" href="{{ url_for('static', path='suizo-theme.css') }}">
+  .panel { background: var(--card); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; }
+  .panel .panel-title{ margin:0; padding:14px 16px; color: var(--brand); border-bottom: 1px solid var(--border); font-weight:600; }
 
-  <style>
-    :root{
-      --azul:#044369; --bg:#f6f8ff; --card:#ffffff; --gris:#e9eef5;
-      --ink:#0a0a0a; --primary:#2f6adf; --ring:rgba(47,106,223,.35);
-      --shadow:0 10px 30px rgba(0,0,0,.06); --radius:16px;
-    }
+  /* Hilos */
+  .hilos { display:flex; flex-direction:column; }
+  .hilos .top { padding:12px; border-bottom:1px solid var(--border); }
+  .auto-wrap{ position:relative; }
+  .auto-list{ position:absolute; z-index:1000; top:100%; left:0; right:0; background:var(--card); border:1px solid var(--border); border-radius:12px; margin-top:.25rem; list-style:none; padding:.25rem 0; display:none; max-height:280px; overflow:auto; box-shadow:var(--shadow); }
+  .auto-li{ padding:.5rem .75rem; cursor:pointer; }
+  .auto-li .nm{ font-weight:600; }
+  .auto-li .em{ font-size:.85rem; color:var(--text-2); }
+  .auto-li.active, .auto-li:hover{ background:var(--bg-soft); }
 
-    body{ background:var(--bg); color:var(--ink); }
+  .hilos-list { overflow:auto; }
+  .item-hilo { padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; display:flex; gap:8px; align-items:center; }
+  .item-hilo:hover{ background:var(--bg-soft); }
+  .item-hilo.active{ background:var(--bg-strong); }
+  .item-hilo .info { flex:1; min-width:0; }
+  .item-hilo .nombre{ font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .item-hilo .fecha{ font-size:12px; color:var(--text-2); }
+  .item-hilo .btn-del{ border:none; background:transparent; font-size:18px; line-height:1; opacity:.7; }
+  .item-hilo .btn-del:hover{ opacity:1; }
 
-    /* ===== Navbar + Offcanvas ===== */
-    .navbar-wrap{ background:#fff; border-bottom:1.5px solid #0d6efd; box-shadow:0 2px 8px rgba(4,67,105,0.05); }
-    .navbar-brand{ color:var(--azul)!important; font-weight:600; }
-    .logo{ height:32px; margin-right:8px; }
-    .btn-solid{
-      background:var(--primary); color:#fff; border:0; padding:.5rem .85rem; border-radius:12px;
-      transition:transform .08s ease, box-shadow .2s ease; box-shadow:0 6px 16px rgba(47,106,223,.25);
-    }
-    .btn-solid:hover{ transform:translateY(-1px); }
-    .btn-ghost{ background:transparent; border:1px solid #e5e7eb; padding:.5rem .8rem; border-radius:12px; }
-    .btn-ghost:hover{ background:#f3f4f6; }
-    .navbar-toggler-icon{
-      display:inline-block; width:1.5rem; height:1.5rem;
-      background-image:url("data:image/svg+xml,%3csvg viewBox='0 0 30 30' xmlns='http://www.w3.org/2000/svg'%3e%3cpath stroke='rgba(0,0,0,.7)' stroke-width='2' stroke-linecap='round' stroke-miterlimit='10' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
-      background-repeat:no-repeat; background-position:center;
-    }
-    .offcanvas{ border-radius:0 var(--radius) var(--radius) 0; }
-    .offcanvas .nav-link-mobile{
-      display:flex; align-items:center; gap:.6rem; padding:.7rem .8rem; border-radius:12px; color:var(--ink); text-decoration:none;
-    }
-    .offcanvas .nav-link-mobile:hover{ background:#f3f4f6; }
-    .offcanvas .nav-link-mobile.active{ background:#e8efff; color:#1e40af; }
+  /* Chat */
+  .chat { display:flex; flex-direction:column; }
+  .chat-head { padding:8px 12px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; }
+  .chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; background:var(--bg-soft); border-radius:999px; font-size:14px;}
+  .chat-body { flex:1; overflow:auto; padding:16px; background:var(--bg); border-radius:0; }
+  .msg { max-width: 70%; margin-bottom:12px; padding:10px 12px; border-radius:14px; background:#fff; box-shadow: 0 2px 8px rgba(0,0,0,.04);}
+  .msg.you { margin-left:auto; background:var(--brand-soft); }
+  .msg .meta{ font-size:12px; color:var(--text-2); margin-bottom:4px;}
+  .empty { color:var(--text-2); padding:16px; }
 
-    /* ===== Layout Chat ===== */
-    .app { min-height: calc(100vh - 56px); display:flex; flex-direction:column; }
-    .chat-wrap { flex:1; display:grid; grid-template-columns: 320px 1fr; gap:16px; padding:16px; }
-    .panel { background: var(--card); border-radius: 14px; box-shadow: 0 6px 20px rgba(4,67,105,.08); overflow: hidden; }
-    .panel h5{ padding:14px 16px; margin:0; color: var(--azul); border-bottom:1px solid var(--gris); }
+  .chat-input { border-top:1px solid var(--border); padding:10px; background:#fff; display:flex; gap:8px; align-items:flex-start; }
+  .btn-icon{ display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; border-radius:10px; }
 
-    /* Hilos */
-    .hilos { display:flex; flex-direction:column; height:100%; }
-    .hilos-list { overflow:auto; }
-    .item-hilo { padding:10px 12px; border-bottom:1px solid var(--gris); cursor:pointer; display:flex; gap:8px; align-items:center; }
-    .item-hilo:hover{ background:#f7faff; }
-    .item-hilo.active{ background:#e9f2ff; }
-    .item-hilo .info { flex:1; min-width:0; }
-    .item-hilo .nombre{ font-weight:600; color:#223; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .item-hilo .fecha{ font-size:12px; color:#666; }
-    .item-hilo .btn-del{ border:none; background:transparent; font-size:18px; line-height:1; opacity:.7; }
-    .item-hilo .btn-del:hover{ opacity:1; }
+  /* Adjuntos múltiples */
+  .dz{ flex:1; min-height:42px; border:1px dashed var(--border-strong); border-radius:12px; background:var(--bg-soft); padding:8px 10px; color:var(--text-2); display:flex; align-items:center; gap:8px; cursor:pointer; }
+  .dz.dragover{ background:#eef6ff; border-color:#85aee6; }
+  .chips{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; padding:0 12px 8px; }
+  .chip-file{ display:inline-flex; align-items:center; gap:8px; padding:5px 8px; background:var(--bg-soft); border-radius:999px; font-size:12px; }
+  .chip-file button{ border:none; background:transparent; line-height:1; font-size:14px; }
+  .chip-thumb{ width:26px; height:26px; border-radius:6px; object-fit:cover; background:#fff; border:1px solid var(--border); }
+  .totals{ font-size:12px; color:var(--text-2); padding:0 12px 10px; }
+</style>
+{% endblock %}
 
-    /* Mensajes */
-    .chat { display:flex; flex-direction:column; height:100%; }
-    .chat-head { padding:8px 16px; border-bottom:1px solid var(--gris); display:flex; align-items:center; gap:8px; }
-    .chat-body { flex:1; overflow:auto; padding:16px; background:#f9fbff; }
-    .msg { max-width: 70%; margin-bottom:10px; padding:10px 12px; border-radius:12px; background:#fff; box-shadow: 0 2px 8px rgba(0,0,0,.04);}
-    .msg.you { margin-left:auto; background:#dff0ff;}
-    .msg .meta{ font-size:12px; color:#666; margin-bottom:4px;}
-    .chat-input { border-top:1px solid var(--gris); padding:10px; background:#fff; display:flex; gap:8px; align-items:flex-start; }
-    .chat-input input[type="text"] { border-radius:10px; }
-
-    .chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; background:#eef5ff; border-radius:999px; font-size:14px;}
-    .empty { color:#667; padding:16px; }
-
-    /* Autocompletar */
-    .auto-wrap{ position:relative; }
-    .auto-list{ position:absolute; z-index:1000; top:100%; left:0; right:0; background:#fff; border:1px solid #e5e7eb; border-radius:10px; margin-top:.25rem; list-style:none; padding:.25rem 0; display:none; max-height:280px; overflow:auto; box-shadow:0 10px 25px rgba(0,0,0,.08); }
-    .auto-li{ padding:.5rem .75rem; cursor:pointer; }
-    .auto-li .nm{ font-weight:600; }
-    .auto-li .em{ font-size:.85rem; color:#6b7280; }
-    .auto-li.active, .auto-li:hover{ background:#f3f4f6; }
-
-    /* Adjuntos múltiples */
-    .dz{ flex:1; min-height:42px; border:1px dashed #b9c6d8; border-radius:10px; background:#fafcff; padding:8px 10px; color:#51647a; display:flex; align-items:center; gap:8px; cursor:pointer; }
-    .dz.dragover{ background:#eef6ff; border-color:#85aee6; }
-    .chips{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; padding:0 12px 8px; }
-    .chip-file{ display:inline-flex; align-items:center; gap:8px; padding:5px 8px; background:#eef5ff; border-radius:999px; font-size:12px; }
-    .chip-file button{ border:none; background:transparent; line-height:1; font-size:14px; }
-    .chip-thumb{ width:26px; height:26px; border-radius:6px; object-fit:cover; background:#fff; border:1px solid #dbe3ee; }
-    .muted{ color:#6b7280; }
-    .btn-icon{ display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; border-radius:10px; }
-    .totals{ font-size:12px; color:#6b7280; padding:0 12px 10px; }
-
-    /* Chat IA flotante */
-    #chatbox{
-      position:fixed; bottom:20px; right:20px; width:350px; height:450px; border-radius:16px; background:#fff;
-      box-shadow:0 0 20px rgba(4,67,105,0.12); display:none; flex-direction:column; overflow:hidden; z-index:1000;
-      border:1.5px solid var(--azul);
-    }
-    #chatbox-header{
-      background:var(--azul); color:#fff; padding:10px; font-weight:600; font-size:1.05em; letter-spacing:.03em;
-      display:flex; align-items:center; justify-content:space-between;
-    }
-    #chat-messages{ flex:1; padding:12px 14px; overflow-y:auto; background:#f7fbff; }
-    #chat-input-ai{ border-top:1px solid #e2e5ec; display:flex; }
-    #chat-input-ai input{ flex:1; padding:10px; border:none; outline:none; font-size:1em; }
-    #chat-input-ai button{ background:var(--azul); color:#fff; border:none; padding:10px 16px; border-radius:0 0 12px 0; }
-    #chat-fab{
-      position:fixed; right:20px; bottom:20px; z-index:999; display:none;
-      border-radius:999px; padding:.6rem .9rem; box-shadow:0 8px 18px rgba(4,67,105,0.18);
-    }
-
-    /* Notificaciones */
-    #notif-fab{
-      position:fixed; right:20px; bottom:88px; z-index:999; border-radius:999px; padding:.55rem .75rem;
-      box-shadow:0 8px 18px rgba(4,67,105,0.18); background:#fff; border:1px solid #e5e7eb;
-    }
-    #notif-badge{ transform: translate(20%, -40%); }
-    #notif-panel{
-      position:fixed; right:20px; bottom:148px; width:320px; max-height:50vh; overflow:auto; z-index:1000; background:#fff;
-      border:1px solid #e5e7eb; border-radius:14px; box-shadow:0 12px 28px rgba(0,0,0,.12); display:none;
-    }
-    .toast-container{ position: fixed; right: 16px; bottom: 16px; z-index: 1200; }
-    .toast{ border-radius:12px; box-shadow:var(--shadow); }
-    .toast-header{ border-bottom:none; }
-    .toast .bi{ margin-right:.4rem; }
-
-    @media (max-width: 900px){ .chat-wrap{ grid-template-columns: 1fr; } }
-    @media (max-width:700px){
-      #chatbox{ right:5vw; width:94vw; height:60vh; }
-      #notif-panel{ right:5vw; width:90vw; }
-    }
-  </style>
-</head>
-<body>
-
-  <!-- ===== Header / Navbar ===== -->
-  <header class="navbar-wrap sticky-top">
-    <nav class="navbar navbar-expand-lg px-3">
-      <button class="btn-ghost d-lg-none me-2" type="button" data-bs-toggle="offcanvas" data-bs-target="#menuOffcanvas" aria-controls="menuOffcanvas" aria-label="Abrir menú">
-        <span class="navbar-toggler-icon"></span>
-      </button>
-
-      <a class="navbar-brand d-flex align-items-center" href="/">
-        <img src="/static/logo-suizo.png" class="logo" alt="Logo Suizo"/>
-        <span>Suizo Argentina <b>- Licitaciones IA</b></span>
-      </a>
-
-      <div class="ms-auto d-none d-lg-flex align-items-center gap-2">
-        <span id="usuario-nombre" class="small me-2"></span>
-        <a href="/chat" class="btn-ghost">💬 Chat interno</a>
-        <button class="btn-ghost" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Chat OpenAI</button>
-        <a href="/calendario" class="btn-ghost">Calendario</a>
-        <a href="/incidencias" class="btn-ghost">Incidencias</a>
-        <a href="/cambiar-password" class="btn-ghost">Cambiar contraseña</a>
-        <a href="/admin" class="btn-ghost d-none" id="admin-link-desktop">Panel Admin</a>
-        <button class="btn-ghost text-danger" onclick="logout()"><i class="bi bi-box-arrow-right"></i> Salir</button>
-      </div>
-    </nav>
-  </header>
-
-  <!-- ===== Offcanvas (móvil) ===== -->
-  <div class="offcanvas offcanvas-start" tabindex="-1" id="menuOffcanvas" aria-labelledby="menuOffcanvasLabel">
-    <div class="offcanvas-header">
-      <h5 id="menuOffcanvasLabel" class="m-0">Menú</h5>
-      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Cerrar"></button>
-    </div>
-    <div class="offcanvas-body d-flex flex-column gap-2">
-      <div class="mb-2"><div id="usuario-nombre-mobile" class="small text-muted"></div></div>
-
-      <a class="nav-link-mobile" href="/"><i class="bi bi-house"></i> Inicio</a>
-      <a class="nav-link-mobile" href="/historia"><i class="bi bi-clock-history"></i> Historial</a>
-      <a class="nav-link-mobile" href="/chat"><i class="bi bi-chat-dots"></i> Chat interno</a>
-      <a class="nav-link-mobile" href="/calendario"><i class="bi bi-calendar-event"></i> Calendario</a>
-      <a class="nav-link-mobile" href="/incidencias"><i class="bi bi-bug"></i> Incidencias</a>
-      <a class="nav-link-mobile" href="/cambiar-password"><i class="bi bi-key"></i> Cambiar contraseña</a>
-      <a class="nav-link-mobile d-none" id="admin-link-mobile" href="/admin"><i class="bi bi-gear"></i> Administración</a>
-
-      <button class="btn-solid mt-3" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Abrir Chat OpenAI</button>
-
-      <div class="mt-auto pt-3 border-top">
-        <button class="nav-link-mobile text-danger" onclick="logout()"><i class="bi bi-box-arrow-right"></i> Salir</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ===== Contenido Chat Interno ===== -->
-  <div class="app">
-    <div class="chat-wrap">
-      <!-- Panel Hilos -->
-      <div class="panel hilos">
-        <h5>Conversaciones</h5>
-        <div class="p-3 border-bottom auto-wrap">
+{% block content %}
+<div class="app">
+  <div class="chat-wrap">
+    <!-- Sidebar: Hilos -->
+    <aside class="panel hilos">
+      <h5 class="panel-title">Conversaciones</h5>
+      <div class="top">
+        <div class="auto-wrap">
           <div class="input-group">
             <span class="input-group-text">@</span>
-            <input id="nuevoPara" type="text" class="form-control" placeholder="nombre o email..." autocomplete="off" />
+            <input id="nuevoPara" type="text" class="form-control" placeholder="Nombre o email..." autocomplete="off" />
             <button id="btnAbrir" class="btn btn-primary">Abrir</button>
           </div>
-          <ul id="sugs" class="auto-list"></ul>
+          <ul id="sugs" class="auto-list" role="listbox" aria-label="Sugerencias"></ul>
         </div>
-        <div id="listaHilos" class="hilos-list"></div>
+      </div>
+      <div id="listaHilos" class="hilos-list"></div>
+    </aside>
+
+    <!-- Main: Chat -->
+    <section class="panel chat">
+      <div class="chat-head">
+        <div class="chip">Conversando con: <strong id="conEmail">—</strong></div>
+        <button id="btnEliminarChat" class="btn btn-sm btn-outline-danger ms-2" title="Eliminar chat (ocultar)">🗑</button>
+        <button id="btnRefrescar" class="btn btn-sm btn-outline-secondary ms-auto">Refrescar</button>
+        <span id="noLeidosWrap" class="chip ms-2" title="Mensajes no leídos">
+          🔔 <span id="noLeidosBadge" class="badge bg-secondary rounded-pill">0</span>
+        </span>
+        <span class="chip d-none d-md-inline"><span id="yoEmail">...</span></span>
       </div>
 
-      <!-- Panel Chat -->
-      <div class="panel chat">
-        <div class="chat-head">
-          <div class="chip">Conversando con: <strong id="conEmail">—</strong></div>
-          <button id="btnEliminarChat" class="btn btn-sm btn-outline-danger ms-2" title="Eliminar chat (ocultar)">🗑</button>
-          <button id="btnRefrescar" class="btn btn-sm btn-outline-secondary ms-auto">Refrescar</button>
-          <span id="noLeidosWrap" class="chip ms-2" title="Mensajes no leídos">
-            🔔 <span id="noLeidosBadge" class="badge bg-secondary rounded-pill">0</span>
-          </span>
-          <span class="chip d-none d-md-inline"><span id="yoEmail">...</span></span>
-        </div>
-
-        <div id="chatBody" class="chat-body">
-          <div class="empty">Seleccioná una conversación o creá una nueva desde la izquierda.</div>
-        </div>
-
-        <!-- Input + adjuntos -->
-        <div class="chat-input">
-          <input id="inputMsg" type="text" class="form-control" placeholder="Escribe un mensaje..." />
-          <div id="drop" class="dz" title="Clic o arrastrá archivos">
-            <span id="dzHint">📎 Adjuntar…</span>
-            <input id="inputFiles" type="file" multiple style="display:none" />
-          </div>
-          <button id="btnPick" class="btn btn-outline-secondary btn-icon" title="Elegir archivos">📎</button>
-          <button id="btnEnviar" class="btn btn-primary">Enviar</button>
-        </div>
-        <div id="chips" class="chips"></div>
-        <div id="totals" class="totals"></div>
+      <div id="chatBody" class="chat-body">
+        <div class="empty">Seleccioná una conversación o creá una nueva desde la izquierda.</div>
       </div>
-    </div>
-  </div>
 
-  <!-- ===== Chat IA flotante ===== -->
-  <div id="chatbox" aria-live="polite">
-    <div id="chatbox-header">
-      <span>Chat con OpenAI</span>
-      <div class="d-flex align-items-center gap-2">
-        <button class="btn btn-sm btn-light" title="Minimizar" onclick="minimizeChat()" style="border-radius:8px;">
-          <i class="bi bi-dash-lg"></i>
-        </button>
-        <button class="btn btn-sm btn-light" title="Cerrar" onclick="closeChat()" style="border-radius:8px;">
-          <i class="bi bi-x-lg"></i>
-        </button>
+      <div class="chat-input">
+        <input id="inputMsg" type="text" class="form-control" placeholder="Escribe un mensaje..." />
+        <div id="drop" class="dz" title="Clic o arrastrá archivos">
+          <span id="dzHint">📎 Adjuntar…</span>
+          <input id="inputFiles" type="file" multiple style="display:none" />
+        </div>
+        <button id="btnPick" class="btn btn-outline-secondary btn-icon" title="Elegir archivos">📎</button>
+        <button id="btnEnviar" class="btn btn-primary">Enviar</button>
       </div>
-    </div>
-    <div id="chat-messages"></div>
-    <div id="chat-input-ai">
-      <input type="text" id="chat-text" placeholder="Escribe tu pregunta...">
-      <button onclick="enviarChatIA()">Enviar</button>
-    </div>
+      <div id="chips" class="chips"></div>
+      <div id="totals" class="totals"></div>
+    </section>
   </div>
-  <button id="chat-fab" class="btn btn-solid" onclick="expandChat()">
-    <i class="bi bi-robot"></i> Chat IA
-  </button>
+</div>
+{% endblock %}
 
-  <!-- ===== Notificaciones (campanita + panel) ===== -->
-  <button id="notif-fab" class="btn" title="Notificaciones" onclick="toggleNotifPanel()">
-    <i class="bi bi-bell"></i>
-    <span id="notif-badge" class="badge text-bg-danger rounded-pill" style="display:none;">0</span>
-  </button>
-  <div id="notif-panel" class="small">
-    <div class="p-2 border-bottom d-flex align-items-center justify-content-between">
-      <strong>Notificaciones</strong>
-      <button class="btn btn-sm btn-ghost" onclick="markAllAsRead()">Marcar leídas</button>
-    </div>
-    <div id="notif-list"></div>
-    <div class="p-2 text-center">
-      <a href="/notificaciones" class="small">Ver todas</a>
-    </div>
-  </div>
+{% block extra_scripts %}
+<script>
+  /* ===== Helpers UI ===== */
+  function escapeHtml(str){ return (str||'').toString().replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
 
-  <!-- Toasts -->
-  <div class="toast-container" id="toastContainer"></div>
+  // Navbar user state
+  (async function getUsuario(){
+    try{
+      const r = await fetch("/usuario-actual");
+      const d = await r.json();
+      const el = document.getElementById("usuario-nombre");
+      if(el) el.textContent = `👤 ${d.usuario}`;
+      document.getElementById("admin-link-desktop")?.classList.toggle("d-none", (d.rol||'').toLowerCase()!=="admin");
+      document.getElementById("admin-link-mobile")?.classList.toggle("d-none", (d.rol||'').toLowerCase()!=="admin");
+    }catch(e){}
+  })();
 
-  <!-- ===== JS ===== -->
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script>
-    /* ===== Usuario / Navbar ===== */
-    async function getUsuario() {
-      try{
-        const res = await fetch("/usuario-actual");
-        const data = await res.json();
-        document.getElementById("usuario-nombre").textContent = `👤 ${data.usuario}`;
-        const mobileName = document.getElementById("usuario-nombre-mobile");
-        if (mobileName) mobileName.textContent = `👤 ${data.usuario}`;
-        if (data.rol && data.rol.toLowerCase() === "admin") {
-          document.getElementById("admin-link-desktop")?.classList.remove("d-none");
-          document.getElementById("admin-link-mobile")?.classList.remove("d-none");
-        }
-      }catch(e){ console.error(e); }
-    }
-    // Cerrar offcanvas al tocar un link
-    document.addEventListener('click', (e) => {
-      const link = e.target.closest('.offcanvas .nav-link-mobile, .offcanvas .btn, .offcanvas .dropdown-item');
-      if (!link) return;
-      const offcanvasEl = document.getElementById('menuOffcanvas');
-      if (!offcanvasEl) return;
-      const offcanvas = bootstrap.Offcanvas.getInstance(offcanvasEl);
-      if (offcanvas) offcanvas.hide();
-    });
-    function logout(){ fetch("/logout", { method: "POST" }).then(() => window.location.href = "/login"); }
+  // Close offcanvas on nav click
+  document.addEventListener('click', (e)=>{
+    const link = e.target.closest('.offcanvas .nav-link-mobile, .offcanvas .btn, .offcanvas .dropdown-item');
+    if (!link) return;
+    const offcanvasEl = document.getElementById('menuOffcanvas');
+    if (!offcanvasEl) return;
+    const offcanvas = bootstrap.Offcanvas.getInstance(offcanvasEl);
+    if (offcanvas) offcanvas.hide();
+  });
+  function logout(){ fetch("/logout", { method: "POST" }).then(() => window.location.href = "/login"); }
 
-    /* ===== Chat IA flotante (persistencia) ===== */
-    const CHAT_STATE_KEY = 'chatboxState'; // 'open' | 'min' | 'closed'
-    function applyChatState(){
-      const state = localStorage.getItem(CHAT_STATE_KEY) || 'closed';
-      const box = document.getElementById('chatbox');
-      const fab = document.getElementById('chat-fab');
-      if (state === 'open'){ box.style.display='flex'; fab.style.display='none'; }
-      else if (state === 'min'){ box.style.display='none'; fab.style.display='inline-flex'; }
-      else { box.style.display='none'; fab.style.display='none'; }
-    }
-    function openChatAndExpand(){ localStorage.setItem(CHAT_STATE_KEY,'open'); applyChatState(); }
-    function closeChat(){ localStorage.setItem(CHAT_STATE_KEY,'closed'); applyChatState(); }
-    function minimizeChat(){ localStorage.setItem(CHAT_STATE_KEY,'min'); applyChatState(); }
-    function expandChat(){ localStorage.setItem(CHAT_STATE_KEY,'open'); applyChatState(); }
-
-    async function enviarChatIA() {
-      const input = document.getElementById("chat-text");
-      const msg = input.value.trim();
-      if (!msg) return;
-      const chat = document.getElementById("chat-messages");
-      chat.innerHTML += `<div><b>Tú:</b> ${msg}</div>`;
-      input.value = "";
-      const res = await fetch("/chat-openai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mensaje: msg })
-      });
-      const data = await res.json();
-      chat.innerHTML += `<div><b>IA:</b> ${data.respuesta}</div>`;
-      chat.scrollTop = chat.scrollHeight;
-    }
-    document.addEventListener('keydown', (e) => {
-      if (e.key === "Enter" && document.activeElement?.id === "chat-text") enviarChatIA();
-    });
-
-    /* ======== CHAT INTERNO ========= */
-    let yo = null, con = null, refresco = null, refrescoNoLeidos = null;
-    let CONFIG = { allowed_ext: ['pdf','png','jpg','jpeg','gif','webp','txt','csv','xlsx','xls','docx','doc','pptx'], max_files: 10, max_total_mb: 50 };
-
-    async function cargarConfig(){
-      try{
-        const r = await fetch('/chat/config');
-        if(r.ok){ const cfg = await r.json(); if(cfg && Array.isArray(cfg.allowed_ext)){ CONFIG = cfg; } }
-      }catch(_){}
-      document.getElementById('dzHint').innerHTML = `📎 Adjuntar… <span class="muted">(máx. ${CONFIG.max_files} archivos / ${CONFIG.max_total_mb} MB totales)</span>`;
-    }
-    function extPermitida(name){ const ext=(name.split('.').pop()||'').toLowerCase(); return CONFIG.allowed_ext.includes(ext); }
-    function isImage(name){ return /\.(png|jpg|jpeg|gif|webp)$/i.test(name); }
-
-    let selectedFiles = [];
-
-    async function getJSON(url){ const r=await fetch(url); if(!r.ok) throw new Error("Error HTTP " + r.status); return r.json(); }
-    async function postJSON(url,data){
-      const r=await fetch(url,{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
-      if(!r.ok){ let msg=''; try{ msg=(await r.json()).error||''; }catch(_){ } if(!msg){ try{ msg=await r.text(); }catch(_){} } throw new Error(msg||('Error HTTP '+r.status)); }
-      return r.json();
-    }
-
-    function setActiveHilo(email){
-      document.querySelectorAll('.item-hilo').forEach(el=> el.classList.toggle('active', el.dataset.email === email));
-    }
-    function renderHilos(hilos){
-      const cont = document.getElementById('listaHilos');
-      cont.innerHTML = '';
-      if(!hilos || !hilos.length){ cont.innerHTML = '<div class="p-3 text-muted">Sin conversaciones aún.</div>'; return; }
-      hilos.forEach(h=>{
-        const div = document.createElement('div');
-        div.className = 'item-hilo';
-        div.dataset.email = h.con;
-        div.innerHTML = `
-          <div class="info">
-            <div class="nombre">${escapeHtml(h.con)}</div>
-            <div class="fecha">${h.ultima_fecha || ''}</div>
-          </div>
-          <button class="btn-del" title="Eliminar chat (ocultar)" aria-label="Eliminar">🗑</button>
-        `;
-        div.querySelector('.info').onclick = () => abrirChat(h.con);
-        div.querySelector('.btn-del').onclick = async (ev) => { ev.stopPropagation(); await ocultar(h.con); };
-        cont.appendChild(div);
-      });
-      setActiveHilo(con);
-    }
-
-    function renderMensajes(mensajes){
-      const body = document.getElementById('chatBody');
-      body.innerHTML = '';
-      if(!mensajes || !mensajes.length){ body.innerHTML = '<div class="empty">No hay mensajes aún. ¡Escribe el primero!</div>'; return; }
-      mensajes.forEach(m=>{
-        const div = document.createElement('div');
-        div.className = 'msg' + (m.de === yo ? ' you' : '');
-        const meta = `<div class="meta">${escapeHtml(m.de)} • ${m.fecha}</div>`;
-        const txt  = m.texto ? `<div class="txt">${escapeHtml(m.texto)}</div>` : '';
-        let adj = '';
-        if (m.adjuntos && m.adjuntos.length){
-          adj = '<div class="mt-2">';
-          m.adjuntos.forEach(a=>{
-            const url = `/chat/adjunto/${encodeURIComponent(a.filename)}`;
-            const isImg = /\.(png|jpg|jpeg|gif|webp)$/i.test(a.filename);
-            if(isImg){
-              adj += `<div class="mb-2"><a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="${escapeHtml(a.original)}" style="max-width:220px; border-radius:10px; display:block;"></a><small class="text-muted">${escapeHtml(a.original)}${a.size ? ' • ' + Math.round(a.size/1024) + ' KB' : ''}</small></div>`;
-            }else{
-              adj += `<div class="mb-1">📎 <a href="${url}" target="_blank" rel="noopener">${escapeHtml(a.original)}</a>${a.size ? `<small class="text-muted"> • ${Math.round(a.size/1024)} KB</small>` : ''}</div>`;
-            }
-          });
-          adj += '</div>';
-        }
-        div.innerHTML = meta + txt + adj;
-        body.appendChild(div);
-      });
-      body.scrollTop = body.scrollHeight;
-    }
-
-    function escapeHtml(str){ return (str||'').toString().replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
-
-    // Autocompletar usuarios
-    const $input = document.getElementById('nuevoPara');
-    const $sugs  = document.getElementById('sugs');
-    let sugItems = [], sugIdx = -1, debounceId = null;
-    function debounce(fn, ms){ clearTimeout(debounceId); debounceId = setTimeout(fn, ms); }
-    async function buscar(term){
-      term=(term||'').trim();
-      if(!term){ sugItems=[]; renderSugs(); return; }
-      try{ const data = await getJSON(`/api/usuarios?term=${encodeURIComponent(term)}`); sugItems = data.items || []; sugIdx = sugItems.length ? 0 : -1; renderSugs(); }
-      catch{ sugItems=[]; renderSugs(); }
-    }
-    function renderSugs(){
-      $sugs.innerHTML = '';
-      if(!sugItems.length){ $sugs.style.display='none'; return; }
-      sugItems.forEach((it,i)=>{
-        const li=document.createElement('li');
-        li.className = 'auto-li' + (i===sugIdx?' active':'');
-        li.innerHTML = `<div class="nm">${escapeHtml(it.nombre || '(Sin nombre)')}</div><div class="em">${escapeHtml(it.email)}</div>`;
-        li.onclick = ()=> seleccionarSugerencia(i);
-        $sugs.appendChild(li);
-      });
-      $sugs.style.display='block';
-    }
-    function seleccionarSugerencia(i){
-      if(i<0 || i>=sugItems.length) return;
-      const email=sugItems[i].email; $input.value=email; $sugs.style.display='none'; abrirChat(email);
-    }
-    $input.addEventListener('input', e=> debounce(()=> buscar(e.target.value),160));
-    $input.addEventListener('keydown', (e)=>{
-      if($sugs.style.display==='none') return;
-      if(e.key==='ArrowDown'){ e.preventDefault(); sugIdx=Math.min(sugIdx+1, sugItems.length-1); renderSugs(); }
-      else if(e.key==='ArrowUp'){ e.preventDefault(); sugIdx=Math.max(sugIdx-1, 0); renderSugs(); }
-      else if(e.key==='Enter'){ if(sugIdx>=0){ e.preventDefault(); seleccionarSugerencia(sugIdx); } }
-      else if(e.key==='Escape'){ $sugs.style.display='none'; }
-    });
-    document.addEventListener('click', (e)=>{ if(!e.target.closest('.auto-wrap')) $sugs.style.display='none'; });
-
-    async function cargarYo(){ const info = await getJSON('/usuario-actual'); yo = info.usuario || 'Desconocido'; document.getElementById('yoEmail').textContent = yo; }
-    async function cargarHilos(){ try{ const data = await getJSON('/chat/hilos'); renderHilos(data.hilos || []); } catch(e){ console.error(e); alert('No se pudieron cargar los hilos. ¿Estás logueado?'); } }
-    async function cargarMensajes(){
-      if(!con) return;
-      try{
-        const data = await getJSON(`/chat/mensajes?con=${encodeURIComponent(con)}`);
-        renderMensajes(data.mensajes || []);
-        await marcarLeidos(con);
-        await cargarNoLeidos();
-      }catch(e){ console.error(e); alert('No se pudieron cargar los mensajes.'); }
-    }
-
-    async function enviar(){
-      const input=document.getElementById('inputMsg');
-      const texto=(input.value||'').trim();
-      if(!con){ alert('Elegí un contacto o buscá uno con @.'); return; }
-      if(selectedFiles.length){ await enviarArchivos(texto); return; }
-      if(!texto) return;
-      try{
-        await postJSON('/chat/enviar', { para: con, texto });
-        input.value=''; await cargarMensajes(); await cargarHilos();
-      }catch(e){ console.error(e); alert('No se pudo enviar el mensaje.'); }
-    }
-
-    // Adjuntos múltiples
-    const $files = document.getElementById('inputFiles');
-    const $drop  = document.getElementById('drop');
-    const $chips = document.getElementById('chips');
-    const $btnPick = document.getElementById('btnPick');
-    const $totals = document.getElementById('totals');
-
-    $btnPick.onclick = () => $files.click();
-    $drop.onclick = () => $files.click();
-    ['dragenter','dragover'].forEach(ev=> $drop.addEventListener(ev, e=>{ e.preventDefault(); e.stopPropagation(); $drop.classList.add('dragover'); }));
-    ['dragleave','drop'].forEach(ev=>  $drop.addEventListener(ev, e=>{ e.preventDefault(); e.stopPropagation(); $drop.classList.remove('dragover'); }));
-    $drop.addEventListener('drop', (e)=>{ const files=[...(e.dataTransfer?.files||[])]; if(!files.length) return; addFiles(files); });
-    $files.addEventListener('change', ()=>{ addFiles([...( $files.files || [] )]); $files.value=''; });
-
-    function addFiles(files){
-      for(const f of files){
-        if(!extPermitida(f.name)){ alert(`Tipo no permitido: ${f.name}`); continue; }
-        if(selectedFiles.length >= CONFIG.max_files){ alert(`Máximo ${CONFIG.max_files} archivos por mensaje.`); break; }
-        selectedFiles.push(f);
+  /* ===== Config adjuntos desde backend ===== */
+  let CONFIG = { allowed_ext: ['pdf','png','jpg','jpeg','gif','webp','txt','csv','xlsx','xls','docx','doc','pptx'], max_files: 10, max_total_mb: 50 };
+  (async function cargarConfig(){
+    try{
+      const r = await fetch('/chat/config');
+      if(r.ok){
+        const cfg = await r.json();
+        if(cfg?.allowed_ext) CONFIG = cfg;
       }
-      limitTotal(); renderChips(); renderTotals();
-    }
-    function limitTotal(){
-      const maxBytes = CONFIG.max_total_mb*1024*1024;
-      while(selectedFiles.reduce((a,b)=>a+b.size,0) > maxBytes){ selectedFiles.pop(); }
-    }
-    function renderTotals(){
-      if(!selectedFiles.length){ $totals.textContent=''; return; }
-      const total = selectedFiles.reduce((a,b)=>a+b.size,0);
-      const mb = total/1024/1024;
-      $totals.textContent = `Archivos seleccionados: ${selectedFiles.length} • Total: ${mb.toFixed(2)} MB (límite ${CONFIG.max_total_mb} MB)`;
-    }
-    function renderChips(){
-      $chips.innerHTML=''; if(!selectedFiles.length) return;
-      selectedFiles.forEach((f, idx)=>{
-        const chip=document.createElement('span'); chip.className='chip-file';
-        if(isImage(f.name)){
-          const img=document.createElement('img'); img.className='chip-thumb'; img.alt=f.name;
-          const fr=new FileReader(); fr.onload=e=> img.src=e.target.result; fr.readAsDataURL(f); chip.appendChild(img);
-        }
-        const label=document.createElement('span'); label.innerHTML=`${escapeHtml(f.name)} <small class="muted">${Math.round(f.size/1024)} KB</small>`;
-        const btn=document.createElement('button'); btn.title='Quitar'; btn.setAttribute('aria-label','Quitar'); btn.innerHTML='&times;';
-        btn.onclick=()=>{ selectedFiles.splice(idx,1); renderChips(); renderTotals(); };
-        chip.appendChild(label); chip.appendChild(btn); $chips.appendChild(chip);
-      });
-    }
+    }catch(e){}
+    document.getElementById('dzHint').innerHTML = `📎 Adjuntar… <span class="muted">(máx. ${CONFIG.max_files} archivos / ${CONFIG.max_total_mb} MB totales)</span>`;
+  })();
+  function extPermitida(name){ const ext=(name.split('.').pop()||'').toLowerCase(); return CONFIG.allowed_ext.includes(ext); }
+  function isImage(name){ return /\.(png|jpg|jpeg|gif|webp)$/i.test(name); }
 
-    async function enviarArchivos(texto){
-      if(!con){ alert('Elegí un contacto antes de enviar.'); return; }
-      const fd=new FormData();
-      fd.append('para', con);
-      fd.append('texto', texto || '');
-      selectedFiles.forEach(f => fd.append('archivos', f));
-      toggleSending(true);
-      try{
-        const resp=await fetch('/chat/enviar-archivos', { method:'POST', body: fd });
-        if(!resp.ok){
-          let msg=''; try{ msg=(await resp.json()).error||''; }catch(_){}
-          if(!msg){ try{ msg=await resp.text(); }catch(_){} }
-          throw new Error(msg || 'No se pudo enviar los adjuntos.');
-        }
-        selectedFiles=[]; renderChips(); renderTotals(); document.getElementById('inputMsg').value='';
-        await cargarMensajes(); await cargarHilos();
-      }catch(e){ console.error(e); alert(e.message || 'No se pudo enviar los adjuntos.'); }
-      finally{ toggleSending(false); }
-    }
-    function toggleSending(sending){ const btn=document.getElementById('btnEnviar'); btn.disabled=sending; btn.textContent = sending ? 'Enviando…' : 'Enviar'; }
+  /* ===== Estado global ===== */
+  let yo = null, con = null, refresco = null, refrescoNoLeidos = null;
+  let selectedFiles = [];
 
-    async function abrirChat(email){
-      try{
-        await postJSON('/chat/abrir', { con: email });
-        con = email; document.getElementById('conEmail').textContent = con;
-        setActiveHilo(con); await marcarLeidos(con); await cargarMensajes(); await cargarHilos(); iniciarAutoRefresh();
-      }catch(e){ console.error(e); alert('No se pudo abrir el chat.'); }
-    }
-    async function ocultar(email){
-      if(!email) return;
-      if(!confirm('¿Eliminar chat? Esto solo lo ocultará de tu lista, no borra mensajes.')) return;
-      try{
-        await postJSON('/chat/ocultar', { con: email });
-        if(con === email){
-          con=null; document.getElementById('conEmail').textContent='—';
-          document.getElementById('chatBody').innerHTML='<div class="empty">Seleccioná una conversación o creá una nueva desde la izquierda.</div>';
-          if(refresco) clearInterval(refresco);
-        }
-        await cargarHilos(); await cargarNoLeidos();
-      }catch(e){ console.error(e); alert('No se pudo eliminar el chat.'); }
-    }
-    async function marcarLeidos(remitente){ if(!remitente) return; try{ await postJSON('/chat/marcar-leidos', { de: remitente }); }catch(e){ console.warn('No se pudieron marcar leídos:', e?.message||e); } }
-    function iniciarAutoRefresh(){ if(refresco) clearInterval(refresco); refresco = setInterval(cargarMensajes, 5000); }
+  async function getJSON(url){ const r=await fetch(url); if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }
+  async function postJSON(url,data){
+    const r=await fetch(url,{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
+    let payload=null; try{ payload=await r.json(); }catch(_){}
+    if(!r.ok) throw new Error(payload?.error || ('HTTP '+r.status));
+    return payload;
+  }
 
-    async function cargarNoLeidos(){
-      try{
-        const data = await getJSON('/chat/no-leidos');
-        const n = (data && typeof data.no_leidos === 'number') ? data.no_leidos : 0;
-        const badge = document.getElementById('noLeidosBadge');
-        badge.textContent = n;
-        badge.classList.toggle('bg-danger', n > 0);
-        badge.classList.toggle('bg-secondary', n === 0);
-        document.title = (n > 0 ? `(${n}) ` : '') + 'Chat interno';
-      }catch(e){ /* silencioso */ }
-    }
-    function iniciarAutoNoLeidos(){ if(refrescoNoLeidos) clearInterval(refrescoNoLeidos); refrescoNoLeidos = setInterval(cargarNoLeidos, 10000); }
+  /* ===== Sidebar: hilos y autocompletar ===== */
+  function setActiveHilo(email){
+    document.querySelectorAll('.item-hilo').forEach(el=> el.classList.toggle('active', el.dataset.email === email));
+  }
+  function renderHilos(hilos){
+    const cont = document.getElementById('listaHilos');
+    cont.innerHTML = '';
+    if(!hilos?.length){ cont.innerHTML = '<div class="p-3 text-muted">Sin conversaciones aún.</div>'; return; }
+    hilos.forEach(h=>{
+      const div = document.createElement('div');
+      div.className = 'item-hilo';
+      div.dataset.email = h.con;
+      div.innerHTML = `
+        <div class="info">
+          <div class="nombre">${escapeHtml(h.con)}</div>
+          <div class="fecha">${h.ultima_fecha || ''}</div>
+        </div>
+        <button class="btn-del" title="Eliminar chat (ocultar)" aria-label="Eliminar">🗑</button>
+      `;
+      div.querySelector('.info').onclick = () => abrirChat(h.con);
+      div.querySelector('.btn-del').onclick = async (ev) => { ev.stopPropagation(); await ocultar(h.con); };
+      cont.appendChild(div);
+    });
+    setActiveHilo(con);
+  }
 
-    // Eventos
-    document.getElementById('btnEnviar').onclick = enviar;
-    document.getElementById('inputMsg').addEventListener('keypress', (e)=>{ if(e.key === 'Enter') enviar(); });
-    document.getElementById('btnRefrescar').onclick = ()=> { cargarMensajes(); cargarHilos(); };
-    document.getElementById('btnAbrir').onclick = ()=>{ const email = $input.value.trim(); if(!email) return; abrirChat(email); };
-    document.getElementById('btnEliminarChat').onclick = ()=> ocultar(con);
+  const $input = document.getElementById('nuevoPara');
+  const $sugs  = document.getElementById('sugs');
+  let sugItems = [], sugIdx = -1, debounceId = null;
+  const debounce = (fn,ms)=>{ clearTimeout(debounceId); debounceId=setTimeout(fn,ms); };
 
-    /* ===== Notificaciones (UI + polling) ===== */
-    function showToast({title="Aviso", body="", icon="info"}){
-      const container=document.getElementById('toastContainer'); if(!container) return;
-      const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
-      el.innerHTML=`<div class="toast-header">
-        <i class="bi bi-${icon} me-1"></i>
-        <strong class="me-auto">${title}</strong>
-        <small>Ahora</small>
-        <button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
-      </div><div class="toast-body">${body}</div>`;
-      container.appendChild(el); const t=new bootstrap.Toast(el,{delay:3000}); t.show(); el.addEventListener('hidden.bs.toast',()=>el.remove());
-    }
-    let notifOpen=false;
-    function toggleNotifPanel(){ notifOpen=!notifOpen; const p=document.getElementById('notif-panel'); if(p) p.style.display = notifOpen ? 'block':'none'; }
-    function renderBadge(n){ const b=document.getElementById('notif-badge'); if(!b) return; if(n>0){ b.display='inline-block'; b.textContent=n; } else { b.display='none'; } }
-    function renderNotifs(items){
-      const list=document.getElementById('notif-list'); if(!list) return; list.innerHTML='';
-      if(!items?.length){ list.innerHTML='<div class="p-3 text-muted">Sin notificaciones</div>'; return; }
-      items.forEach(n=>{
-        const div=document.createElement('div'); div.className='item '+(!n.leida?'unread':''); div.style.padding='10px 12px'; div.style.borderBottom='1px solid #f0f2f5';
-        div.innerHTML=`<div style="font-weight:600">${escapeHtml(n.titulo||'Notificación')}</div>
-                       <div class="small">${escapeHtml(n.cuerpo||'')}</div>
-                       <div class="small text-muted">${escapeHtml(n.fecha_legible||'')}</div>`;
-        list.appendChild(div);
-      });
-    }
-    async function fetchNotifs(){
-      try{
-        const r=await fetch('/notificaciones?limit=20'); if(!r.ok) return;
-        const data=await r.json();
-        renderNotifs(data.items||[]);
-        renderBadge(data.total_unread||0);
-      }catch(e){}
-    }
-    async function markAllAsRead(){
-      try{
-        await fetch('/notificaciones/marcar-leidas',{method:'POST'});
-        await fetchNotifs();
-        showToast({title:'Notificaciones', body:'Marcadas como leídas', icon:'check2-circle'});
-      }catch(e){}
-    }
+  async function buscar(term){
+    term=(term||'').trim();
+    if(!term){ sugItems=[]; renderSugs(); return; }
+    try{ const data = await getJSON(`/api/usuarios?term=${encodeURIComponent(term)}`); sugItems = data.items || []; sugIdx = sugItems.length ? 0 : -1; renderSugs(); }
+    catch{ sugItems=[]; renderSugs(); }
+  }
+  function renderSugs(){
+    $sugs.innerHTML = '';
+    if(!sugItems.length){ $sugs.style.display='none'; return; }
+    sugItems.forEach((it,i)=>{
+      const li=document.createElement('li');
+      li.className = 'auto-li' + (i===sugIdx?' active':'' );
+      li.role='option';
+      li.innerHTML = `<div class="nm">${escapeHtml(it.nombre || '(Sin nombre)')}</div><div class="em">${escapeHtml(it.email)}</div>`;
+      li.onclick = ()=> seleccionarSugerencia(i);
+      $sugs.appendChild(li);
+    });
+    $sugs.style.display='block';
+  }
+  function seleccionarSugerencia(i){
+    if(i<0 || i>=sugItems.length) return;
+    const email=sugItems[i].email; $input.value=email; $sugs.style.display='none'; abrirChat(email);
+  }
+  $input.addEventListener('input', e=> debounce(()=> buscar(e.target.value),160));
+  $input.addEventListener('keydown', (e)=>{
+    if($sugs.style.display==='none') return;
+    if(e.key==='ArrowDown'){ e.preventDefault(); sugIdx=Math.min(sugIdx+1, sugItems.length-1); renderSugs(); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); sugIdx=Math.max(sugIdx-1, 0); renderSugs(); }
+    else if(e.key==='Enter'){ if(sugIdx>=0){ e.preventDefault(); seleccionarSugerencia(sugIdx); } }
+    else if(e.key==='Escape'){ $sugs.style.display='none'; }
+  });
+  document.addEventListener('click', (e)=>{ if(!e.target.closest('.auto-wrap')) $sugs.style.display='none'; });
 
-    // Init
-    (async ()=>{
-      await getUsuario();
-      await cargarConfig();
-      await cargarYo();
-      await cargarHilos();
+  /* ===== Chat: mensajes ===== */
+  function renderMensajes(mensajes){
+    const body = document.getElementById('chatBody');
+    body.innerHTML = '';
+    if(!mensajes?.length){ body.innerHTML = '<div class="empty">No hay mensajes aún. ¡Escribe el primero!</div>'; return; }
+    mensajes.forEach(m=>{
+      const div = document.createElement('div');
+      div.className = 'msg' + (m.de === yo ? ' you' : '');
+      const meta = `<div class="meta">${escapeHtml(m.de)} • ${m.fecha}</div>`;
+      const txt  = m.texto ? `<div class="txt">${escapeHtml(m.texto)}</div>` : '';
+      let adj = '';
+      if (m.adjuntos?.length){
+        adj = '<div class="mt-2">';
+        m.adjuntos.forEach(a=>{
+          const url = `/chat/adjunto/${encodeURIComponent(a.filename)}`;
+          const isImg = /\.(png|jpg|jpeg|gif|webp)$/i.test(a.filename);
+          if(isImg){
+            adj += `<div class="mb-2"><a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="${escapeHtml(a.original)}" style="max-width:220px; border-radius:10px; display:block;"></a><small class="text-muted">${escapeHtml(a.original)}${a.size ? ' • ' + Math.round(a.size/1024) + ' KB' : ''}</small></div>`;
+          }else{
+            adj += `<div class="mb-1">📎 <a href="${url}" target="_blank" rel="noopener">${escapeHtml(a.original)}</a>${a.size ? `<small class="text-muted"> • ${Math.round(a.size/1024)} KB</small>` : ''}</div>`;
+          }
+        });
+        adj += '</div>';
+      }
+      div.innerHTML = meta + txt + adj;
+      body.appendChild(div);
+    });
+    body.scrollTop = body.scrollHeight;
+  }
+
+  async function cargarYo(){ const info = await getJSON('/usuario-actual'); yo = info.usuario || 'Desconocido'; document.getElementById('yoEmail').textContent = yo; }
+  async function cargarHilos(){ try{ const data = await getJSON('/chat/hilos'); renderHilos(data.hilos || []); } catch(e){ console.error(e); alert('No se pudieron cargar los hilos.'); } }
+  async function cargarMensajes(){
+    if(!con) return;
+    try{
+      const data = await getJSON(`/chat/mensajes?con=${encodeURIComponent(con)}&limit=100`);
+      renderMensajes(data.mensajes || []);
+      await marcarLeidos(con);
       await cargarNoLeidos();
-      iniciarAutoNoLeidos();
-      applyChatState(); // estado del chat IA
-      fetchNotifs();
-      setInterval(fetchNotifs, 30000); // polling cada 30s
-    })();
-  </script>
-</body>
-</html>
+    }catch(e){ console.error(e); alert('No se pudieron cargar los mensajes.'); }
+  }
+
+  async function abrirChat(email){
+    try{
+      await postJSON('/chat/abrir', { con: email });
+      con = email; document.getElementById('conEmail').textContent = con;
+      setActiveHilo(con);
+      await marcarLeidos(con);
+      await cargarMensajes();
+      await cargarHilos();
+      iniciarAutoRefresh();
+    }catch(e){ console.error(e); alert('No se pudo abrir el chat.'); }
+  }
+  async function ocultar(email){
+    if(!email) return;
+    if(!confirm('¿Eliminar chat? Esto solo lo ocultará de tu lista, no borra mensajes.')) return;
+    try{
+      await postJSON('/chat/ocultar', { con: email });
+      if(con === email){
+        con=null; document.getElementById('conEmail').textContent='—';
+        document.getElementById('chatBody').innerHTML='<div class="empty">Seleccioná una conversación o creá una nueva desde la izquierda.</div>';
+        if(refresco) clearInterval(refresco);
+      }
+      await cargarHilos(); await cargarNoLeidos();
+    }catch(e){ console.error(e); alert('No se pudo eliminar el chat.'); }
+  }
+  async function marcarLeidos(remitente){ if(!remitente) return; try{ await postJSON('/chat/marcar-leidos', { de: remitente }); }catch(e){} }
+
+  /* ===== Envío de mensajes y adjuntos ===== */
+  const $files = document.getElementById('inputFiles');
+  const $drop  = document.getElementById('drop');
+  const $chips = document.getElementById('chips');
+  const $btnPick = document.getElementById('btnPick');
+  const $totals = document.getElementById('totals');
+
+  $btnPick.onclick = () => $files.click();
+  $drop.onclick = () => $files.click();
+  ['dragenter','dragover'].forEach(ev=> $drop.addEventListener(ev, e=>{ e.preventDefault(); e.stopPropagation(); $drop.classList.add('dragover'); }));
+  ['dragleave','drop'].forEach(ev=>  $drop.addEventListener(ev, e=>{ e.preventDefault(); e.stopPropagation(); $drop.classList.remove('dragover'); }));
+  $drop.addEventListener('drop', (e)=>{ const files=[...(e.dataTransfer?.files||[])]; if(!files.length) return; addFiles(files); });
+  $files.addEventListener('change', ()=>{ addFiles([...( $files.files || [] )]); $files.value=''; });
+
+  function addFiles(files){
+    for(const f of files){
+      if(!extPermitida(f.name)){ alert(`Tipo no permitido: ${f.name}`); continue; }
+      if(selectedFiles.length >= CONFIG.max_files){ alert(`Máximo ${CONFIG.max_files} archivos por mensaje.`); break; }
+      selectedFiles.push(f);
+    }
+    limitTotal(); renderChips(); renderTotals();
+  }
+  function limitTotal(){
+    const maxBytes = CONFIG.max_total_mb*1024*1024;
+    while(selectedFiles.reduce((a,b)=>a+b.size,0) > maxBytes){ selectedFiles.pop(); }
+  }
+  function renderTotals(){
+    if(!selectedFiles.length){ $totals.textContent=''; return; }
+    const total = selectedFiles.reduce((a,b)=>a+b.size,0);
+    const mb = total/1024/1024;
+    $totals.textContent = `Archivos seleccionados: ${selectedFiles.length} • Total: ${mb.toFixed(2)} MB (límite ${CONFIG.max_total_mb} MB)`;
+  }
+  function renderChips(){
+    $chips.innerHTML=''; if(!selectedFiles.length) return;
+    selectedFiles.forEach((f, idx)=>{
+      const chip=document.createElement('span'); chip.className='chip-file';
+      if(isImage(f.name)){
+        const img=document.createElement('img'); img.className='chip-thumb'; img.alt=f.name;
+        const fr=new FileReader(); fr.onload=e=> img.src=e.target.result; fr.readAsDataURL(f); chip.appendChild(img);
+      }
+      const label=document.createElement('span'); label.innerHTML=`${escapeHtml(f.name)} <small class="muted">${Math.round(f.size/1024)} KB</small>`;
+      const btn=document.createElement('button'); btn.title='Quitar'; btn.setAttribute('aria-label','Quitar'); btn.innerHTML='&times;';
+      btn.onclick=()=>{ selectedFiles.splice(idx,1); renderChips(); renderTotals(); };
+      chip.appendChild(label); chip.appendChild(btn); $chips.appendChild(chip);
+    });
+  }
+
+  async function enviar(){
+    const input=document.getElementById('inputMsg');
+    const texto=(input.value||'').trim();
+    if(!con){ alert('Elegí un contacto o buscá uno con @.'); return; }
+    if(selectedFiles.length){ await enviarArchivos(texto); return; }
+    if(!texto) return;
+    try{
+      await postJSON('/chat/enviar', { para: con, texto });
+      input.value=''; await cargarMensajes(); await cargarHilos();
+    }catch(e){ console.error(e); alert('No se pudo enviar el mensaje.'); }
+  }
+  async function enviarArchivos(texto){
+    if(!con){ alert('Elegí un contacto antes de enviar.'); return; }
+    const fd=new FormData();
+    fd.append('para', con);
+    fd.append('texto', texto || '');
+    selectedFiles.forEach(f => fd.append('archivos', f));
+    toggleSending(true);
+    try{
+      const resp=await fetch('/chat/enviar-archivos', { method:'POST', body: fd });
+      if(!resp.ok){
+        let msg=''; try{ msg=(await resp.json()).error||''; }catch(_){}
+        if(!msg){ try{ msg=await resp.text(); }catch(_){} }
+        throw new Error(msg || 'No se pudo enviar los adjuntos.');
+      }
+      selectedFiles=[]; renderChips(); renderTotals(); document.getElementById('inputMsg').value='';
+      await cargarMensajes(); await cargarHilos();
+    }catch(e){ console.error(e); alert(e.message || 'No se pudo enviar los adjuntos.'); }
+    finally{ toggleSending(false); }
+  }
+  function toggleSending(sending){ const btn=document.getElementById('btnEnviar'); btn.disabled=sending; btn.textContent = sending ? 'Enviando…' : 'Enviar'; }
+
+  // Eventos envío
+  document.getElementById('btnEnviar').onclick = enviar;
+  document.getElementById('inputMsg').addEventListener('keypress', (e)=>{ if(e.key === 'Enter') enviar(); });
+  document.getElementById('btnRefrescar').onclick = ()=> { cargarMensajes(); cargarHilos(); };
+  document.getElementById('btnAbrir').onclick = ()=>{ const email = $input.value.trim(); if(!email) return; abrirChat(email); };
+  document.getElementById('btnEliminarChat').onclick = ()=> ocultar(con);
+
+  /* ===== No leídos + auto refresh ===== */
+  async function cargarNoLeidos(){
+    try{
+      const data = await getJSON('/chat/no-leidos');
+      const n = (data && typeof data.no_leidos === 'number') ? data.no_leidos : 0;
+      const badge = document.getElementById('noLeidosBadge');
+      badge.textContent = n;
+      badge.classList.toggle('bg-danger', n > 0);
+      badge.classList.toggle('bg-secondary', n === 0);
+      document.title = (n > 0 ? `(${n}) ` : '') + 'Chat interno';
+    }catch(e){}
+  }
+  function iniciarAutoRefresh(){ if(refresco) clearInterval(refresco); refresco = setInterval(cargarMensajes, 5000); }
+  function iniciarAutoNoLeidos(){ if(refrescoNoLeidos) clearInterval(refrescoNoLeidos); refrescoNoLeidos = setInterval(cargarNoLeidos, 10000); }
+
+  /* ===== Notificaciones flotantes (campana) ===== */
+  function showToast({title="Aviso", body="", icon="info"}){
+    const container=document.getElementById('toastContainer'); if(!container) return;
+    const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
+    el.innerHTML=`<div class="toast-header">
+      <i class="bi bi-${icon} me-1"></i>
+      <strong class="me-auto">${title}</strong>
+      <small>Ahora</small>
+      <button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
+    </div><div class="toast-body">${body}</div>`;
+    container.appendChild(el); const t=new bootstrap.Toast(el,{delay:3000}); t.show(); el.addEventListener('hidden.bs.toast',()=>el.remove());
+  }
+  let notifOpen=false;
+  function toggleNotifPanel(){ notifOpen=!notifOpen; const p=document.getElementById('notif-panel'); if(p) p.style.display = notifOpen ? 'block':'none'; }
+  function renderBadge(n){
+    const b=document.getElementById('notif-badge');
+    if(!b) return;
+    if(n>0){ b.style.display='inline-block'; b.textContent=n; } else { b.style.display='none'; }
+  }
+  function renderNotifs(items){
+    const list=document.getElementById('notif-list'); if(!list) return; list.innerHTML='';
+    if(!items?.length){ list.innerHTML='<div class="p-3 text-muted">Sin notificaciones</div>'; return; }
+    items.forEach(n=>{
+      const div=document.createElement('div'); div.className='item '+(!n.leida?'unread':''); div.style.padding='10px 12px'; div.style.borderBottom='1px solid #f0f2f5';
+      div.innerHTML=`<div style="font-weight:600">${escapeHtml(n.titulo||'Notificación')}</div>
+                     <div class="small">${escapeHtml(n.cuerpo||'')}</div>
+                     <div class="small text-muted">${escapeHtml(n.fecha_legible||'')}</div>`;
+      list.appendChild(div);
+    });
+  }
+  async function fetchNotifs(){
+    try{
+      const r=await fetch('/notificaciones?limit=20'); if(!r.ok) return;
+      const data=await r.json();
+      renderNotifs(data.items||[]);
+      renderBadge(data.total_unread||0);
+    }catch(e){}
+  }
+
+  /* ===== Boot ===== */
+  (async ()=>{
+    await cargarYo();
+    await cargarHilos();
+    await cargarNoLeidos();
+    iniciarAutoNoLeidos();
+    // Estado del chat IA (topbar) – la lógica ya está en base.html
+    fetchNotifs();
+    setInterval(fetchNotifs, 30000);
+  })();
+</script>
+{% endblock %}
