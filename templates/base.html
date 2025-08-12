@@ -20,6 +20,9 @@
     }
 
     html, body { height:100%; }
+    /* Scroll suave para anclas (#historial) */
+    html{ scroll-behavior:smooth; }
+
     body{
       margin:0;
       font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
@@ -48,8 +51,8 @@
       border-radius: 0 26px 26px 0;
       box-shadow: 0 10px 26px rgba(2,6,23,.34), inset 0 0 0 1px rgba(255,255,255,.04);
       color:#fff;
-      height: 70%;          /* altura más corta */
-      margin: auto 0;       /* centrado vertical con aire arriba/abajo */
+      height: 70%;
+      margin: auto 0;
     }
 
     .side-logo{
@@ -92,7 +95,12 @@
     .pill{ border-radius:999px; padding:.55rem 1rem; border:1px solid var(--border); background:var(--pill); color:#222; font-weight:500; text-decoration:none; }
     .pill-grad{ border:none; color:#fff; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); box-shadow:0 12px 26px rgba(139,92,246,.32); }
     .pill-icon{ display:inline-flex; align-items:center; gap:.5rem; }
-    .icon-btn{ width:44px; height:44px; display:grid; place-items:center; border-radius:14px; border:1px solid var(--border); background:#fff; }
+    .icon-btn{ position:relative; width:44px; height:44px; display:grid; place-items:center; border-radius:14px; border:1px solid var(--border); background:#fff; }
+    .icon-badge{
+      position:absolute; top:-4px; right:-4px; min-width:18px; height:18px; padding:0 4px;
+      border-radius:999px; background:#ef4444; color:#fff; font-size:11px; line-height:18px; text-align:center;
+      display:none;
+    }
 
     /* Content */
     .content{
@@ -169,7 +177,7 @@
       radial-gradient(700px 520px at 84% 12%, rgba(236,72,153,.10), transparent 60%),
       radial-gradient(600px 420px at 8% 88%, rgba(37,99,235,.10), transparent 60%),
       #f8f9ff;
-      scroll-behavior: smooth; /* autoscroll suave nativo */
+      scroll-behavior: smooth;
     }
     .msg{ background:#fff; border:1px solid var(--border); border-radius:14px; padding:10px 12px; margin-bottom:10px; }
     .msg.ai{ background:linear-gradient(180deg,#ffffff,#fbfdff); }
@@ -199,6 +207,32 @@
       background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); color:#fff;
       box-shadow:0 12px 26px rgba(139,92,246,.22);
     }
+
+    /* ===== Theming FullCalendar (magenta/ violeta) ===== */
+    .fc { --fc-border-color: var(--border); --fc-page-bg-color: transparent; }
+    .fc .fc-toolbar-title{ font-weight:700; color:#111827; }
+    .fc .fc-button{
+      background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+      border-color: transparent; color:#fff; box-shadow: 0 6px 16px rgba(139,92,246,.22);
+    }
+    .fc .fc-button:disabled{ opacity:.55; }
+    .fc .fc-button-primary:not(:disabled).fc-button-active,
+    .fc .fc-button-primary:not(:disabled):active{
+      background: linear-gradient(135deg, var(--accent-b), var(--accent-a)); border-color: transparent;
+    }
+    .fc .fc-daygrid-day-number{ color:#475569; font-weight:600; }
+    .fc .fc-daygrid-day.fc-day-today{
+      background: linear-gradient(180deg, #fff, #fbfdff); box-shadow: inset 0 0 0 1px var(--border);
+    }
+    .fc .fc-highlight{ background: rgba(139,92,246,.16); }
+
+    /* Calendario compacto dentro de una card */
+    .calendar-card{ padding:12px; }
+    .calendar-compact .fc .fc-view-harness{ min-height: 520px; }
+    .calendar-compact .fc .fc-toolbar{ margin:8px 0 12px; }
+
+    /* ===== Ocultar FAB flotante “Chat OpenAI” si existe ===== */
+    #chatOpenAiFab, .chat-openai-fab, [data-chat-fab]{ display:none !important; }
   </style>
 
   {% block extra_head %}{% endblock %}
@@ -228,7 +262,12 @@
           <a class="side-btn" data-match="/chat"           href="/chat"           title="Chat interno"><i class="bi bi-chat-dots"></i></a>
           <a class="side-btn" data-match="/incidencias"    href="/incidencias"    title="Incidencias"><i class="bi bi-bug"></i></a>
           <a class="side-btn" data-match="/calendario"     href="/calendario"     title="Calendario"><i class="bi bi-calendar-event"></i></a>
-          <a class="side-btn" data-match="/historia"       href="/historia"       title="Historial"><i class="bi bi-clock-history"></i></a>
+
+          <!-- Historial: usa ruta alias; si ya estamos en Home, hacemos scroll sin recargar -->
+          <a class="side-btn" id="btnHistorial" href="/historia" title="Historial">
+            <i class="bi bi-clock-history"></i>
+          </a>
+
           <a class="side-btn" data-match="/auditoria"      href="/auditoria"      title="Auditoría"><i class="bi bi-clipboard-data"></i></a>
           <a class="side-btn" data-match="/admin"          href="/admin"          title="Admin"><i class="bi bi-gear"></i></a>
         </nav>
@@ -248,7 +287,10 @@
         </div>
 
         <div class="header-actions">
-          <button class="icon-btn" id="btnNotif" title="Notificaciones"><i class="bi bi-bell"></i></button>
+          <button class="icon-btn" id="btnNotif" title="Notificaciones">
+            <i class="bi bi-bell"></i>
+            <span id="notifBadge" class="icon-badge">0</span>
+          </button>
           <a class="pill pill-icon" href="/chat"><i class="bi bi-chat-dots"></i> Chat interno</a>
           <button class="pill pill-grad pill-icon" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Chat OpenAI</button>
           <span id="usuario-nombre" class="ms-1 small text-muted"></span>
@@ -308,10 +350,34 @@
     function logout(){ fetch('/logout',{method:'POST'}).then(()=> location.href='/login?logout=1'); }
     document.getElementById('btnSalir')?.addEventListener('click', (e)=>{ e.preventDefault(); logout(); });
 
-    /* Notificaciones */
+    /* Notificaciones (panel + badge) */
     const notifBtn = document.getElementById('btnNotif');
     const notifPanel = document.getElementById('notif-panel');
-    notifBtn?.addEventListener('click', ()=>{ if(!notifPanel) return; notifPanel.style.display = (notifPanel.style.display==='block'?'none':'block'); });
+    const notifBadge = document.getElementById('notifBadge');
+
+    async function refreshNotif(){
+      try{
+        const r = await fetch('/notificaciones');
+        const j = await r.json();
+        const n = Number(j?.total_unread||0);
+        if(notifBadge){
+          notifBadge.textContent = n>99 ? '99+' : String(n);
+          notifBadge.style.display = n>0 ? 'inline-block' : 'none';
+        }
+        const list = document.getElementById('notif-list');
+        if(Array.isArray(j.items) && list){
+          list.innerHTML = j.items.length
+            ? j.items.map(it => `<div class="mb-2"><b>${it.titulo}</b><div class="text-muted">${it.cuerpo||''}</div><div class="small text-muted">${it.fecha_legible||''}</div></div>`).join('')
+            : 'Sin notificaciones';
+        }
+      }catch(_){}
+    }
+
+    notifBtn?.addEventListener('click', ()=>{
+      if(!notifPanel) return;
+      notifPanel.style.display = (notifPanel.style.display==='block'?'none':'block');
+      if(notifPanel.style.display==='block') refreshNotif();
+    });
     document.addEventListener('click', (e)=>{
       if(!notifPanel) return;
       if(!e.target.closest('#notif-panel') && !e.target.closest('#btnNotif')) notifPanel.style.display='none';
@@ -319,6 +385,7 @@
     document.getElementById('btnMarkRead')?.addEventListener('click', async ()=>{
       try{
         await fetch('/notificaciones/marcar-leidas',{method:'POST'});
+        refreshNotif();
         showToast({title:'Notificaciones', body:'Marcadas como leídas', icon:'check2-circle'});
       }catch(_){}
     });
@@ -355,7 +422,7 @@
 
     if(localStorage.getItem(CHAT_STATE_KEY)==='open'){ openChatIA(false); }
 
-    // Autoscroll helper (fallback para navegadores sin scroll-behavior)
+    // Autoscroll helper (fallback)
     function scrollToBottom(smooth=true){
       try{
         chatIaBody.scrollTo({ top: chatIaBody.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
@@ -457,6 +524,14 @@
       });
     })();
 
+    /* Historial: si ya estamos en "/" evitamos recarga y hacemos scroll */
+    document.getElementById('btnHistorial')?.addEventListener('click', (e)=>{
+      if(location.pathname === '/'){
+        e.preventDefault();
+        document.getElementById('historial')?.scrollIntoView({behavior:'smooth', block:'start'});
+      }
+    });
+
     /* Toast helper */
     function showToast({title='Aviso', body='', icon='info', delay=3200}={}){
       const cont=document.getElementById('toastContainer'); if(!cont) return;
@@ -469,7 +544,12 @@
       cont.appendChild(el); const t=new bootstrap.Toast(el,{delay}); t.show(); el.addEventListener('hidden.bs.toast',()=> el.remove());
     }
 
+    // Kill-switch por si existe un FAB flotante de Chat OpenAI
+    document.querySelectorAll('#chatOpenAiFab, .chat-openai-fab, [data-chat-fab]')
+      .forEach(el => { try{ el.remove(); }catch(_){ el.style.display='none'; } });
+
     getUsuario();
+    refreshNotif();
   </script>
 
   {% block extra_scripts %}{% endblock %}

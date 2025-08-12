@@ -173,6 +173,19 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
 async def ver_historial():
     return JSONResponse(obtener_historial())
 
+# 🔁 Alias de vista para el botón de la barra lateral
+#    Redirige a la home con ?goto=historial para que el front haga scroll suave.
+@app.get("/historia")
+async def alias_historia():
+    return RedirectResponse("/?goto=historial", status_code=307)
+
+# 🔁 Alias para “nuevo análisis” (compatibilidad con enlaces antiguos)
+@app.get("/analisis")
+@app.get("/analisis/nuevo")
+@app.get("/report")
+async def alias_analisis():
+    return RedirectResponse("/?goto=analisis", status_code=307)
+
 @app.get("/descargar/{archivo}")
 async def descargar_pdf(archivo: str):
     ruta = os.path.join("generated_pdfs", archivo)
@@ -317,8 +330,6 @@ async def cambiar_password_submit(request: Request,
 # ================== Admin ==================
 @app.get("/admin", response_class=HTMLResponse)
 async def vista_admin(request: Request):
-    if not request.session.get("rol") != "admin":
-        pass
     if request.session.get("rol") != "admin":
         return RedirectResponse("/")
     return templates.TemplateResponse("admin.html", {"request": request})
@@ -355,6 +366,7 @@ async def blanquear_password(request: Request):
         return JSONResponse({"mensaje": "Contraseña blanqueada a 1234"})
     except Exception as e:
         print("❌ Error blanquear-password:", repr(e))
+        # 🔧 fix de f-string
         return JSONResponse({"error": f"Error al blanquear: {e}"}, status_code=400)
 
 @app.post("/admin/desactivar-usuario")
@@ -421,7 +433,7 @@ async def chat_openai(request: Request):
 
     contexto_general = "\n".join([
         f"- [{h['fecha']}] {h['usuario']} analizó '{h['nombre_archivo']}' y obtuvo:\n{h['resumen']}\n"
-        for h in historial if h["resumen"]
+        for h in historial if h['resumen']
     ])
 
     contexto = f"{ultimo_resumen}\n\n📚 Historial completo:\n{contexto_general}"

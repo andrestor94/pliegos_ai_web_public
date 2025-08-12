@@ -254,13 +254,32 @@
     });
   });
 
+  // ----- Scroll automático por hash o query param (?goto=seccion) -----
+  function scrollByAnchorOrQuery(){
+    const params = new URLSearchParams(location.search);
+    const goto = params.get('goto');                       // ej: ?goto=historial
+    const fromHash = (location.hash || '').replace('#',''); // ej: #historial
+    const targetId = goto || fromHash;
+    if(!targetId) return;
+
+    const el = document.getElementById(targetId);
+    if(!el) return;
+
+    // Pequeño delay para asegurar que todo está pintado
+    setTimeout(()=> el.scrollIntoView({behavior:'smooth', block:'start'}), 60);
+
+    // Limpia la URL si vino con ?goto=
+    if(goto){
+      const url = new URL(location.href);
+      url.searchParams.delete('goto');
+      history.replaceState({}, '', url.pathname + (location.hash || ''));
+    }
+  }
+
   // Init
   window.addEventListener('load', ()=>{
     loadHistorial();
-    // Si llegamos con /#historial, hacemos scroll al cargar
-    if(location.hash === '#historial'){
-      document.getElementById('historial')?.scrollIntoView({behavior:'smooth', block:'start'});
-    }
+    scrollByAnchorOrQuery();
   });
 </script>
 {% endblock %}
