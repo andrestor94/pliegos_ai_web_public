@@ -613,32 +613,32 @@ async def chat_openai_embed(request: Request):
       <div id="log" class="mb-2" style="height:410px; overflow:auto; background:#f6f8fb; border-radius:12px; padding:8px;"></div>
       <form id="f" class="d-flex gap-2">
         <textarea id="t" class="form-control" placeholder="Escribe tu mensaje..." autocomplete="off" autofocus></textarea>
-        <button id="send" type="submit" class="btn btn-primary">Enviar</button>
+        <button id="send" type="button" class="btn btn-primary">Enviar</button>
       </form>
       <script>
-        const log = document.getElementById('log');
-        const form = document.getElementById('f');
-        const ta = document.getElementById('t');
+        const log  = document.getElementById('log');
+        const ta   = document.getElementById('t');
+        const btn  = document.getElementById('send');
 
         function esc(s){ return (s||'').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
-        function add(b){ const p=document.createElement('div'); p.innerHTML=b; log.appendChild(p); log.scrollTop=log.scrollHeight; }
+        function add(b){
+          const p=document.createElement('div');
+          p.innerHTML=b;
+          log.appendChild(p);
+          log.scrollTop=log.scrollHeight;
+        }
 
-        // Auto-altura del textarea
+        // Auto-altura del textarea (UX)
         function autosize(){ ta.style.height='auto'; ta.style.height = Math.min(ta.scrollHeight, 150) + 'px'; }
         ta.addEventListener('input', autosize); autosize();
 
-        // Enter = enviar | Shift+Enter = salto de línea
-        ta.addEventListener('keydown', (e)=>{
-          if(e.key === 'Enter' && !e.shiftKey){
-            e.preventDefault();          // evita insertar salto y submit duplicado
-            form.requestSubmit();        // dispara un único submit
-          }
-        });
-
-        form.addEventListener('submit', async (e)=>{
-          e.preventDefault();
+        let busy = false;
+        async function send(){
+          if(busy) return;
           const v = ta.value.trim();
           if(!v) return;
+          busy = true;
+          btn.disabled = true;
           add('<div><b>Tú:</b> '+esc(v)+'</div>');
           ta.value=''; autosize();
           try{
@@ -651,7 +651,25 @@ async def chat_openai_embed(request: Request):
             add('<div class="mt-1"><b>IA:</b> '+(j.respuesta||'')+'</div>');
           }catch(_){
             add('<div class="text-danger mt-1"><b>Error:</b> No se pudo enviar.</div>');
+          }finally{
+            busy = false;
+            btn.disabled = false;
+            ta.focus();
           }
+        }
+
+        // Enter = enviar | Shift+Enter = salto de línea
+        ta.addEventListener('keydown', (e)=>{
+          if(e.key === 'Enter' && !e.shiftKey){
+            e.preventDefault();  // evita salto de línea
+            send();              // envía directamente
+          }
+        });
+
+        // Botón enviar
+        btn.addEventListener('click', (e)=>{
+          e.preventDefault();
+          send();
         });
       </script>
     </body></html>
