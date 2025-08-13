@@ -217,19 +217,20 @@ def analizar_con_openai(texto: str) -> str:
     partes = _particionar(texto, CHUNK_SIZE)
     notas = []
 
-    # Etapa A: notas intermedias
+    # Etapa A: notas intermedias (con instrucción anti-encabezados y limpieza)
     for i, parte in enumerate(partes, 1):
         msg = [
             {"role": "system", "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
-            {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n## Guía de sinónimos/normalización\n{SINONIMOS_CANONICOS}\n\n=== FRAGMENTO {i}/{len(partes)} ===\n{parte}"}
+            {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n(No incluyas ningún encabezado genérico como 'Informe Estandarizado de pliego de Licitación' u otros títulos repetitivos.)\n\n## Guía de sinónimos/normalización\n{SINONIMOS_CANONICOS}\n\n=== FRAGMENTO {i}/{len(partes)} ===\n{parte}"}
         ]
         try:
             r = _llamada_openai(msg, max_tokens=2000)
-            notas.append(r.choices[0].message.content.strip())
+            notas.append(_dedupe_headers(r.choices[0].message.content.strip()))
         except Exception as e:
             notas.append(f"[ERROR] No se pudieron generar notas de la parte {i}: {e}")
 
-    notas_integradas = "\n".join(notas)
+    # Además, consolidamos y limpiamos posibles encabezados repetidos antes de la síntesis final
+    notas_integradas = _dedupe_headers("\n".join(notas))
 
     # Etapa B: síntesis final única y deduplicada
     messages_final = [
@@ -249,7 +250,7 @@ def analizar_con_openai(texto: str) -> str:
         resp_final = _llamada_openai(messages_final)
         return _postprocesar_informe(resp_final.choices[0].message.content.strip())
     except Exception as e:
-        # Fallback: al menos devolver las notas (limpias de meta)
+        # Fallback: al menos devolver las notas (limpias de meta y encabezados)
         return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias:\n{_postprocesar_informe(notas_integradas)}"
 
 
