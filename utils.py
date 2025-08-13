@@ -151,25 +151,34 @@ def call_llm(model: str, messages: list, max_tokens: int = 2000, temperature: fl
     """
     Usa Responses API para modelos que lo requieren (p.ej. gpt-5, gpt-4.1, o4).
     Solo usa Chat Completions si el modelo NO requiere Responses.
-    Evita el error: Unsupported parameter 'max_tokens' (usar 'max_completion_tokens').
+    Evita el error: 'Unsupported parameter max_tokens' usando 'max_output_tokens'.
     """
     def _requires_responses(m: str) -> bool:
         m = (m or "").lower()
         return m.startswith("gpt-5") or m.startswith("gpt-4.1") or m.startswith("o4")
 
     if _requires_responses(model):
-        # Debe existir client.responses.create en openai>=1.40.0
         if not hasattr(client, "responses") or not hasattr(client.responses, "create"):
             raise RuntimeError(
-                "Este modelo requiere la Responses API. Actualizá el paquete 'openai' a >= 1.40.0 y redeploy."
+                "Este modelo requiere la Responses API. Actualizá el paquete 'openai' a una versión reciente (p.ej. >= 1.40.0)."
             )
-        resp = client.responses.create(
-            model=model,
-            input=[{"role": m["role"], "content": m["content"]} for m in messages],
-            temperature=temperature,
-            max_completion_tokens=max_tokens,
-        )
-        # Unificar texto (varía según SDK)
+        # Intento con max_output_tokens (SDKs recientes)
+        try:
+            resp = client.responses.create(
+                model=model,
+                input=[{"role": m["role"], "content": m["content"]} for m in messages],
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            )
+        except TypeError:
+            # Reintento sin el parámetro si el SDK no lo soporta
+            resp = client.responses.create(
+                model=model,
+                input=[{"role": m["role"], "content": m["content"]} for m in messages],
+                temperature=temperature,
+            )
+
+        # Unificar texto
         chunks = []
         for o in getattr(resp, "output", []) or []:
             for b in getattr(o, "content", []) or []:
@@ -403,7 +412,7 @@ def analizar_anexos(files: list) -> str:
 
 
 # ============================================================
-# Chat IA (usa call_llm y evita 400)
+# Chat IA (usa gpt-5)
 # ============================================================
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
     descripcion_interfaz = f"""
@@ -442,8 +451,8 @@ El usuario actual es: {usuario}
             {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
             {"role": "user", "content": prompt}
         ]
-        # Para chat seguimos con gpt-4o (acepta chat.completions). Ajustá si querés.
-        return call_llm(model="gpt-4o", messages=messages, max_tokens=1200, temperature=0.3)
+        # Chat ahora con gpt-5 (usa Responses bajo el capó si aplica)
+        return call_llm(model="gpt-5", messages=messages, max_tokens=1200, temperature=0.3)
     except Exception as e:
         return f"⚠️ Error al generar respuesta: {e}"
 
