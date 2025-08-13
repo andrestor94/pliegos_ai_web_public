@@ -438,7 +438,8 @@ async def crear_usuario_api(request: Request):
         nombre = data.get("nombre")
         email = data.get("email")
         rol = data.get("rol")
-        if not nombre o r not email or not rol:
+        # 🔧 FIX: 'or' (no 'o r')
+        if not nombre or not email or not rol:
             return JSONResponse({"error": "Faltan campos: nombre, email, rol"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
         agregar_usuario(nombre, email, "1234", rol, actor_user_id=actor_user_id, ip=ip)
