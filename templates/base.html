@@ -127,7 +127,7 @@
     .pill{ position:relative; border-radius:999px; padding:.55rem 1rem; border:1px solid var(--border); background:var(--pill); color:var(--ink); font-weight:500; text-decoration:none; }
     .pill-grad{ border:none; color:#fff; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); box-shadow:0 12px 26px rgba(139,92,246,.32); }
     .pill-icon{ display:inline-flex; align-items:center; gap:.5rem; }
-    .icon-btn{ position:relative; width:44px; height:44px; display:grid; place-items:center; border-radius:14px; border:1px solid var(--border); background:#fff; color:var(--ink); }
+    .icon-btn{ position:relative; width:44px; height:44px; display:grid; place-items:center; border-radius:14px; border:1px solid var(--border); background:#fff; color:#var(--ink); }
     [data-theme="dark"] .icon-btn{ background:#0b1220; color:#e5e7eb; border-color:var(--border); }
     .icon-badge{
       position:absolute; top:-4px; right:-4px; min-width:18px; height:18px; padding:0 4px;
@@ -523,6 +523,18 @@
       try{ chatIaBody.scrollTo({ top: chatIaBody.scrollHeight, behavior: smooth ? 'smooth' : 'auto' }); }
       catch(_){ chatIaBody.scrollTop = chatIaBody.scrollHeight; }
     }
+
+    // ✅ Enter = enviar | Shift+Enter = salto de línea (impide el salto y dispara submit)
+    chatIaInput?.addEventListener('keydown', (e) => {
+      if (
+        e.key === 'Enter' &&
+        !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey &&
+        !e.isComposing
+      ) {
+        e.preventDefault();
+        chatIaForm?.requestSubmit();
+      }
+    });
 
     chatIaForm?.addEventListener('submit', async (e)=>{
       e.preventDefault();
