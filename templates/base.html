@@ -118,9 +118,11 @@
     [data-theme="dark"] .header{
       background:linear-gradient(0deg, rgba(11,18,32,.92), rgba(11,18,32,.92));
     }
-    .brand{ display:flex; align-items:center; gap:12px; padding:8px 12px; border-radius:16px; border:1px solid var(--border); background:#fff; }
-    .brand img{ height:26px; width:auto; object-fit:contain; }
-    .brand b{ font-weight:700; }
+
+    /* Brand: sólo logo + “Licitaciones IA” */
+    .brand{ display:flex; align-items:center; gap:14px; padding:8px 14px; border-radius:16px; border:1px solid var(--border); background:#fff; }
+    .brand img{ height:34px; width:auto; object-fit:contain; } /* ↑ logo más grande */
+    .brand .brand-title{ font-weight:700; letter-spacing:.2px; }
     [data-theme="dark"] .brand{ background:#0b1220; }
 
     .header-actions{ margin-left:auto; display:flex; align-items:center; gap:10px; }
@@ -140,6 +142,19 @@
       border-radius:999px; background:#ef4444; color:#fff; font-size:11px; line-height:18px; text-align:center;
       display:none;
     }
+
+    /* Usuario (nombre + avatar) */
+    .user-box{ display:flex; align-items:center; gap:10px; margin-left:6px; }
+    .user-name{ font-weight:600; color:var(--ink); }
+    .user-avatar{
+      width:40px; height:40px; border-radius:999px; overflow:hidden; position:relative;
+      border:1px solid var(--border); background:#e2e8f0; display:grid; place-items:center; cursor:pointer;
+      user-select:none;
+    }
+    .user-avatar img{ width:100%; height:100%; object-fit:cover; display:block; }
+    .user-avatar .initials{ font-weight:700; color:#334155; }
+    [data-theme="dark"] .user-avatar{ background:#111827; }
+    .user-avatar:hover{ box-shadow:0 8px 20px rgba(0,0,0,.12); }
 
     /* ===== Content ===== */
     .content{
@@ -368,9 +383,10 @@
 
       <!-- ===== Header ===== -->
       <header class="header">
+        <!-- Brand: solo logo + “Licitaciones IA” -->
         <div class="brand">
           <img src="/static/logo-suizo.png" alt="Logo Suizo">
-          <div><b>Suizo Argentina</b> <span class="muted">— Licitaciones IA</span></div>
+          <div class="brand-title">Licitaciones IA</div>
         </div>
 
         <div class="header-actions">
@@ -398,7 +414,16 @@
           </a>
 
           <button class="pill pill-grad pill-icon" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Chat OpenAI</button>
-          <span id="usuario-nombre" class="ms-1 small muted"></span>
+
+          <!-- Usuario actual: nombre + avatar -->
+          <div class="user-box">
+            <div class="user-name" id="userName">—</div>
+            <div class="user-avatar" id="avatarBtn" title="Cambiar foto de perfil">
+              <span class="initials" id="avatarInitials">?</span>
+              <img id="avatarImg" alt="Avatar" style="display:none;">
+            </div>
+            <input type="file" id="avatarInput" accept="image/png,image/jpeg,image/webp" hidden>
+          </div>
         </div>
       </header>
 
@@ -450,15 +475,65 @@
       }catch(_){}
     })();
 
-    /* Usuario en header */
+    /* Usuario en header (nombre + avatar) */
+    function initialsFromName(n){
+      n = (n||'').trim();
+      if(!n) return '?';
+      const parts = n.split(/\s+/).filter(Boolean);
+      const a = (parts[0]||'').charAt(0);
+      const b = (parts[1]||'').charAt(0);
+      return (a + (b||'')).toUpperCase();
+    }
+
     async function getUsuario(){
       try{
         const r=await fetch('/usuario-actual'); if(!r.ok) return;
         const d=await r.json();
-        const target=document.getElementById('usuario-nombre');
-        if(target) target.textContent = d?.usuario ? `· ${d.usuario}` : '';
+        const name = d?.nombre || d?.usuario || 'Usuario';
+        const avatar = d?.avatar_url || '';
+        const nameEl = document.getElementById('userName');
+        const imgEl  = document.getElementById('avatarImg');
+        const iniEl  = document.getElementById('avatarInitials');
+
+        if(nameEl) nameEl.textContent = name;
+        if(avatar){
+          imgEl.src = avatar;
+          imgEl.style.display = 'block';
+          if(iniEl) iniEl.style.display = 'none';
+        }else{
+          if(imgEl){ imgEl.removeAttribute('src'); imgEl.style.display='none'; }
+          if(iniEl){ iniEl.textContent = initialsFromName(name); iniEl.style.display='block'; }
+        }
       }catch(_){}
     }
+
+    /* Subida de avatar */
+    const avatarBtn   = document.getElementById('avatarBtn');
+    const avatarInput = document.getElementById('avatarInput');
+    avatarBtn?.addEventListener('click', ()=> avatarInput?.click());
+    avatarInput?.addEventListener('change', async (e)=>{
+      const f = e.target.files?.[0];
+      if(!f) return;
+      if(f.size > 2*1024*1024){ showToast({title:'Avatar', body:'Máximo 2 MB', icon:'exclamation-triangle'}); return; }
+
+      const fd = new FormData(); fd.append('avatar', f);
+      try{
+        const r = await fetch('/perfil/avatar', { method:'POST', body: fd });
+        const j = await r.json().catch(()=> ({}));
+        if(!r.ok || !j.ok){ throw new Error(j?.error || 'No se pudo actualizar el avatar'); }
+        showToast({title:'Perfil', body:'Avatar actualizado', icon:'person-check'});
+        // Forzar refresco (evitar cache)
+        const url = j.avatar_url + '?t=' + Date.now();
+        const imgEl  = document.getElementById('avatarImg');
+        const iniEl  = document.getElementById('avatarInitials');
+        if(imgEl){ imgEl.src = url; imgEl.style.display='block'; }
+        if(iniEl){ iniEl.style.display='none'; }
+      }catch(err){
+        showToast({title:'Perfil', body:String(err?.message||'Error'), icon:'exclamation-triangle'});
+      }finally{
+        try{ avatarInput.value=''; }catch(_){}
+      }
+    });
 
     /* Logout */
     function logout(){ fetch('/logout',{method:'POST'}).then(()=> location.href='/login?logout=1'); }
@@ -541,15 +616,10 @@
       catch(_){ chatIaBody.scrollTop = chatIaBody.scrollHeight; }
     }
 
-    // ✅ Enter = enviar | Shift+Enter = salto de línea (impide el salto y dispara submit)
+    // ✅ Enter = enviar | Shift+Enter = salto de línea
     chatIaInput?.addEventListener('keydown', (e) => {
-      if (
-        e.key === 'Enter' &&
-        !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey &&
-        !e.isComposing
-      ) {
-        e.preventDefault();
-        chatIaForm?.requestSubmit();
+      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
+        e.preventDefault(); chatIaForm?.requestSubmit();
       }
     });
 
@@ -639,7 +709,7 @@
     /* Toast helper */
     function showToast({title='Aviso', body='', icon='info', delay=3200}={}){
       const cont=document.getElementById('toastContainer'); if(!cont) return;
-      const esc=(s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+      const esc=(s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]}));
       const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
       el.innerHTML=`<div class="toast-header">
         <i class="bi bi-${esc(icon)} me-1"></i><strong class="me-auto">${esc(title)}</strong>

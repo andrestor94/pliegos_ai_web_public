@@ -198,6 +198,12 @@ CHAT_ALLOWED_EXT = {
 CHAT_MAX_FILES = 10
 CHAT_MAX_TOTAL_MB = 50
 
+# ================== Avatares (perfil) ==================
+AVATAR_DIR = os.path.join("static", "avatars")
+os.makedirs(AVATAR_DIR, exist_ok=True)
+AVATAR_ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".webp"}
+AVATAR_MAX_MB = 2  # MB
+
 # ================== Helpers ==================
 def _actor_info(request: Request):
     email = request.session.get("usuario")
@@ -211,6 +217,9 @@ def _safe_basename(name: str) -> str:
     base = "".join(c for c in base if c.isalnum() or c in ("-", "_", "."))
     base = base[:50] or "file"
     return base
+
+def _email_safe(s: str) -> str:
+    return (s or "anon").replace("@", "_at_").replace(".", "_dot_")
 
 async def _save_upload_stream(upload: UploadFile, dst_path: str) -> int:
     """Guarda el UploadFile en disco por chunks. Devuelve tamaño en bytes."""
@@ -358,10 +367,71 @@ async def eliminar_archivo(timestamp: str):
 # ================== Usuario actual ==================
 @app.get("/usuario-actual")
 async def usuario_actual(request: Request):
+    email = request.session.get("usuario", "")
+    rol = request.session.get("rol", "usuario")
+
+    row = obtener_usuario_por_email(email) if email else None
+    # (id, nombre, email, password, rol, ...)
+    nombre = row[1] if row else (email or "Desconocido")
+
+    # Buscar avatar existente
+    avatar_url = ""
+    if email:
+        prefix = _email_safe(email)
+        for ext in (".webp", ".png", ".jpg", ".jpeg"):
+            p = os.path.join(AVATAR_DIR, prefix + ext)
+            if os.path.isfile(p):
+                avatar_url = f"/{p.replace(os.sep, '/')}"
+                break
+
     return {
-        "usuario": request.session.get("usuario", "Desconocido"),
-        "rol": request.session.get("rol", "usuario")
+        "usuario": email or "Desconocido",
+        "rol": rol,
+        "nombre": nombre or (email or "Desconocido"),
+        "avatar_url": avatar_url  # '' si no hay
     }
+
+# ===== Subir/actualizar avatar =====
+@app.post("/perfil/avatar")
+async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
+    email = request.session.get("usuario")
+    if not email:
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+
+    orig = avatar.filename or ""
+    ext = os.path.splitext(orig)[1].lower()
+    if ext not in AVATAR_ALLOWED_EXT:
+        return JSONResponse({"error": f"Formato no permitido: {ext}"}, status_code=400)
+
+    # Límite de tamaño
+    data = await avatar.read()
+    size_mb = len(data) / (1024 * 1024)
+    if size_mb > AVATAR_MAX_MB:
+        return JSONResponse({"error": f"Máximo {AVATAR_MAX_MB} MB"}, status_code=400)
+
+    prefix = _email_safe(email)
+    dst = os.path.join(AVATAR_DIR, prefix + ext)
+
+    # Borrar otros formatos previos
+    for e in (".webp", ".png", ".jpg", ".jpeg"):
+        p = os.path.join(AVATAR_DIR, prefix + e)
+        if os.path.isfile(p) and p != dst:
+            try:
+                os.remove(p)
+            except:
+                pass
+
+    with open(dst, "wb") as f:
+        f.write(data)
+
+    url = f"/{dst.replace(os.sep, '/')}"
+
+    try:
+        await emit_alert(email, "Perfil actualizado", "Tu avatar se actualizó correctamente")
+    except Exception:
+        pass
+
+    return {"ok": True, "avatar_url": url}
 
 # ================== Incidencias ==================
 @app.get("/incidencias", response_class=HTMLResponse)
