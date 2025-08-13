@@ -14,6 +14,17 @@
     }
     .cell-pre{ max-width:280px; }
     .btn-icon{ display:inline-flex; align-items:center; gap:.35rem; }
+
+    /* Botón eliminar */
+    .btn-del{
+      --c:#dc3545;
+      color:var(--c);
+      border-color:rgba(220,53,69,.35);
+    }
+    .btn-del:hover{
+      color:#fff; background:var(--c); border-color:var(--c);
+    }
+
     /* Modal JSON */
     pre{ white-space:pre-wrap; font-size:.9rem; margin:0; }
     .json-box{ background:#0f172a; color:#e2e8f0; border-radius:12px; padding:12px; box-shadow:inset 0 0 0 1px #1f2a44; }
@@ -77,6 +88,9 @@
           <select id="pageSize" class="form-select form-select-sm" style="width:auto">
             <option>10</option><option selected>25</option><option>50</option><option>100</option>
           </select>
+          <button id="btnDelSelected" class="btn btn-sm btn-outline-danger">
+            <i class="bi bi-trash"></i> Eliminar seleccionados <span id="selCount" class="badge text-bg-light ms-1">0</span>
+          </button>
         </div>
       </div>
 
@@ -84,6 +98,9 @@
         <table class="table table-hover align-middle mb-0">
           <thead>
             <tr>
+              <th style="width:36px" class="text-center">
+                <input type="checkbox" id="chkAll">
+              </th>
               <th>Fecha</th>
               <th>Email</th>
               <th>Nombre</th>
@@ -93,6 +110,7 @@
               <th>Antes</th>
               <th>Después</th>
               <th>IP</th>
+              <th class="text-end">Acciones</th>
             </tr>
           </thead>
           <tbody id="tbodyLogs"></tbody>
@@ -133,26 +151,86 @@
 
 {% block extra_scripts %}
 <script>
-  /* Inyectamos los datos desde el servidor en una constante segura */
+  /* Inyectamos los datos desde el servidor en una constante segura.
+     IMPORTANTE: cada log debe incluir un campo numérico 'id' único. */
   const RAW = {{ (logs or [])|tojson|safe }};
 
   /* Helpers locales */
   function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function debounce(fn, ms){ let id; return (...a)=>{ clearTimeout(id); id=setTimeout(()=>fn(...a), ms); }; }
+  const $ = (sel,root=document)=>root.querySelector(sel);
+  const $$ = (sel,root=document)=>[...root.querySelectorAll(sel)];
 
   let STATE = { filtered: RAW.slice(), page: 1, pageSize: 25 };
+  let SELECTED = new Set(); // IDs seleccionados (se mantiene entre páginas/filtros)
 
   const TBODY = document.getElementById('tbodyLogs');
   const COUNT = document.getElementById('count');
   const PAGER = document.getElementById('pager');
   const RANGE = document.getElementById('rangeInfo');
+  const CHK_ALL = document.getElementById('chkAll');
+  const SEL_COUNT = document.getElementById('selCount');
+
+  /* === API eliminar === */
+  async function apiEliminarLog(id){
+    const res = await fetch('/auditoria/eliminar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id })
+    });
+    if(!res.ok){
+      const msg = await res.text().catch(()=> 'Error al eliminar');
+      throw new Error(msg || 'Error al eliminar');
+    }
+    return await res.json().catch(()=> ({})); // { ok: true }
+  }
+
+  async function apiEliminarMasivo(ids){
+    const res = await fetch('/auditoria/eliminar-masivo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids })
+    });
+    if(!res.ok){
+      const msg = await res.text().catch(()=> 'Error al eliminar (masivo)');
+      throw new Error(msg || 'Error al eliminar (masivo)');
+    }
+    return await res.json().catch(()=> ({})); // { ok: true, count: N }
+  }
+
+  function refreshSelectedBadge(){
+    if(SEL_COUNT) SEL_COUNT.textContent = SELECTED.size;
+  }
+
+  async function onDeleteClick(id){
+    if(!id && id !== 0){ return; }
+    const log = RAW.find(x => Number(x.id) === Number(id));
+    const label = log ? `[${log.accion||'-'}] ${log.entidad||'-'} #${log.entidad_id||'-'}` : `ID ${id}`;
+    const ok = confirm(`¿Eliminar este registro de auditoría?\n\n${label}\n\nEsta acción es permanente.`);
+    if(!ok) return;
+
+    try{
+      await apiEliminarLog(id);
+
+      // Eliminamos del RAW y de la selección
+      const ids = new Set([Number(id)]);
+      for(let i=RAW.length-1;i>=0;i--){ if(ids.has(Number(RAW[i].id))) RAW.splice(i,1); }
+      SELECTED.delete(Number(id));
+      applyFilters(); // re-render con filtros activos
+      showToast?.({title:'Eliminado', body:`Registro ${id} eliminado.`, icon:'trash'});
+    }catch(err){
+      console.error(err);
+      showToast?.({title:'Error', body:String(err?.message||'No se pudo eliminar'), icon:'exclamation-triangle'});
+      alert('No se pudo eliminar el registro.\n\n' + (err?.message||'Error desconocido'));
+    }
+  }
 
   /* Filtrado */
   function applyFilters(){
-    const term = (document.getElementById('freetext')?.value || '').toLowerCase().trim();
-    const acc  = document.getElementById('accion')?.value || '';
-    const d    = document.getElementById('desde')?.value || '';
-    const h    = document.getElementById('hasta')?.value || '';
+    const term = ($('#freetext')?.value || '').toLowerCase().trim();
+    const acc  = $('#accion')?.value || '';
+    const d    = $('#desde')?.value || '';
+    const h    = $('#hasta')?.value || '';
 
     const out = RAW.filter(l=>{
       if(acc && (l.accion||'') !== acc) return false;
@@ -179,7 +257,7 @@
   function paginate(arr, page, size){ const i=(page-1)*size; return arr.slice(i, i+size); }
 
   function render(){
-    const ps = parseInt(document.getElementById('pageSize')?.value || '25', 10);
+    const ps = parseInt($('#pageSize')?.value || '25', 10);
     STATE.pageSize = ps;
 
     const total = STATE.filtered.length;
@@ -202,7 +280,13 @@
           `<button class="btn btn-sm btn-outline-secondary btn-icon" data-json='${escapeHtml(JSON.stringify(safeJson(log.after), null, 2))}' data-title="Después"><i class="bi bi-eye"></i> Ver</button>` :
           '<span class="text-muted">-</span>';
 
+        const id = log.id ?? null;
+        const checked = SELECTED.has(Number(id)) ? 'checked' : '';
+
         tr.innerHTML = `
+          <td class="text-center">
+            <input type="checkbox" class="chkRow" data-id="${escapeHtml(id)}" ${checked}>
+          </td>
           <td>${escapeHtml(log.fecha || '')}</td>
           <td>${escapeHtml(log.usuario || '')}</td>
           <td>${escapeHtml(log.nombre || '-')}</td>
@@ -212,12 +296,20 @@
           <td class="cell-pre">${beforeBtn}</td>
           <td class="cell-pre">${afterBtn}</td>
           <td>${escapeHtml(log.ip || '-')}</td>
+          <td class="text-end">
+            <button class="btn btn-sm btn-outline-danger btn-icon btn-del" data-del-id="${id}">
+              <i class="bi bi-trash"></i> Eliminar
+            </button>
+          </td>
         `;
         frag.appendChild(tr);
       });
 
       TBODY.appendChild(frag);
       bindJsonButtons();
+      bindDeleteButtons();
+      bindSelectionHandlers();   // nuevo
+      updateMasterCheckbox();    // nuevo
     }
 
     const start = total ? ((STATE.page-1)*ps + 1) : 0;
@@ -225,6 +317,7 @@
     if(RANGE) RANGE.textContent = total ? `Mostrando ${start}-${end} de ${total}` : '—';
 
     renderPager(pages);
+    refreshSelectedBadge();
   }
 
   function renderPager(pages){
@@ -254,38 +347,84 @@
   }
 
   function bindJsonButtons(){
-    document.querySelectorAll('[data-json]').forEach(btn=>{
+    $$('#tbodyLogs [data-json]').forEach(btn=>{
       btn.onclick = ()=>{
         const txt = btn.getAttribute('data-json') || '';
         const title = btn.getAttribute('data-title') || 'Detalles';
-        document.getElementById('jsonTitle').textContent = title;
-        document.getElementById('jsonCode').textContent  = txt;
-        new bootstrap.Modal(document.getElementById('jsonModal')).show();
+        $('#jsonTitle').textContent = title;
+        $('#jsonCode').textContent  = txt;
+        new bootstrap.Modal($('#jsonModal')).show();
       };
     });
   }
 
+  function bindDeleteButtons(){
+    $$('#tbodyLogs [data-del-id]').forEach(btn=>{
+      btn.onclick = ()=>{
+        const id = btn.getAttribute('data-del-id');
+        if(id==null) return;
+        onDeleteClick(Number(id));
+      };
+    });
+  }
+
+  /* === Selección por filas / maestro === */
+  function bindSelectionHandlers(){
+    $$('#tbodyLogs .chkRow').forEach(ch=>{
+      const id = Number(ch.getAttribute('data-id'));
+      // Mantener estado inicial según SET
+      ch.checked = SELECTED.has(id);
+      ch.onchange = ()=>{
+        if(ch.checked) SELECTED.add(id); else SELECTED.delete(id);
+        updateMasterCheckbox();
+        refreshSelectedBadge();
+      };
+    });
+
+    if(CHK_ALL){
+      CHK_ALL.onchange = ()=>{
+        const rows = $$('#tbodyLogs .chkRow');
+        rows.forEach(r=>{
+          const id = Number(r.getAttribute('data-id'));
+          r.checked = CHK_ALL.checked;
+          if(CHK_ALL.checked) SELECTED.add(id); else SELECTED.delete(id);
+        });
+        refreshSelectedBadge();
+      };
+    }
+  }
+
+  function updateMasterCheckbox(){
+    if(!CHK_ALL) return;
+    const rows = $$('#tbodyLogs .chkRow');
+    if(!rows.length){ CHK_ALL.checked = false; CHK_ALL.indeterminate = false; return; }
+    const selectedOnPage = rows.filter(r => r.checked).length;
+    CHK_ALL.checked = selectedOnPage === rows.length;
+    CHK_ALL.indeterminate = selectedOnPage > 0 && selectedOnPage < rows.length;
+  }
+
   // Copiar JSON
-  document.getElementById('btnCopyJson')?.addEventListener('click', async ()=>{
-    const txt = document.getElementById('jsonCode')?.textContent || '';
-    try{ await navigator.clipboard.writeText(txt); showToast({title:'Copiado', body:'Contenido copiado al portapapeles.', icon:'clipboard'}); }
-    catch{ showToast({title:'Error', body:'No se pudo copiar.', icon:'exclamation-triangle'}); }
+  $('#btnCopyJson')?.addEventListener('click', async ()=>{
+    const txt = $('#jsonCode')?.textContent || '';
+    try{ await navigator.clipboard.writeText(txt); showToast?.({title:'Copiado', body:'Contenido copiado al portapapeles.', icon:'clipboard'}); }
+    catch{ showToast?.({title:'Error', body:'No se pudo copiar.', icon:'exclamation-triangle'}); }
   });
 
   // Filtros
-  document.getElementById('freetext')?.addEventListener('input', debounce(applyFilters, 200));
-  document.getElementById('accion')?.addEventListener('change', applyFilters);
-  document.getElementById('desde')?.addEventListener('change', applyFilters);
-  document.getElementById('hasta')?.addEventListener('change', applyFilters);
-  document.getElementById('pageSize')?.addEventListener('change', render);
-  document.getElementById('btnLimpiar')?.addEventListener('click', ()=>{
+  $('#freetext')?.addEventListener('input', debounce(applyFilters, 200));
+  $('#accion')?.addEventListener('change', applyFilters);
+  $('#desde')?.addEventListener('change', applyFilters);
+  $('#hasta')?.addEventListener('change', applyFilters);
+  $('#pageSize')?.addEventListener('change', render);
+  $('#btnLimpiar')?.addEventListener('click', ()=>{
     ['freetext','accion','desde','hasta'].forEach(id=>{ const el=document.getElementById(id); if(!el) return; el.value=''; });
     applyFilters();
   });
 
   // Export CSV
-  document.getElementById('btnExport')?.addEventListener('click', ()=>{
+  $('#btnExport')?.addEventListener('click', ()=>{
     const rows = STATE.filtered.map(l=>({
+      id: l.id ?? '',
       fecha:l.fecha||'', usuario:l.usuario||'', nombre:l.nombre||'',
       accion:l.accion||'', entidad:l.entidad||'', entidad_id:l.entidad_id||'',
       before: typeof l.before==='object' ? JSON.stringify(l.before) : (l.before||''),
@@ -298,6 +437,33 @@
     const a = document.createElement('a'); a.href = url;
     a.download = `auditoria_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
     a.click(); URL.revokeObjectURL(url);
+  });
+
+  // Eliminar seleccionados (masivo)
+  $('#btnDelSelected')?.addEventListener('click', async ()=>{
+    if(SELECTED.size === 0){
+      showToast?.({title:'Sin selección', body:'Seleccioná al menos un registro.', icon:'exclamation-triangle'});
+      return;
+    }
+    const ids = [...SELECTED];
+    const label = ids.slice(0,10).join(', ') + (ids.length>10 ? ` (+${ids.length-10})` : '');
+    if(!confirm(`¿Eliminar ${ids.length} registro(s)?\n\nIDs: ${label}\n\nEsta acción es permanente.`)) return;
+
+    try{
+      const j = await apiEliminarMasivo(ids);
+      // Sacar del RAW
+      const toDel = new Set(ids.map(Number));
+      for(let i=RAW.length-1;i>=0;i--){
+        if(toDel.has(Number(RAW[i].id))) RAW.splice(i,1);
+      }
+      // Limpiar selección y repintar
+      SELECTED.clear();
+      applyFilters();
+      showToast?.({title:'Eliminación masiva', body:`${j.count||0} registro(s) eliminados.`, icon:'trash'});
+    }catch(err){
+      console.error(err);
+      alert('No se pudo eliminar.\n\n' + (err?.message||'Error desconocido'));
+    }
   });
 
   function toCSV(rows){

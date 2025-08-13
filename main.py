@@ -11,6 +11,7 @@ from fastapi.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.concurrency import run_in_threadpool
 from datetime import datetime
+from sqlalchemy import or_, and_
 
 from utils import (
     extraer_texto_de_pdf,
@@ -46,7 +47,7 @@ from database import (
 )
 
 # ORM (audit_logs)
-from db_orm import inicializar_bd_orm
+from db_orm import inicializar_bd_orm, SessionLocal, AuditLog
 
 # ================== App & Middlewares ==================
 app = FastAPI(middleware=[
@@ -228,6 +229,38 @@ def _validate_ext(filename: str):
     ext = os.path.splitext(filename or "")[1].lower()
     if ext not in CHAT_ALLOWED_EXT:
         raise HTTPException(status_code=400, detail=f"Tipo de archivo no permitido: {ext}")
+
+# --- Filtros para eliminación masiva de auditoría ---
+def _build_audit_filters(q, filtros):
+    """
+    Aplica filtros al query de AuditLog.
+    filtros: dict con claves opcionales: accion, desde (YYYY-MM-DD), hasta (YYYY-MM-DD), term (texto)
+    """
+    if not filtros:
+        return q
+    acc = (filtros.get("accion") or "").strip()
+    d   = (filtros.get("desde")  or "").strip()
+    h   = (filtros.get("hasta")  or "").strip()
+    term= (filtros.get("term")   or "").strip()
+
+    if acc:
+        q = q.filter(AuditLog.accion == acc)
+
+    if d:
+        q = q.filter(AuditLog.fecha >= f"{d} 00:00:00")
+    if h:
+        q = q.filter(AuditLog.fecha <= f"{h} 23:59:59")
+
+    if term:
+        like = f"%{term}%"
+        ors = []
+        for col in ("usuario", "nombre", "accion", "entidad", "entidad_id", "ip", "before", "after"):
+            if hasattr(AuditLog, col):
+                ors.append(getattr(AuditLog, col).like(like))
+        if ors:
+            q = q.filter(or_(*ors))
+
+    return q
 
 # --- Config pública para el front (límites de adjuntos) ---
 @app.get("/chat/config")
@@ -927,6 +960,134 @@ async def ver_auditoria(request: Request):
         "request": request,
         "logs": logs
     })
+
+# ================== Auditoría (eliminar registro individual) ==================
+@app.post("/auditoria/eliminar", dependencies=[Depends(require_admin)])
+async def auditoria_eliminar(request: Request):
+    """
+    Elimina un registro de auditoría por ID.
+    Espera JSON: { "id": 123 }
+    Devuelve: { "ok": true }
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON inválido"}, status_code=400)
+
+    try:
+        log_id = int((data or {}).get("id"))
+    except Exception:
+        return JSONResponse({"error": "Falta o es inválido el campo 'id' (int)"}, status_code=400)
+
+    with SessionLocal() as db:
+        obj = db.query(AuditLog).filter(AuditLog.id == log_id).first()
+        if not obj:
+            return JSONResponse({"error": "Registro no encontrado"}, status_code=404)
+        db.delete(obj)
+        db.commit()
+
+    try:
+        email = request.session.get("usuario", "admin")
+        await emit_alert(email, "Auditoría eliminada", f"Registro #{log_id} eliminado")
+    except Exception:
+        pass
+
+    return {"ok": True}
+
+# ================== Auditoría (eliminación masiva) ==================
+@app.post("/auditoria/eliminar-masivo", dependencies=[Depends(require_admin)])
+async def auditoria_eliminar_masivo(request: Request):
+    """
+    Elimina registros de auditoría por IDs o por filtros.
+    Body JSON:
+      - ids: [int, ...]        (opcional)
+      - filtros: { accion?, desde?, hasta?, term? }   (opcional)
+    Si se envían ids, se priorizan; si no hay ids, se usan filtros.
+    Respuesta: { ok: true, count: <int> }
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON inválido"}, status_code=400)
+
+    ids = data.get("ids") or []
+    filtros = data.get("filtros") or {}
+
+    deleted = 0
+    with SessionLocal() as db:
+        q = db.query(AuditLog)
+        if ids:
+            try:
+                ids_int = [int(i) for i in ids]
+            except Exception:
+                return JSONResponse({"error": "ids inválidos"}, status_code=400)
+            q = q.filter(AuditLog.id.in_(ids_int))
+        else:
+            q = _build_audit_filters(q, filtros)
+
+        to_delete = q.all()
+        deleted = len(to_delete)
+        if deleted == 0:
+            return {"ok": True, "count": 0}
+
+        for obj in to_delete:
+            db.delete(obj)
+        db.commit()
+
+    try:
+        email = request.session.get("usuario", "admin")
+        await emit_alert(email, "Auditoría (masivo)", f"{deleted} registro(s) eliminados")
+    except Exception:
+        pass
+
+    return {"ok": True, "count": deleted}
+
+# ================== Auditoría (purga por antigüedad/fecha) ==================
+@app.post("/auditoria/purgar", dependencies=[Depends(require_admin)])
+async def auditoria_purgar(request: Request):
+    """
+    Purga rápida por antigüedad o fecha:
+    Body JSON:
+      - days: int     (borra todo lo anterior a hoy - days)
+      - before: "YYYY-MM-DD"  (borra todo lo anterior a esa fecha 23:59:59)
+    Uno de los dos es requerido.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON inválido"}, status_code=400)
+
+    days = data.get("days")
+    before = (data.get("before") or "").strip()
+
+    if days is None and not before:
+        return JSONResponse({"error": "Debe enviar 'days' o 'before' (YYYY-MM-DD)"}, status_code=400)
+
+    if before:
+        limite = f"{before} 23:59:59"
+    else:
+        from datetime import timedelta
+        dt = datetime.utcnow() - timedelta(days=int(days))
+        limite = dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    with SessionLocal() as db:
+        q = db.query(AuditLog).filter(AuditLog.fecha <= limite)
+        to_delete = q.all()
+        count = len(to_delete)
+        if count == 0:
+            return {"ok": True, "count": 0}
+
+        for obj in to_delete:
+            db.delete(obj)
+        db.commit()
+
+    try:
+        email = request.session.get("usuario", "admin")
+        await emit_alert(email, "Auditoría (purga)", f"{count} registro(s) eliminados")
+    except Exception:
+        pass
+
+    return {"ok": True, "count": count}
 
 # =====================================================================
 # ========================== CALENDARIO ===============================
