@@ -138,15 +138,19 @@ def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANAL
 def analizar_con_openai(texto: str) -> str:
     """
     Analiza el contenido completo y devuelve **un único informe** en texto,
-    listo para renderizar a PDF. Usa el prompt C.R.A.F.T. mejorado y gpt-5.
-    - Si el texto total es corto: una sola pasada (síntesis final).
-    - Si es largo: notas intermedias por chunk + síntesis final única.
+    listo para renderizar a PDF.
+    - Si es corto: 1 sola pasada con CRAFT maestro.
+    - Si es largo o proviene de varios anexos: etapa de notas + síntesis final única.
     """
     if not texto or not texto.strip():
         return "No se recibió contenido para analizar."
 
-    # Caso 1: una sola pasada
-    if len(texto) <= MAX_SINGLE_PASS_CHARS:
+    # Forzar dos etapas si detectamos múltiples anexos por patrones comunes
+    separadores = ["===ANEXO===", "=== ANEXO ===", "### ANEXO", "## ANEXO", "\nAnexo "]
+    varios_anexos = any(sep.lower() in texto.lower() for sep in separadores)
+
+    # Caso 1: una sola pasada (solo si es corto y no hay múltiples anexos)
+    if len(texto) <= MAX_SINGLE_PASS_CHARS and not varios_anexos:
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
             {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve ÚNICAMENTE el informe final (texto), sin preámbulos."}
@@ -157,11 +161,11 @@ def analizar_con_openai(texto: str) -> str:
         except Exception as e:
             return f"⚠️ Error al generar el análisis: {e}"
 
-    # Caso 2: dos etapas (notas intermedias + síntesis)
+    # Caso 2: dos etapas (siempre que haya varios anexos o texto largo)
     partes = _particionar(texto, CHUNK_SIZE)
     notas = []
 
-    # Etapa A: notas intermedias
+    # Etapa A: generar notas intermedias para cada chunk
     for i, parte in enumerate(partes, 1):
         msg = [
             {"role": "system", "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
@@ -175,7 +179,7 @@ def analizar_con_openai(texto: str) -> str:
 
     notas_integradas = "\n".join(notas)
 
-    # Etapa B: síntesis final única (informe completo)
+    # Etapa B: síntesis final única y deduplicada (fusión entre anexos)
     messages_final = [
         {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
         {"role": "user", "content": f"""{CRAFT_PROMPT_MAESTRO}
@@ -183,9 +187,10 @@ def analizar_con_openai(texto: str) -> str:
 === NOTAS INTERMEDIAS INTEGRADAS (DEDUPE Y TRAZABILIDAD) ===
 {notas_integradas}
 
-👉 Usa ÚNICAMENTE estas notas para elaborar el **informe final único** (sin repetir encabezados por fragmento, sin meta-comentarios). 
-👉 Devuelve SOLO el informe final en texto."""
-        }
+👉 Deduplica toda la información, fusiona datos de distintos anexos y arma un único informe final.
+👉 Si un mismo dato aparece en varios anexos, cítalo una sola vez agregando todas las referencias relevantes.
+👉 Devuelve SOLO el informe final en texto, sin encabezados repetidos por fragmento ni meta-comentarios.
+"""}
     ]
 
     try:
