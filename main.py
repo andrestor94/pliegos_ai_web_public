@@ -574,7 +574,7 @@ async def api_chat_openai(request: Request, payload: dict = Body(...)):
     respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
     return JSONResponse({"reply": respuesta})
 
-# Mini vista embebida para el widget del topbar/FAB
+# ===== Mini vista embebida para el widget del topbar/FAB (Enter envía) =====
 @app.get("/chat_openai_embed", response_class=HTMLResponse)
 async def chat_openai_embed(request: Request):
     if not request.session.get("usuario"):
@@ -583,52 +583,51 @@ async def chat_openai_embed(request: Request):
     <!doctype html><html><head>
     <meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+    <style>
+      #t{ resize:none; min-height:42px; max-height:150px; }
+    </style>
     </head><body class="p-2" style="background:transparent">
       <div id="log" class="mb-2" style="height:410px; overflow:auto; background:#f6f8fb; border-radius:12px; padding:8px;"></div>
       <form id="f" class="d-flex gap-2">
-        <input id="t" class="form-control" placeholder="Escribe tu pregunta..." autocomplete="off" autofocus>
-        <button type="submit" class="btn btn-primary">Enviar</button>
+        <textarea id="t" class="form-control" placeholder="Escribe tu mensaje..." autocomplete="off" autofocus></textarea>
+        <button id="send" type="submit" class="btn btn-primary">Enviar</button>
       </form>
       <script>
-        const log   = document.getElementById('log');
-        const form  = document.getElementById('f');
-        const input = document.getElementById('t');
+        const log = document.getElementById('log');
+        const form = document.getElementById('f');
+        const ta = document.getElementById('t');
 
-        function add(b){
-          const p=document.createElement('div');
-          p.innerHTML=b;
-          log.appendChild(p);
-          log.scrollTop=log.scrollHeight;
-        }
+        function esc(s){ return (s||'').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+        function add(b){ const p=document.createElement('div'); p.innerHTML=b; log.appendChild(p); log.scrollTop=log.scrollHeight; }
 
-        async function send(){
-          const v = input.value.trim();
+        // Auto-altura del textarea
+        function autosize(){ ta.style.height='auto'; ta.style.height = Math.min(ta.scrollHeight, 150) + 'px'; }
+        ta.addEventListener('input', autosize); autosize();
+
+        // Enter = enviar | Shift+Enter = salto de línea
+        ta.addEventListener('keydown', (e)=>{
+          if(e.key === 'Enter' && !e.shiftKey){
+            e.preventDefault();          // evita insertar salto y submit duplicado
+            form.requestSubmit();        // dispara un único submit
+          }
+        });
+
+        form.addEventListener('submit', async (e)=>{
+          e.preventDefault();
+          const v = ta.value.trim();
           if(!v) return;
-          add('<div><b>Tú:</b> '+v+'</div>');
-          input.value='';
+          add('<div><b>Tú:</b> '+esc(v)+'</div>');
+          ta.value=''; autosize();
           try{
             const r = await fetch('/chat-openai', {
               method:'POST',
               headers:{'Content-Type':'application/json'},
               body: JSON.stringify({mensaje:v})
             });
-            const j = await r.json();
+            const j = await r.json().catch(()=>({}));
             add('<div class="mt-1"><b>IA:</b> '+(j.respuesta||'')+'</div>');
-          }catch(e){
+          }catch(_){
             add('<div class="text-danger mt-1"><b>Error:</b> No se pudo enviar.</div>');
-          }
-        }
-
-        form.addEventListener('submit', (e)=>{
-          e.preventDefault();
-          send();
-        });
-
-        // ✅ Enter para enviar (independiente del submit del form)
-        input.addEventListener('keydown', (e)=>{
-          if(e.key === 'Enter'){
-            e.preventDefault(); // evita submit duplicado / propagación
-            send();
           }
         });
       </script>
@@ -649,7 +648,7 @@ async def api_buscar_usuarios(request: Request, term: str = "", limit: int = 8):
     """Autocompletar de usuarios por nombre/email."""
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
-    term = (term or "").trim()
+    term = (term or "").strip()
     if not term:
         return {"items": []}
     try:

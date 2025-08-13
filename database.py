@@ -30,6 +30,8 @@ ACCION_ES = {
     "SEND_MESSAGE": "Enviar mensaje",  # 👈 chat interno
     "HIDE_THREAD": "Ocultar conversación",
     "UNHIDE_THREAD": "Restaurar conversación",
+    # Nuevas acciones relacionadas a roles
+    "UPDATE_ROLE": "Cambiar rol de usuario",
 }
 
 def _accion_es(codigo: str) -> str:
@@ -93,6 +95,9 @@ def registrar_auditoria(actor_user_id, action, entity, entity_id, before=None, a
 # ===================== Inicialización de Tablas SQLite ====================
 def inicializar_bd():
     crear_tabla_usuarios()
+    _migrar_tabla_usuarios_si_falta_rol_y_activo()  # 👈 asegura columnas en DBs existentes
+    _crear_indices_usuarios()
+
     crear_tabla_historial()
     crear_tabla_tickets()
     crear_tabla_mensajes()       # 👈 chat interno
@@ -111,6 +116,31 @@ def crear_tabla_usuarios():
                 activo INTEGER NOT NULL DEFAULT 1
             )
         ''')
+
+def _migrar_tabla_usuarios_si_falta_rol_y_activo():
+    """Asegura que existan columnas 'rol' y 'activo' en DBs antiguas."""
+    with _get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute("PRAGMA table_info(usuarios)")
+        cols = {r["name"] for r in cur.fetchall()}
+
+        if "rol" not in cols:
+            # SQLite >= 3.35 soporta IF NOT EXISTS. Si tu versión no, el try/except lo cubre.
+            try:
+                conn.execute("ALTER TABLE usuarios ADD COLUMN rol TEXT NOT NULL DEFAULT 'usuario'")
+            except Exception:
+                pass
+
+        if "activo" not in cols:
+            try:
+                conn.execute("ALTER TABLE usuarios ADD COLUMN activo INTEGER NOT NULL DEFAULT 1")
+            except Exception:
+                pass
+
+def _crear_indices_usuarios():
+    with _get_conn() as conn:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_usuarios_email ON usuarios (email)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_usuarios_rol ON usuarios (rol)")
 
 def crear_tabla_historial():
     with _get_conn() as conn:
@@ -219,6 +249,18 @@ def obtener_usuario_por_email(email):
         cursor = conn.execute("SELECT * FROM usuarios WHERE email = ?", (email,))
         return cursor.fetchone()
 
+def obtener_rol_por_email(email: str) -> str:
+    """Devuelve 'admin' / 'usuario' / 'borrado' o None si no existe."""
+    with _get_conn() as conn:
+        cur = conn.execute("SELECT rol FROM usuarios WHERE email = ?", (email,))
+        row = cur.fetchone()
+        return row[0] if row else None
+
+def es_admin(email: str) -> bool:
+    """Helper rápido para checks de UI/Backend."""
+    rol = obtener_rol_por_email(email)
+    return rol == "admin"
+
 def listar_usuarios():
     with _get_conn() as conn:
         cursor = conn.execute("SELECT id, nombre, email, rol, activo FROM usuarios")
@@ -278,6 +320,31 @@ def cambiar_estado_usuario(email, activo, actor_user_id=None, ip=None):
             actor_user_id, "TOGGLE_USER_ACTIVE", "usuarios", before[0],
             before={"activo": bool(before[5])}, after={"activo": bool(after[5])}, ip=ip
         )
+
+def cambiar_rol(email: str, nuevo_rol: str, actor_user_id=None, ip=None):
+    """
+    Cambia el rol del usuario ('admin' | 'usuario' | lo que uses).
+    Auditoría incluida.
+    """
+    nuevo_rol = (nuevo_rol or "usuario").strip().lower()
+    if nuevo_rol not in ("admin", "usuario", "borrado"):
+        # Permitimos 'borrado' porque el soft delete lo usa.
+        nuevo_rol = "usuario"
+
+    with _get_conn() as conn:
+        before = obtener_usuario_por_email(email)
+        if not before:
+            return False
+        conn.execute("UPDATE usuarios SET rol = ? WHERE email = ?", (nuevo_rol, email))
+        after = obtener_usuario_por_email(email)
+
+    registrar_auditoria(
+        actor_user_id, "UPDATE_ROLE", "usuarios", before[0],
+        before={"email": before[2], "rol": before[4]},
+        after={"email": after[2], "rol": after[4]},
+        ip=ip
+    )
+    return True
 
 def borrar_usuario(email, actor_user_id=None, ip=None, soft=True):
     """
