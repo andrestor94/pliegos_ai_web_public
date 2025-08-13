@@ -20,125 +20,185 @@ def extraer_texto_de_pdf(file) -> str:
             texto_completo += pagina.get_text()
     return texto_completo
 
-def analizar_con_openai(texto: str) -> str:
-    max_chars = 12000
-    partes = [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
-    CRAFT_PROMPT = """
-C – Contexto
-Estás trabajando con una colección de documentos legales, técnicos y administrativos denominados pliegos de licitación, los cuales incluyen múltiples anexos que varían en contenido y extensión. Cada pliego contiene información crítica para la formulación de propuestas por parte de empresas u organizaciones interesadas en contratar con el Estado o entidades privadas. Estos documentos están redactados en un lenguaje jurídico-administrativo, y su análisis requiere un conocimiento detallado de normativas, leyes aplicables, criterios técnicos y estándares de redacción de informes gerenciales.
+# ============================================================
+# NUEVO ANALIZADOR (usa tu C.R.A.F.T. mejorado + GPT-5)
+# ============================================================
 
-R – Rol
-Asumes el rol de un consultor jurídico-administrativo y analista de licitaciones con más de 20 años de experiencia, especializado en la interpretación, evaluación y resumen estructurado de pliegos de licitación complejos. Eres un profesional con conocimientos avanzados en derecho administrativo, contratación pública, redacción técnica y análisis documental. Tu labor es generar informes estandarizados, precisos y verificables que resuman fielmente el contenido completo de los pliegos, sin omitir absolutamente ningún dato relevante y citando con exactitud la fuente original de cada información (anexo, número de página y sección del pliego).
+# Modelo (puedes override con OPENAI_MODEL_ANALISIS=gpt-5)
+MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
 
-A – Acción
-Realiza los siguientes pasos con absoluta rigurosidad:
+# Heurísticas de particionado
+MAX_SINGLE_PASS_CHARS = 45000   # si el texto total es menor, va en una sola pasada
+CHUNK_SIZE = 12000              # tamaño por parte si es muy grande
+TEMPERATURE_ANALISIS = 0.2
+MAX_TOKENS_SALIDA = 4000        # margen para informes extensos
 
-Lee y analiza detalladamente cada uno de los documentos y anexos que conforman el pliego de licitación.
+# -------- Prompt maestro (síntesis final única) --------
+CRAFT_PROMPT_MAESTRO = r"""
+# C.R.A.F.T. — Prompt maestro para leer, analizar y generar un **informe quirúrgico** de pliegos (con múltiples anexos)
 
-Extrae toda la información relevante del contenido, sin omitir ni agregar absolutamente nada que no esté explícitamente mencionado en los documentos.
+## C — Contexto
+Estás trabajando con **pliegos de licitación** (a menudo sanitarios) con **varios anexos**. La info es crítica: fechas, montos, artículos legales, decretos/resoluciones, modalidad, garantías, etc. Debes **leer todo**, **organizar**, **indexar** y producir un **informe técnico-jurídico completo**, claro y trazable.
 
-Organiza la información en un informe estandarizado, siguiendo la estructura definida (ver sección “Formato”).
+**Reglas clave**
+- **Trazabilidad total**: cada dato crítico con **fuente** `(Anexo X[, p. Y])`. Si el material provisto no trae paginación ni IDs, usa un marcador claro: `(Fuente: documento provisto)` o `(Anexo: no especificado)`.
+- **Cero invenciones**: si un dato no aparece o es ambiguo, indicarlo y, si corresponde, proponer **consulta**.
+- **Consistencia y cobertura total**: detectar incongruencias y cubrir oferta, evaluación, adjudicación, perfeccionamiento, ejecución.
+- **Normativa**: citar (ley/decreto/resolución + artículo) con **fuente**.
 
-Para cada dato extraído, incluye de forma obligatoria:
+## R — Rol
+Actúas como equipo experto (Derecho Administrativo, Analista de Licitaciones Sanitarias, Redactor técnico-jurídico). Escritura técnica, sobria y precisa.
 
-El nombre o número del anexo o documento fuente.
+## A — Acción (resumen)
+1) Indexar y normalizar (fechas DD/MM/AAAA, horas HH:MM, precios con 2 decimales).
+2) Extraer **todos** los campos críticos (checklist).
+3) Verificación cruzada: faltantes, ambigüedades, **inconsistencias** (dominios email, horarios, montos, etc.).
+4) Análisis jurídico-operativo (modalidades, garantías, plazos, criterios, preferencias, etc.), citando normativa y fuentes.
+5) **Construir un único informe** (sin repetir secciones), con **tablas** donde corresponda y **citas** en cada dato crítico.
+6) Elaborar **consultas al comitente** para vacíos o ambigüedades.
 
-El número de página exacta donde se encuentra la información.
+## F — Formato (salida esperada, en texto)
+### 1) Resumen Ejecutivo (≤200 palabras)
+Objeto, organismo, proceso/modalidad, fechas clave, riesgos mayores, acciones inmediatas.
 
-La sección o título bajo el cual aparece, si está disponible.
+### 2) Informe Extenso con Trazabilidad
+2.1 Identificación del llamado  
+2.2 Calendario y lugares  
+2.3 Contactos y portales (marcar inconsistencias de dominios si las hay)  
+2.4 Alcance y plazo contractual  
+2.5 Tipología / modalidad (con normativa y artículos citados)  
+2.6 Mantenimiento de oferta y prórroga  
+2.7 Garantías (umbral por UC, %, plazos, formas de constitución)  
+2.8 Presentación de ofertas (soporte, firmas, neto/letras, origen/envases, parcial por renglón, documentación obligatoria: catálogos, LD 13.074, ARBA A-404, CBU BAPRO, AFIP/ARBA/CM, Registro, pago pliego, preferencias art. 22)  
+2.9 Apertura, evaluación y adjudicación (tipo de cambio BNA, comisión, criterios, única oferta, facultades, preferencias)  
+2.10 Subsanación (qué es subsanable vs no)  
+2.11 Perfeccionamiento y modificaciones (plazos, topes, notificaciones y garantías)  
+2.12 Entrega, lugar y plazos (dirección/horarios; inmediato/≤10 días O.C.; logística)  
+2.13 Planilla de cotización y renglones (cantidad; estructura; totales en números y letras)  
+2.14 Muestras (renglones con muestra y facultades del comitente)  
+2.15 Cláusulas adicionales (anticorrupción; facturación/pago, etc.)  
+2.16 Matriz de Cumplimiento (tabla)  
+2.17 Mapa de Anexos (tabla)  
+2.18 Semáforo de Riesgos (alto/medio/bajo)  
+2.19 Checklist operativo para cotizar  
+2.20 Ambigüedades / Inconsistencias y Consultas Sugeridas  
+2.21 Anexos del Informe (índice de trazabilidad; glosario/normativa)
 
-Utiliza un lenguaje técnico, profesional, claro y preciso, adecuado para informes gerenciales.
+### 3) Estándares de calidad
+- **Citas** al lado de cada dato crítico `(Anexo X[, p. Y])`. Si no hay paginación/ID en el insumo, indicarlo.
+- **No repetir** contenido: deduplicar y usar referencias internas.
+- Si hay discordancia unitario vs total, **explicar la regla aplicable** con cita.
 
-No interpretes, supongas ni generes contenido especulativo. Si algo no está presente o es ambiguo, señala “Información no especificada en el pliego” y deja constancia del anexo revisado.
+## T — Público objetivo
+Áreas de Compras/Contrataciones, Farmacia/Abastecimiento, Asesoría Legal y Dirección; proveedores del rubro. Español (AR), precisión jurídica y operatividad.
 
-Asegura la consistencia estructural del informe para que todos los informes generados sigan el mismo orden y estilo, facilitando la comparación y archivo de múltiples licitaciones.
+## Checklist de campos a extraer (mínimo)
+Identificación; Calendario; Contactos/Portales; Alcance/Plazo; Modalidad/Normativa; Mantenimiento de oferta; Garantías; Presentación de ofertas; Apertura/Evaluación/Adjudicación; Subsanación; Perfeccionamiento/Modificaciones; Entrega; Planilla/Renglones; Muestras; Cláusulas adicionales; **Normativa citada**.
 
-Señala si algún documento o anexo está incompleto, ilegible o no corresponde con el índice del pliego.
-
-En caso de que haya incongruencias entre documentos, notifícalas en una sección final de “Observaciones”.
-
-F – Formato
-El informe final debe seguir exactamente esta estructura, en este orden:
-
-📘 Informe Estandarizado de Pliego de Licitación
-
-Datos Generales del Pliego
-- Nombre de la licitación
-- Número de proceso
-- Entidad convocante
-- Objeto de la contratación
-- Fecha de publicación
-- Presupuesto referencial
-- Plazo de ejecución
-
-Requisitos Legales y Administrativos
-- Documentación requerida
-- Condiciones de admisibilidad
-- Requisitos del oferente
-- Garantías exigidas
-
-Condiciones Técnicas del Servicio o Producto
-- Especificaciones técnicas
-- Alcance del servicio
-- Lugar y modo de ejecución
-- Cronograma de actividades
-
-Criterios de Evaluación
-- Métodos y ponderaciones
-- Factores de puntuación
-- Criterios de desempate
-
-Condiciones Contractuales
-- Modelo de contrato
-- Penalidades
-- Condiciones de pago
-- Cláusulas especiales
-
-Consultas, Aclaraciones y Modificaciones
-- Preguntas frecuentes respondidas
-- Aclaraciones emitidas por la entidad
-- Cambios en las bases
-
-Análisis por Anexo
-Anexo 1: [Nombre] — Resumen de contenido y página(s) citadas  
-Anexo 2: [Nombre] — Resumen de contenido y página(s) citadas  
-(…continuar con todos los anexos incluidos…)
-
-Observaciones Generales
-- Incongruencias detectadas
-- Documentos faltantes o ilegibles
-- Advertencias relevantes
-
-Anexos del Informe
-- Tabla de referencias: documento, página y contenido citado
-- Glosario (si es necesario)
-
-T – Público objetivo
-Este informe está dirigido a equipos legales, técnicos y directivos de una empresa que analiza procesos de licitación pública o privada. Los destinatarios son profesionales con experiencia media a avanzada en contratación, pero necesitan un resumen ejecutivo y preciso que les ahorre tiempo y les permita tomar decisiones rápidas. El contenido debe estar en español técnico-jurídico, con redacción profesional, clara y sin ambigüedades.
+## Nota
+- Devuelve **solo el informe final en texto**, perfectamente organizado. **No incluyas JSON**.
+- No incluyas “parte 1/2/3” ni encabezados repetidos por cada segmento del documento.
 """
 
-    resúmenes = []
+# -------- Prompt para "Notas intermedias" por chunk --------
+CRAFT_PROMPT_NOTAS = r"""
+Genera **NOTAS INTERMEDIAS CRAFT** ultra concisas para síntesis posterior, a partir del fragmento dado.
+Reglas:
+- Sin prosa larga ni secciones completas.
+- Usa bullets con etiqueta del tema y la **cita** entre paréntesis.
+- Si no hay paginación/ID disponible, usa `(Fuente: documento provisto)`.
+
+Ejemplos de bullets:
+- [IDENTIFICACION] Organismo: ... (Anexo ?, p. ?)
+- [CALENDARIO] Presentación: DD/MM/AAAA HH:MM — Lugar: ... (Fuente: documento provisto)
+- [GARANTIAS] Mantenimiento 5%; Cumplimiento ≥10% ≤7 días hábiles (Anexo ?, p. ?)
+- [NORMATIVA] Decreto 59/19, art. X (Anexo ?, p. ?)
+- [INCONSISTENCIA] Emails dominio ...gba.gov.ar vs ...pba.gov.ar (Fuente: documento provisto)
+- [MUESTRAS] Renglones 23 y 24 (Anexo ?, p. ?)
+
+No inventes. Si falta, anota: [FALTA] campo X — no consta.
+Devuelve **solo bullets** (sin encabezados ni conclusiones).
+"""
+
+
+def _particionar(texto: str, max_chars: int) -> list[str]:
+    return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
+
+
+def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_tokens=MAX_TOKENS_SALIDA):
+    return client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens
+    )
+
+
+def analizar_con_openai(texto: str) -> str:
+    """
+    Analiza el contenido completo y devuelve **un único informe** en texto,
+    listo para renderizar a PDF. Usa el prompt C.R.A.F.T. mejorado y gpt-5.
+    - Si el texto total es corto: una sola pasada (síntesis final).
+    - Si es largo: notas intermedias por chunk + síntesis final única.
+    """
+    if not texto or not texto.strip():
+        return "No se recibió contenido para analizar."
+
+    # Caso 1: una sola pasada
+    if len(texto) <= MAX_SINGLE_PASS_CHARS:
+        messages = [
+            {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
+            {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve ÚNICAMENTE el informe final (texto), sin preámbulos."}
+        ]
+        try:
+            resp = _llamada_openai(messages)
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            return f"⚠️ Error al generar el análisis: {e}"
+
+    # Caso 2: dos etapas (notas intermedias + síntesis)
+    partes = _particionar(texto, CHUNK_SIZE)
+    notas = []
+
+    # Etapa A: notas intermedias
     for i, parte in enumerate(partes, 1):
-        prompt = (
-            f"{CRAFT_PROMPT}\n\n"
-            f"📄 A continuación se presenta la parte {i} de {len(partes)} del pliego. "
-            f"Realiza el análisis correspondiente de esta sección según el marco anterior:\n\n"
-            f"{parte}"
-        )
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Actúa como consultor experto en licitaciones y análisis jurídico-administrativo."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.3,
-        )
-        resumen_parcial = response.choices[0].message.content.strip()
-        resúmenes.append(resumen_parcial)
+        msg = [
+            {"role": "system", "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
+            {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n=== FRAGMENTO {i}/{len(partes)} ===\n{parte}"}
+        ]
+        try:
+            r = _llamada_openai(msg, max_tokens=2000)
+            notas.append(r.choices[0].message.content.strip())
+        except Exception as e:
+            notas.append(f"[ERROR] No se pudieron generar notas de la parte {i}: {e}")
 
-    return "\n\n".join(resúmenes)
+    notas_integradas = "\n".join(notas)
 
+    # Etapa B: síntesis final única (informe completo)
+    messages_final = [
+        {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
+        {"role": "user", "content": f"""{CRAFT_PROMPT_MAESTRO}
+
+=== NOTAS INTERMEDIAS INTEGRADAS (DEDUPE Y TRAZABILIDAD) ===
+{notas_integradas}
+
+👉 Usa ÚNICAMENTE estas notas para elaborar el **informe final único** (sin repetir encabezados por fragmento, sin meta-comentarios). 
+👉 Devuelve SOLO el informe final en texto."""
+        }
+    ]
+
+    try:
+        resp_final = _llamada_openai(messages_final)
+        return resp_final.choices[0].message.content.strip()
+    except Exception as e:
+        # Si falla la síntesis, al menos devolvemos las notas
+        return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias:\n{notas_integradas}"
+
+
+# ============================================================
+# (NO TOCAR) — Chat IA
+# ============================================================
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
     descripcion_interfaz = f"""
 Sos el asistente inteligente de la plataforma web "Suizo Argentina - Licitaciones IA". Esta plataforma permite:
@@ -185,6 +245,10 @@ El usuario actual es: {usuario}
     except Exception as e:
         return f"⚠️ Error al generar respuesta: {e}"
 
+
+# ============================================================
+# (SIN CAMBIOS) — Generación de PDF
+# ============================================================
 def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     output_dir = os.path.join("generated_pdfs")
     os.makedirs(output_dir, exist_ok=True)
@@ -247,6 +311,7 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
         f.write(buffer.getvalue())
 
     return output_path
+
 
 def dividir_texto(texto, canvas_obj, max_width):
     palabras = texto.split(" ")
