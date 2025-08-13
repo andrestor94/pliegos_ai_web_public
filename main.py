@@ -1,8 +1,9 @@
 import os
 import sqlite3
 import uuid
-from typing import List, Optional
-from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body
+import asyncio
+from typing import List, Optional, Dict, Set
+from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -63,6 +64,99 @@ app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="gene
 templates = Jinja2Templates(directory="templates")
 templates.env.globals['os'] = os
 
+# ================== Alert/WS manager ==================
+class ConnectionManager:
+    """
+    Mantiene websockets por usuario (email). Permite enviar eventos en tiempo real.
+    """
+    def __init__(self):
+        self._by_user: Dict[str, Set[WebSocket]] = {}
+
+    async def connect(self, websocket: WebSocket, email: str):
+        await websocket.accept()
+        email = (email or "").strip() or "anon"
+        self._by_user.setdefault(email, set()).add(websocket)
+
+    def disconnect(self, websocket: WebSocket, email: str):
+        try:
+            if email in self._by_user and websocket in self._by_user[email]:
+                self._by_user[email].remove(websocket)
+                if not self._by_user[email]:
+                    del self._by_user[email]
+        except Exception:
+            pass
+
+    async def send_to_user(self, email: str, payload: dict):
+        if not email:
+            return
+        conns = list(self._by_user.get(email, []))
+        dead = []
+        for ws in conns:
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                dead.append(ws)
+        # Limpieza
+        for ws in dead:
+            self._by_user.get(email, set()).discard(ws)
+
+    async def broadcast(self, payload: dict):
+        for email in list(self._by_user.keys()):
+            await self.send_to_user(email, payload)
+
+manager = ConnectionManager()
+
+def _get_ws_email(websocket: WebSocket) -> str:
+    """
+    Intenta obtener el email de la sesión. Si no, toma query param ?email=.
+    """
+    email = None
+    try:
+        # Disponible gracias a SessionMiddleware
+        email = websocket.scope.get("session", {}).get("usuario")
+    except Exception:
+        email = None
+    if not email:
+        email = websocket.query_params.get("email")
+    return email or "anon"
+
+@app.websocket("/ws")
+async def ws_endpoint(websocket: WebSocket):
+    email = _get_ws_email(websocket)
+    await manager.connect(websocket, email)
+    try:
+        while True:
+            # Mantener la conexión viva (recibir pings del front).
+            _ = await websocket.receive_text()
+            # Si querés responder a pings:
+            try:
+                await websocket.send_json({"event": "ws:pong", "ts": datetime.utcnow().isoformat() + "Z"})
+            except Exception:
+                pass
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, email)
+    except Exception:
+        manager.disconnect(websocket, email)
+
+async def emit_alert(email: str, title: str, body: str = "", extra: dict = None):
+    """
+    Empuja una alerta genérica a un usuario.
+    """
+    payload = {"event": "alert:new", "title": title, "body": body, "ts": datetime.utcnow().isoformat() + "Z"}
+    if extra:
+        payload["extra"] = extra
+    await manager.send_to_user(email, payload)
+
+async def emit_chat_new_message(para_email: str, de_email: str, msg_id: int, preview: str = ""):
+    payload = {
+        "event": "chat:new_message",
+        "from": de_email,
+        "id": msg_id,
+        "preview": preview[:120],
+        "ts": datetime.utcnow().isoformat() + "Z"
+    }
+    await manager.send_to_user(para_email, payload)
+
 # ================== Archivos de chat (adjuntos) ==================
 CHAT_ATTACH_DIR = os.path.join("static", "chat_adjuntos")
 os.makedirs(CHAT_ATTACH_DIR, exist_ok=True)
@@ -93,12 +187,12 @@ async def _save_upload_stream(upload: UploadFile, dst_path: str) -> int:
     """Guarda el UploadFile en disco por chunks. Devuelve tamaño en bytes."""
     size = 0
     with open(dst_path, "wb") as f:
-      while True:
-          chunk = await upload.read(1024 * 1024)  # 1MB
-          if not chunk:
-              break
-          size += len(chunk)
-          f.write(chunk)
+        while True:
+            chunk = await upload.read(1024 * 1024)  # 1MB
+            if not chunk:
+                break
+            size += len(chunk)
+            f.write(chunk)
     await upload.seek(0)
     return size
 
@@ -174,12 +268,11 @@ async def ver_historial():
     return JSONResponse(obtener_historial())
 
 # 🔁 Alias de vista para el botón de la barra lateral
-#    Redirige a la home con ?goto=historial para que el front haga scroll suave.
 @app.get("/historia")
 async def alias_historia():
     return RedirectResponse("/?goto=historial", status_code=307)
 
-# 🔁 Alias para “nuevo análisis” (compatibilidad con enlaces antiguos)
+# 🔁 Alias para “nuevo análisis”
 @app.get("/analisis")
 @app.get("/analisis/nuevo")
 @app.get("/report")
@@ -345,7 +438,7 @@ async def crear_usuario_api(request: Request):
         nombre = data.get("nombre")
         email = data.get("email")
         rol = data.get("rol")
-        if not nombre or not email or not rol:
+        if not nombre o r not email or not rol:
             return JSONResponse({"error": "Faltan campos: nombre, email, rol"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
         agregar_usuario(nombre, email, "1234", rol, actor_user_id=actor_user_id, ip=ip)
@@ -366,7 +459,6 @@ async def blanquear_password(request: Request):
         return JSONResponse({"mensaje": "Contraseña blanqueada a 1234"})
     except Exception as e:
         print("❌ Error blanquear-password:", repr(e))
-        # 🔧 fix de f-string
         return JSONResponse({"error": f"Error al blanquear: {e}"}, status_code=400)
 
 @app.post("/admin/desactivar-usuario")
@@ -444,11 +536,6 @@ async def chat_openai(request: Request):
 # ================== API puente para el drawer (formato reply) ==============
 @app.post("/api/chat-openai")
 async def api_chat_openai(request: Request, payload: dict = Body(...)):
-    """
-    Mantiene /chat-openai intacto y expone un endpoint con el formato que
-    espera el frontend del drawer: {"reply": "..."}.
-    Usa el mismo prompt de utils.responder_chat_openai.
-    """
     mensaje = (payload or {}).get("message", "").strip()
     usuario_actual = request.session.get("usuario", "Desconocido")
 
@@ -491,7 +578,6 @@ async def api_chat_openai(request: Request, payload: dict = Body(...)):
 async def chat_openai_embed(request: Request):
     if not request.session.get("usuario"):
         return HTMLResponse("<div style='padding:12px'>Iniciá sesión para usar el chat.</div>")
-    # UI mínima; podés reemplazarla por tu chat real
     html = """
     <!doctype html><html><head>
     <meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
@@ -560,6 +646,8 @@ async def chat_enviar(request: Request):
     try:
         msg_id = enviar_mensaje(de_email=de, para_email=para, texto=texto,
                                 actor_user_id=actor_user_id, ip=ip)
+        # 🔔 Push en tiempo real para el receptor
+        await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=texto)
         return JSONResponse({"ok": True, "id": msg_id})
     except Exception as e:
         print("❌ Error chat_enviar:", repr(e))
@@ -623,6 +711,8 @@ async def chat_enviar_archivos(
             print("❌ Error guardar_adjunto:", repr(e))
             # Continuamos; se podría informar un warning al front.
 
+    # 🔔 Push en tiempo real para el receptor
+    await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=(texto or "[Adjuntos]"))
     return JSONResponse({"ok": True, "id": msg_id})
 
 # ---- Compat: enviar mensaje con 1 archivo (reusa la lógica nueva) ---------
@@ -824,11 +914,22 @@ def _event_row_to_dict(r: sqlite3.Row):
     }
 
 def _notify(user: str, titulo: str, cuerpo: str = ""):
+    """
+    Síncrono (compat) — guarda en BD.
+    Para push en vivo, usar notify_async().
+    """
     with cal_conn() as c:
         c.execute(
             "INSERT INTO notificaciones(user, titulo, cuerpo, created_at, leida) VALUES(?,?,?,?,0)",
             (user or "Desconocido", titulo, cuerpo, _now_iso())
         )
+
+async def notify_async(user: str, titulo: str, cuerpo: str = ""):
+    """
+    Inserta la notificación en BD y además emite un evento en tiempo real.
+    """
+    _notify(user, titulo, cuerpo)
+    await emit_alert(user, titulo, cuerpo)
 
 @app.get("/calendario", response_class=HTMLResponse)
 async def calendario_view(request: Request):
@@ -871,7 +972,7 @@ async def cal_create(request: Request):
             INSERT INTO eventos(id,title,description,start,end,all_day,color,created_by,created_at,updated_at)
             VALUES(?,?,?,?,?,?,?,?,?,?)
         """, (evt_id,title,desc,start,end,all_day,color,created_by,now,now))
-    _notify(created_by, "Evento creado", f"{title} • {start}{(' → '+end) if end else ''}")
+    await notify_async(created_by, "Evento creado", f"{title} • {start}{(' → '+end) if end else ''}")
     return {
         "id": evt_id, "title": title, "description": desc, "start": start, "end": end,
         "allDay": bool(all_day), "color": color
@@ -883,7 +984,6 @@ async def cal_update(evt_id: str, request: Request):
         return JSONResponse({"error":"No autenticado"}, status_code=401)
     data = await request.json()
 
-    # Normalizar fechas si vienen como objeto serializado por FullCalendar (tomamos ISO si es string)
     def to_iso(v):
         if v is None:
             return None
@@ -914,7 +1014,7 @@ async def cal_update(evt_id: str, request: Request):
         if cur.rowcount == 0:
             return JSONResponse({"error":"Evento no encontrado"}, status_code=404)
 
-    _notify(request.session.get("usuario","Desconocido"), "Evento actualizado", f"ID: {evt_id}")
+    await notify_async(request.session.get("usuario","Desconocido"), "Evento actualizado", f"ID: {evt_id}")
     return {"ok": True}
 
 @app.delete("/calendario/eventos/{evt_id}")
@@ -925,7 +1025,7 @@ async def cal_delete(evt_id: str, request: Request):
         cur = c.execute("DELETE FROM eventos WHERE id=?", (evt_id,))
         if cur.rowcount == 0:
             return JSONResponse({"error":"Evento no encontrado"}, status_code=404)
-    _notify(request.session.get("usuario","Desconocido"), "Evento eliminado", f"ID: {evt_id}")
+    await notify_async(request.session.get("usuario","Desconocido"), "Evento eliminado", f"ID: {evt_id}")
     return {"ok": True}
 
 # ================== Notificaciones mínimas usadas por calendario.html ======
