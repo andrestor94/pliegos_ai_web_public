@@ -3,7 +3,7 @@ import sqlite3
 import uuid
 import asyncio
 from typing import List, Optional, Dict, Set
-from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body, WebSocket, WebSocketDisconnect, Depends, status
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -40,7 +40,9 @@ from database import (
     # Hilos ocultos
     ocultar_hilo, restaurar_hilo,
     # Adjuntos (chat)
-    guardar_adjunto
+    guardar_adjunto,
+    # Roles helpers
+    es_admin
 )
 
 # ORM (audit_logs)
@@ -63,6 +65,32 @@ app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="gene
 
 templates = Jinja2Templates(directory="templates")
 templates.env.globals['os'] = os
+
+# ================== Guardas/Dependencias de auth/roles ==================
+def require_auth(request: Request):
+    """Obliga a tener sesión iniciada."""
+    if not request.session.get("usuario"):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
+
+def require_admin(request: Request):
+    """
+    Requiere rol admin.
+    Valida primero contra sesión y, por robustez, revalida en BD si la sesión dice que no.
+    """
+    email = request.session.get("usuario")
+    if not email:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
+    rol = request.session.get("rol")
+    if rol == "admin":
+        return
+    # Fallback: por si el rol cambió en BD y la sesión quedó vieja
+    try:
+        if es_admin(email):
+            request.session["rol"] = "admin"  # refrescamos sesión
+            return
+    except Exception:
+        pass
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admins")
 
 # ================== Alert/WS manager ==================
 class ConnectionManager:
@@ -420,25 +448,22 @@ async def cambiar_password_submit(request: Request,
         "error": ""
     })
 
-# ================== Admin ==================
-@app.get("/admin", response_class=HTMLResponse)
+# ================== Admin (todas las rutas protegidas) ==================
+@app.get("/admin", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def vista_admin(request: Request):
-    if request.session.get("rol") != "admin":
-        return RedirectResponse("/")
     return templates.TemplateResponse("admin.html", {"request": request})
 
-@app.get("/admin/usuarios")
+@app.get("/admin/usuarios", dependencies=[Depends(require_admin)])
 async def listar_usuarios_api():
     return JSONResponse(listar_usuarios())
 
-@app.post("/admin/crear-usuario")
+@app.post("/admin/crear-usuario", dependencies=[Depends(require_admin)])
 async def crear_usuario_api(request: Request):
     try:
         data = await request.json()
         nombre = data.get("nombre")
         email = data.get("email")
         rol = data.get("rol")
-        # 🔧 FIX: 'or' (no 'o r')
         if not nombre or not email or not rol:
             return JSONResponse({"error": "Faltan campos: nombre, email, rol"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
@@ -448,7 +473,7 @@ async def crear_usuario_api(request: Request):
         print("❌ Error crear-usuario:", repr(e))
         return JSONResponse({"error": f"Error al crear usuario: {e}"}, status_code=400)
 
-@app.post("/admin/blanquear-password")
+@app.post("/admin/blanquear-password", dependencies=[Depends(require_admin)])
 async def blanquear_password(request: Request):
     try:
         data = await request.json()
@@ -462,7 +487,7 @@ async def blanquear_password(request: Request):
         print("❌ Error blanquear-password:", repr(e))
         return JSONResponse({"error": f"Error al blanquear: {e}"}, status_code=400)
 
-@app.post("/admin/desactivar-usuario")
+@app.post("/admin/desactivar-usuario", dependencies=[Depends(require_admin)])
 async def desactivar_usuario(request: Request):
     data = await request.json()
     email = data.get("email")
@@ -472,7 +497,7 @@ async def desactivar_usuario(request: Request):
     cambiar_estado_usuario(email, 0, actor_user_id=actor_user_id, ip=ip)
     return JSONResponse({"mensaje": "Usuario desactivado"})
 
-@app.post("/admin/activar-usuario")
+@app.post("/admin/activar-usuario", dependencies=[Depends(require_admin)])
 async def activar_usuario(request: Request):
     data = await request.json()
     email = data.get("email")
@@ -482,11 +507,9 @@ async def activar_usuario(request: Request):
     cambiar_estado_usuario(email, 1, actor_user_id=actor_user_id, ip=ip)
     return JSONResponse({"mensaje": "Usuario activado"})
 
-@app.post("/admin/eliminar-usuario")
+@app.post("/admin/eliminar-usuario", dependencies=[Depends(require_admin)])
 async def eliminar_usuario(request: Request):
     try:
-        if request.session.get("rol") != "admin":
-            return JSONResponse({"error": "Acceso denegado"}, status_code=403)
         data = await request.json()
         email = data.get("email")
         if not email:
@@ -574,78 +597,60 @@ async def api_chat_openai(request: Request, payload: dict = Body(...)):
     respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
     return JSONResponse({"reply": respuesta})
 
-# Mini vista embebida para el widget del topbar/FAB
+# ===== Mini vista embebida para el widget del topbar/FAB (Enter envía) =====
 @app.get("/chat_openai_embed", response_class=HTMLResponse)
 async def chat_openai_embed(request: Request):
     if not request.session.get("usuario"):
         return HTMLResponse("<div style='padding:12px'>Iniciá sesión para usar el chat.</div>")
-    # 🔧 Mejora: usar <textarea> y enviar con Enter (Shift+Enter = salto de línea)
     html = """
     <!doctype html><html><head>
     <meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
     <style>
-      #t{ resize:none; max-height:140px; }
+      #t{ resize:none; min-height:42px; max-height:150px; }
     </style>
     </head><body class="p-2" style="background:transparent">
       <div id="log" class="mb-2" style="height:410px; overflow:auto; background:#f6f8fb; border-radius:12px; padding:8px;"></div>
       <form id="f" class="d-flex gap-2">
-        <textarea id="t" class="form-control" rows="1" placeholder="Escribe tu mensaje..." autocomplete="off" autofocus></textarea>
-        <button type="submit" id="sendBtn" class="btn btn-primary">Enviar</button>
+        <textarea id="t" class="form-control" placeholder="Escribe tu mensaje..." autocomplete="off" autofocus></textarea>
+        <button id="send" type="submit" class="btn btn-primary">Enviar</button>
       </form>
       <script>
-        const log   = document.getElementById('log');
-        const form  = document.getElementById('f');
-        const input = document.getElementById('t');
-        const btn   = document.getElementById('sendBtn');
+        const log = document.getElementById('log');
+        const form = document.getElementById('f');
+        const ta = document.getElementById('t');
 
-        function add(b){
-          const p=document.createElement('div');
-          p.innerHTML=b;
-          log.appendChild(p);
-          log.scrollTop=log.scrollHeight;
-        }
+        function esc(s){ return (s||'').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+        function add(b){ const p=document.createElement('div'); p.innerHTML=b; log.appendChild(p); log.scrollTop=log.scrollHeight; }
 
-        function autosize(){
-          input.style.height = 'auto';
-          input.style.height = Math.min(140, input.scrollHeight) + 'px';
-        }
-        input.addEventListener('input', autosize);
-        autosize();
+        // Auto-altura del textarea
+        function autosize(){ ta.style.height='auto'; ta.style.height = Math.min(ta.scrollHeight, 150) + 'px'; }
+        ta.addEventListener('input', autosize); autosize();
 
-        async function send(){
-          const v = input.value.trim();
+        // Enter = enviar | Shift+Enter = salto de línea
+        ta.addEventListener('keydown', (e)=>{
+          if(e.key === 'Enter' && !e.shiftKey){
+            e.preventDefault();          // evita insertar salto y submit duplicado
+            form.requestSubmit();        // dispara un único submit
+          }
+        });
+
+        form.addEventListener('submit', async (e)=>{
+          e.preventDefault();
+          const v = ta.value.trim();
           if(!v) return;
-          add('<div><b>Tú:</b> '+v.replace(/</g,'&lt;')+'</div>');
-          input.value='';
-          autosize();
-          btn.disabled = true;
+          add('<div><b>Tú:</b> '+esc(v)+'</div>');
+          ta.value=''; autosize();
           try{
             const r = await fetch('/chat-openai', {
               method:'POST',
               headers:{'Content-Type':'application/json'},
               body: JSON.stringify({mensaje:v})
             });
-            const j = await r.json();
+            const j = await r.json().catch(()=>({}));
             add('<div class="mt-1"><b>IA:</b> '+(j.respuesta||'')+'</div>');
-          }catch(e){
+          }catch(_){
             add('<div class="text-danger mt-1"><b>Error:</b> No se pudo enviar.</div>');
-          }finally{
-            btn.disabled = false;
-            input.focus();
-          }
-        }
-
-        form.addEventListener('submit', (e)=>{
-          e.preventDefault();
-          send();
-        });
-
-        // ✅ Enter para enviar; Shift+Enter inserta salto de línea
-        input.addEventListener('keydown', (e)=>{
-          if(e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing){
-            e.preventDefault(); // evita salto de línea
-            send();
           }
         });
       </script>
@@ -666,7 +671,7 @@ async def api_buscar_usuarios(request: Request, term: str = "", limit: int = 8):
     """Autocompletar de usuarios por nombre/email."""
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
-    term = (term or "").strip()   # 🔧 FIX: .strip() (no .trim())
+    term = (term or "").strip()
     if not term:
         return {"items": []}
     try:
@@ -759,7 +764,7 @@ async def chat_enviar_archivos(
             # Continuamos; se podría informar un warning al front.
 
     # 🔔 Push en tiempo real para el receptor
-    await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=(texto o "[Adjuntos]"))
+    await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=(texto or "[Adjuntos]"))
     return JSONResponse({"ok": True, "id": msg_id})
 
 # ---- Compat: enviar mensaje con 1 archivo (reusa la lógica nueva) ---------
@@ -897,10 +902,8 @@ async def chat_abrir(request: Request):
         return JSONResponse({"error": "No se pudo abrir el hilo"}, status_code=500)
 
 # ================== Auditoría (vista) ==================
-@app.get("/auditoria", response_class=HTMLResponse)
+@app.get("/auditoria", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def ver_auditoria(request: Request):
-    if request.session.get("rol") != "admin":
-        return RedirectResponse("/")
     logs = obtener_auditoria()
     return templates.TemplateResponse("auditoria.html", {
         "request": request,
