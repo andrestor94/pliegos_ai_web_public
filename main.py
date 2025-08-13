@@ -302,6 +302,7 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
         request.session["usuario"] = usuario[2]   # email
         request.session["email"] = usuario[2]
         request.session["rol"] = usuario[4]
+        request.session["nombre"] = usuario[1] or usuario[2]  # 👈 nombre en sesión para el front
         return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse("login.html", {"request": request, "error": "Credenciales incorrectas"})
 
@@ -372,7 +373,7 @@ async def usuario_actual(request: Request):
 
     row = obtener_usuario_por_email(email) if email else None
     # (id, nombre, email, password, rol, ...)
-    nombre = row[1] if row else (email or "Desconocido")
+    nombre = (row[1] if row else None) or request.session.get("nombre") or (email or "Desconocido")
 
     # Buscar avatar existente
     avatar_url = ""
@@ -387,7 +388,7 @@ async def usuario_actual(request: Request):
     return {
         "usuario": email or "Desconocido",
         "rol": rol,
-        "nombre": nombre or (email or "Desconocido"),
+        "nombre": nombre,
         "avatar_url": avatar_url  # '' si no hay
     }
 

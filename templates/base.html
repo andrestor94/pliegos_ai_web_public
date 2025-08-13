@@ -33,7 +33,7 @@
       --pill:#f0f3ff; --radius:22px; --shadow:0 12px 32px rgba(20,15,55,.16);
       --bg-body:#f7f8ff;
       --sidebar-grad-a:#0f172a; --sidebar-grad-b:#0b1220;
-      --chip-bg: #f6f7fe;
+      --chip-bg:#f6f7fe;
     }
     /* Modo oscuro global (forzado por atributo) */
     [data-theme="dark"]{
@@ -121,7 +121,7 @@
 
     /* Brand: sólo logo + “Licitaciones IA” */
     .brand{ display:flex; align-items:center; gap:14px; padding:8px 14px; border-radius:16px; border:1px solid var(--border); background:#fff; }
-    .brand img{ height:34px; width:auto; object-fit:contain; } /* ↑ logo más grande */
+    .brand img{ height:34px; width:auto; object-fit:contain; }
     .brand .brand-title{ font-weight:700; letter-spacing:.2px; }
     [data-theme="dark"] .brand{ background:#0b1220; }
 
@@ -129,7 +129,7 @@
     .pill{ position:relative; border-radius:999px; padding:.55rem 1rem; border:1px solid var(--border); background:var(--pill); color:var(--ink); font-weight:500; text-decoration:none; }
     .pill-grad{ border:none; color:#fff; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); box-shadow:0 12px 26px rgba(139,92,246,.32); }
     .pill-icon{ display:inline-flex; align-items:center; gap:.5rem; }
-    .icon-btn{ position:relative; width:44px; height:44px; display:grid; place-items:center; border-radius:14px; border:1px solid var(--border); background:#fff; color:#var(--ink); }
+    .icon-btn{ position:relative; width:44px; height:44px; display:grid; place-items:center; border-radius:14px; border:1px solid var(--border); background:#fff; color:var(--ink); }
     [data-theme="dark"] .icon-btn{ background:#0b1220; color:#e5e7eb; border-color:var(--border); }
     .icon-badge{
       position:absolute; top:-4px; right:-4px; min-width:18px; height:18px; padding:0 4px;
@@ -214,9 +214,7 @@
     .toast-header{ border-bottom:none; }
 
     /* ===== LOGIN / AUTH MODE ===== */
-    body[data-auth="1"] .app{
-      grid-template-columns: 1fr; grid-template-rows: 1fr; grid-template-areas: "content";
-    }
+    body[data-auth="1"] .app{ grid-template-columns: 1fr; grid-template-rows: 1fr; grid-template-areas: "content"; }
     body[data-auth="1"] .sidebar, body[data-auth="1"] .header{ display:none !important; }
     body[data-auth="1"] .content{
       display:grid; place-items:center; padding:24px;
@@ -706,10 +704,10 @@
       }
     });
 
-    /* Toast helper */
+    /* Toast helper (fix de paréntesis) */
     function showToast({title='Aviso', body='', icon='info', delay=3200}={}){
       const cont=document.getElementById('toastContainer'); if(!cont) return;
-      const esc=(s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]}));
+      const esc=(s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
       const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
       el.innerHTML=`<div class="toast-header">
         <i class="bi bi-${esc(icon)} me-1"></i><strong class="me-auto">${esc(title)}</strong>
