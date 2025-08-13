@@ -586,37 +586,50 @@ async def chat_openai_embed(request: Request):
     </head><body class="p-2" style="background:transparent">
       <div id="log" class="mb-2" style="height:410px; overflow:auto; background:#f6f8fb; border-radius:12px; padding:8px;"></div>
       <form id="f" class="d-flex gap-2">
-        <input id="t" class="form-control" placeholder="Escribe tu pregunta..." autocomplete="off">
+        <input id="t" class="form-control" placeholder="Escribe tu pregunta..." autocomplete="off" autofocus>
         <button type="submit" class="btn btn-primary">Enviar</button>
       </form>
       <script>
-        const log = document.getElementById('log');
-        const form = document.getElementById('f');
+        const log   = document.getElementById('log');
+        const form  = document.getElementById('f');
         const input = document.getElementById('t');
 
-        function add(b){ const p=document.createElement('div'); p.innerHTML=b; log.appendChild(p); log.scrollTop=log.scrollHeight; }
+        function add(b){
+          const p=document.createElement('div');
+          p.innerHTML=b;
+          log.appendChild(p);
+          log.scrollTop=log.scrollHeight;
+        }
 
-        // ⏎ Enter para enviar (Shift+Enter = salto de línea)
-        input.addEventListener('keydown', (e)=>{
-          if(e.key === 'Enter' && !e.shiftKey){
-            e.preventDefault();
-            form.requestSubmit();   // dispara el submit del form
-          }
-        });
-
-        form.addEventListener('submit', async (e)=>{
-          e.preventDefault();
+        async function send(){
           const v = input.value.trim();
           if(!v) return;
           add('<div><b>Tú:</b> '+v+'</div>');
           input.value='';
-          const r = await fetch('/chat-openai', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({mensaje:v})
-          });
-          const j = await r.json();
-          add('<div class="mt-1"><b>IA:</b> '+(j.respuesta||'')+'</div>');
+          try{
+            const r = await fetch('/chat-openai', {
+              method:'POST',
+              headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({mensaje:v})
+            });
+            const j = await r.json();
+            add('<div class="mt-1"><b>IA:</b> '+(j.respuesta||'')+'</div>');
+          }catch(e){
+            add('<div class="text-danger mt-1"><b>Error:</b> No se pudo enviar.</div>');
+          }
+        }
+
+        form.addEventListener('submit', (e)=>{
+          e.preventDefault();
+          send();
+        });
+
+        // ✅ Enter para enviar (independiente del submit del form)
+        input.addEventListener('keydown', (e)=>{
+          if(e.key === 'Enter'){
+            e.preventDefault(); // evita submit duplicado / propagación
+            send();
+          }
         });
       </script>
     </body></html>
@@ -636,7 +649,7 @@ async def api_buscar_usuarios(request: Request, term: str = "", limit: int = 8):
     """Autocompletar de usuarios por nombre/email."""
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
-    term = (term or "").strip()
+    term = (term or "").trim()
     if not term:
         return {"items": []}
     try:
@@ -1011,7 +1024,7 @@ async def cal_update(evt_id: str, request: Request):
     color = data.get("color")
     start = to_iso(data.get("start"))
     end   = to_iso(data.get("end"))
-    all_day = data.get("allDay")
+    all_day = data.get("AllDay") if "AllDay" in data else data.get("allDay")
 
     sets, vals = [], []
     if title is not None: sets.append("title=?"); vals.append(title)
