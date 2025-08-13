@@ -33,7 +33,7 @@
   .chat-auto-li.active, .chat-auto-li:hover{ background:var(--bg-soft); }
 
   .chat-hilos-list { overflow:auto; }
-  .chat-hilo-item { padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; display:flex; gap:8px; align-items:center; }
+  .chat-hilo-item { position:relative; padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; display:flex; gap:8px; align-items:center; }
   .chat-hilo-item:hover{ background:var(--bg-soft); }
   .chat-hilo-item.active{ background:var(--bg-strong); }
   .chat-hilo-item .info { flex:1; min-width:0; }
@@ -41,6 +41,17 @@
   .chat-hilo-item .fecha{ font-size:12px; color:var(--text-2); }
   .chat-hilo-item .btn-del{ border:none; background:transparent; font-size:18px; line-height:1; opacity:.7; }
   .chat-hilo-item .btn-del:hover{ opacity:1; }
+
+  /* Badge de no leídos por conversación */
+  .hilo-badge{
+    position:relative;
+    min-width:20px; height:20px; padding:0 6px;
+    border-radius:999px; background:#ef4444; color:#fff;
+    font-size:12px; line-height:20px; text-align:center;
+    margin-left:6px; user-select:none;
+    display:inline-block;
+  }
+  .hilo-badge.hidden{ display:none; }
 
   /* Ventana de chat */
   .chat-window{ display:flex; flex-direction:column; }
@@ -136,7 +147,7 @@
   function isImage(name){ return /\.(png|jpg|jpeg|gif|webp)$/i.test(name); }
 
   /* ===== Estado ===== */
-  let yo = null, con = null, refresco = null, refrescoNoLeidos = null;
+  let yo = null, con = null, refresco = null, refrescoNoLeidos = null, refrescoHilos = null;
   let selectedFiles = [];
 
   /* ===== Sidebar: hilos ===== */
@@ -151,9 +162,13 @@
       const div = document.createElement('div');
       div.className = 'chat-hilo-item';
       div.dataset.email = h.con;
+      const unread = Number(h?.no_leidos || 0);
       div.innerHTML = `
         <div class="info">
-          <div class="nombre">${escapeHtml(h.con)}</div>
+          <div class="nombre">
+            ${escapeHtml(h.con)}
+            <span class="hilo-badge ${unread>0?'':'hidden'}" aria-label="${unread} mensajes no leídos">${unread>99?'99+':unread}</span>
+          </div>
           <div class="fecha">${h.ultima_fecha || ''}</div>
         </div>
         <button class="btn-del" title="Eliminar chat (ocultar)" aria-label="Eliminar">🗑</button>
@@ -242,6 +257,7 @@
       renderMensajes(data.mensajes || []);
       await marcarLeidos(con);
       await cargarNoLeidos();
+      await cargarHilos(); // refresca badges por hilo al leer
     }catch(e){ console.error(e); alert('No se pudieron cargar los mensajes.'); }
   }
 
@@ -354,10 +370,22 @@
       badge.classList.toggle('bg-danger', n > 0);
       badge.classList.toggle('bg-secondary', n === 0);
       document.title = (n > 0 ? `(${n}) ` : '') + 'Chat interno';
+
+      // Actualiza el badge global del header si existe
+      const chatBadge = parent?.document?.getElementById?.('chatBadge') || document.getElementById('chatBadge');
+      if(chatBadge){
+        chatBadge.textContent = n>99?'99+':String(n);
+        chatBadge.style.display = n>0 ? 'inline-block' : 'none';
+      }
     }catch(e){}
   }
   function iniciarAutoRefresh(){ if(refresco) clearInterval(refresco); refresco = setInterval(cargarMensajes, 5000); }
-  function iniciarAutoNoLeidos(){ if(refrescoNoLeidos) clearInterval(refrescoNoLeidos); refrescoNoLeidos = setInterval(cargarNoLeidos, 10000); }
+  function iniciarAutoNoLeidos(){
+    if(refrescoNoLeidos) clearInterval(refrescoNoLeidos);
+    refrescoNoLeidos = setInterval(()=>{ cargarNoLeidos(); }, 10000);
+    if(refrescoHilos) clearInterval(refrescoHilos);
+    refrescoHilos = setInterval(()=>{ cargarHilos(); }, 12000); // refresca badges por conversación
+  }
 
   /* ===== Boot ===== */
   (async ()=>{

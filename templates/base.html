@@ -124,13 +124,19 @@
     [data-theme="dark"] .brand{ background:#0b1220; }
 
     .header-actions{ margin-left:auto; display:flex; align-items:center; gap:10px; }
-    .pill{ border-radius:999px; padding:.55rem 1rem; border:1px solid var(--border); background:var(--pill); color:var(--ink); font-weight:500; text-decoration:none; }
+    .pill{ position:relative; border-radius:999px; padding:.55rem 1rem; border:1px solid var(--border); background:var(--pill); color:var(--ink); font-weight:500; text-decoration:none; }
     .pill-grad{ border:none; color:#fff; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); box-shadow:0 12px 26px rgba(139,92,246,.32); }
     .pill-icon{ display:inline-flex; align-items:center; gap:.5rem; }
     .icon-btn{ position:relative; width:44px; height:44px; display:grid; place-items:center; border-radius:14px; border:1px solid var(--border); background:#fff; color:var(--ink); }
     [data-theme="dark"] .icon-btn{ background:#0b1220; color:#e5e7eb; border-color:var(--border); }
     .icon-badge{
       position:absolute; top:-4px; right:-4px; min-width:18px; height:18px; padding:0 4px;
+      border-radius:999px; background:#ef4444; color:#fff; font-size:11px; line-height:18px; text-align:center;
+      display:none;
+    }
+    /* Badge para “Chat interno” */
+    .chat-badge{
+      position:absolute; top:-6px; right:-6px; min-width:18px; height:18px; padding:0 4px;
       border-radius:999px; background:#ef4444; color:#fff; font-size:11px; line-height:18px; text-align:center;
       display:none;
     }
@@ -366,17 +372,24 @@
             <i id="icoTheme" class="bi bi-circle-half"></i>
           </button>
 
-          <!-- NUEVO: Usuarios activos -->
+          <!-- Usuarios activos -->
           <button class="icon-btn" id="btnPresence" title="Usuarios activos">
             <i class="bi bi-people"></i>
             <span id="presenceBadge" class="icon-badge">0</span>
           </button>
 
+          <!-- Notificaciones -->
           <button class="icon-btn" id="btnNotif" title="Notificaciones">
             <i class="bi bi-bell"></i>
             <span id="notifBadge" class="icon-badge">0</span>
           </button>
-          <a class="pill pill-icon" href="/chat"><i class="bi bi-chat-dots"></i> Chat interno</a>
+
+          <!-- Chat interno con badge de no leídos -->
+          <a class="pill pill-icon" href="/chat" id="btnChat">
+            <i class="bi bi-chat-dots"></i> Chat interno
+            <span id="chatBadge" class="chat-badge">0</span>
+          </a>
+
           <button class="pill pill-grad pill-icon" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Chat OpenAI</button>
           <span id="usuario-nombre" class="ms-1 small muted"></span>
         </div>
@@ -474,7 +487,7 @@
       }catch(_){}
     });
 
-    /* ===== Chat IA ===== */
+    /* ===== Chat IA (drawer) ===== */
     const CHAT_STATE_KEY = 'chatboxState';
     const chatIa = document.getElementById('chatIa');
     const chatIaOverlay = document.getElementById('chatIaOverlay');
@@ -506,7 +519,6 @@
 
     if(localStorage.getItem(CHAT_STATE_KEY)==='open'){ openChatIA(false); }
 
-    // Autoscroll helper
     function scrollToBottom(smooth=true){
       try{ chatIaBody.scrollTo({ top: chatIaBody.scrollHeight, behavior: smooth ? 'smooth' : 'auto' }); }
       catch(_){ chatIaBody.scrollTop = chatIaBody.scrollHeight; }
@@ -550,7 +562,6 @@
       if(typeof fallbackText === 'string' && fallbackText.trim()) return fallbackText.trim();
       return '';
     }
-
     function appendMsg(who, text){
       const el = document.createElement('div');
       el.className = 'msg ' + (who==='ai'?'ai':'me');
@@ -578,7 +589,7 @@
     }
     function escapeHTML(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-    /* Link activo */
+    /* Link activo sidebar */
     (function markActive(){
       const path=location.pathname;
       document.querySelectorAll('.side-btn[data-match]').forEach(a=>{
@@ -588,7 +599,7 @@
       });
     })();
 
-    /* Historial: si ya estamos en "/" evitamos recarga y hacemos scroll */
+    /* Historial en home */
     document.getElementById('btnHistorial')?.addEventListener('click', (e)=>{
       if(location.pathname === '/'){
         e.preventDefault();
@@ -615,12 +626,11 @@
     getUsuario();
     refreshNotif();
 
-    /* ====== Tema global: claro / oscuro / sistema ====== */
+    /* ====== Tema global ====== */
     const btnTheme = document.getElementById('btnTheme');
     const icoTheme = document.getElementById('icoTheme');
-
     function getTheme(){ try{ return localStorage.getItem('theme'); }catch(_){ return null; } }
-    function setTheme(val){ // 'light' | 'dark' | null (sistema)
+    function setTheme(val){
       try{
         if(val){ localStorage.setItem('theme', val); document.documentElement.setAttribute('data-theme', val); }
         else{ localStorage.removeItem('theme'); document.documentElement.removeAttribute('data-theme'); }
@@ -632,10 +642,7 @@
       const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
       if(t === 'dark'){ icoTheme.className='bi bi-moon-stars'; btnTheme.title='Tema: Oscuro'; }
       else if(t === 'light'){ icoTheme.className='bi bi-brightness-high'; btnTheme.title='Tema: Claro'; }
-      else {
-        icoTheme.className='bi bi-circle-half';
-        btnTheme.title = 'Tema: Sistema (' + (prefersDark?'Oscuro':'Claro') + ')';
-      }
+      else { icoTheme.className='bi bi-circle-half'; btnTheme.title = 'Tema: Sistema (' + (prefersDark?'Oscuro':'Claro') + ')'; }
     }
     btnTheme?.addEventListener('click', ()=>{
       const t = getTheme();
@@ -672,13 +679,29 @@
       }catch(_){}
     }
 
-    // Kickoff (solo si no es pantalla de login)
     if(!isAuthScreen){
       presencePing();
       refreshPresence();
-      setInterval(presencePing, 30000);    // marca presencia cada 30s
-      setInterval(refreshPresence, 15000); // refresca contador cada 15s
+      setInterval(presencePing, 30000);
+      setInterval(refreshPresence, 15000);
     }
+
+    /* ====== NO LEÍDOS DEL CHAT (badge global) ====== */
+    const chatBadge = document.getElementById('chatBadge');
+    async function refreshChatUnread(){
+      try{
+        const r = await fetch('/chat/no-leidos');
+        if(!r.ok) throw 0;
+        const j = await r.json();
+        const n = Number(j?.no_leidos||0);
+        chatBadge.textContent = n>99 ? '99+' : String(n);
+        chatBadge.style.display = n>0 ? 'inline-block' : 'none';
+      }catch(_){
+        chatBadge.style.display='none';
+      }
+    }
+    refreshChatUnread();
+    setInterval(refreshChatUnread, 15000);
   </script>
 
   {% block extra_scripts %}{% endblock %}
