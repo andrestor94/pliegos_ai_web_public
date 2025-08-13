@@ -1,3 +1,4 @@
+# utils.py
 import fitz  # PyMuPDF
 import io
 import os
@@ -15,12 +16,20 @@ from dotenv import load_dotenv
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# ============================================================
+# Utilidades de E/S
+# ============================================================
+
 def extraer_texto_de_pdf(file) -> str:
+    """Lee un PDF (file-like con atributo .file) y devuelve texto concatenado."""
     texto_completo = ""
-    with fitz.open(stream=file.file.read(), filetype="pdf") as doc:
+    file.file.seek(0)
+    data = file.file.read()
+    with fitz.open(stream=data, filetype="pdf") as doc:
         for pagina in doc:
             texto_completo += pagina.get_text()
     return texto_completo
+
 
 # ============================================================
 # ANALIZADOR (C.R.A.F.T. + GPT-5) con integración multi-anexo
@@ -133,13 +142,60 @@ Si falta, anota: [FALTA] campo X — no consta.
 def _particionar(texto: str, max_chars: int) -> list[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
-def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_tokens=MAX_TOKENS_SALIDA):
-    return client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens
-    )
+
+# ============================================================
+# NUEVO: Helper LLM que evita el error de max_tokens
+# ============================================================
+
+def call_llm(model: str, messages: list, max_tokens: int = 2000, temperature: float = 0.2) -> str:
+    """
+    Intenta usar Responses API (max_completion_tokens) y si falla,
+    cae a Chat Completions (max_tokens). Devuelve SIEMPRE el texto.
+    """
+    # 1) Responses API
+    try:
+        # Responses espera "input" (lista role/content) o string
+        resp = client.responses.create(
+            model=model,
+            input=[{"role": m["role"], "content": m["content"]} for m in messages],
+            temperature=temperature,
+            max_completion_tokens=max_tokens,
+        )
+        # Extraer texto unificado del output (shape depende del SDK)
+        chunks = []
+        for o in getattr(resp, "output", []) or []:
+            for b in getattr(o, "content", []) or []:
+                if getattr(b, "type", "") == "output_text":
+                    chunks.append(getattr(b, "text", ""))
+        if chunks:
+            return "".join(chunks).strip()
+        # Fallback de texto directo por si cambia el shape
+        if hasattr(resp, "output_text"):
+            return (resp.output_text or "").strip()
+        if hasattr(resp, "text"):
+            return (resp.text or "").strip()
+        # último recurso
+        return str(resp).strip()
+    except Exception:
+        pass
+
+    # 2) Chat Completions
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        raise RuntimeError(f"Fallo LLM: {e}")
+
+
+def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_tokens=MAX_TOKENS_SALIDA) -> str:
+    """Wrapper usado por el flujo de análisis."""
+    return call_llm(model=model, messages=messages, max_tokens=max_tokens, temperature=temperature)
+
 
 # --- Filtros de meta y post-procesado anti-duplicados ---------------------
 
@@ -147,7 +203,7 @@ _META_PATTERNS = [
     re.compile(r"(?i)\bparte\s+\d+\s+de\s+\d+"),
     re.compile(r"(?i)informe\s+basado\s+en\s+la\s+parte"),
     re.compile(r"(?i)revise\s+las\s+partes\s+restantes"),
-    re.compile(r"(?i)información\s+puede\s+estar\s+incompleta"),
+    re.compile(r"(?i)informaci[oó]n\s+puede\s+estar\s+incompleta"),
 ]
 
 # Viñetas/símbolos comunes al inicio
@@ -163,19 +219,28 @@ _HEADER_PATTERNS = [
     ),
 ]
 
-# Patrón global robusto para “parte X de Y” aun si viene con texto alrededor
+# Patrón global robusto para “parte X de Y”
 _PARTES_GLOBAL = re.compile(r"(?is)^.*\bparte\s*\W*\s*\d+\s*\W*\s*de\s*\W*\s*\d+\b.*$", re.MULTILINE)
+
+# Placeholders que deben eliminarse en PDF/informe
+_PLACEHOLDERS_VACIO = {
+    "información no especificada en la parte proporcionada",
+    "información no especificada en el pliego",
+    "información no especificada",
+    "no especificado en la parte proporcionada",
+    "no especificado en el pliego",
+    "no especificado",
+    "no se considera necesario en este informe",
+    "-",
+}
 
 def _normalize(s: str) -> str:
     """Normaliza unicode, baja a minúsculas, colapsa espacios y elimina BOM/espacios raros."""
     s = unicodedata.normalize("NFKC", s or "")
     s = s.replace("\ufeff", "")
-    # quito bullets y hashes iniciales para comparar
-    s = re.sub(rf"^\s*{_BULLETS}\s*", "", s)
+    s = re.sub(rf"^\s*{_BULLETS}\s*", "", s)  # quito bullets/ hashes iniciales
     s = s.strip().lower()
-    # colapso espacios
     s = re.sub(r"\s+", " ", s)
-    # sin tildes para comparación amplia
     table = str.maketrans("áéíóúüñ", "aeiouun")
     s = s.translate(table)
     return s
@@ -184,12 +249,7 @@ def _es_header_informe(ln: str) -> bool:
     if any(p.match(ln) for p in _HEADER_PATTERNS):
         return True
     norm = _normalize(ln)
-    return (
-        "informe" in norm and
-        "pliego" in norm and
-        "licitacion" in norm and
-        norm.startswith("informe")
-    )
+    return ("informe" in norm and "pliego" in norm and "licitacion" in norm and norm.startswith("informe"))
 
 def _limpiar_meta(texto: str) -> str:
     # 1) eliminar líneas con “parte X de Y”
@@ -207,7 +267,6 @@ def _dedupe_headers(texto: str, keep_first: bool = True) -> str:
     """
     Deja solo la PRIMERA aparición del encabezado "Informe ... Pliego ..." y
     elimina todas las siguientes (con o sin viñetas/## etc.).
-    Si keep_first=False, las elimina todas.
     """
     seen = False
     out = []
@@ -216,18 +275,42 @@ def _dedupe_headers(texto: str, keep_first: bool = True) -> str:
             if keep_first and not seen:
                 seen = True
                 out.append(ln.strip())  # mantenemos una sola vez
-            # si ya se vio (o keep_first=False), se omite
             continue
         out.append(ln)
     res = "\n".join(out)
     res = re.sub(r"\n{3,}", "\n\n", res).strip()
     return res
 
+def _eliminar_placeholders_vacios(texto: str) -> str:
+    """Quita líneas que sean exactamente placeholders de 'no especificado...'."""
+    out = []
+    for ln in texto.splitlines():
+        if _normalize(ln) in _PLACEHOLDERS_VACIO:
+            continue
+        out.append(ln)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+
+def _dedupe_consecutivos(texto: str) -> str:
+    """Elimina duplicados consecutivos de la MISMA línea (caso repeticiones pegadas)."""
+    out = []
+    prev = None
+    for ln in texto.splitlines():
+        if prev is not None and _normalize(prev) == _normalize(ln):
+            # saltear duplicado consecutivo
+            continue
+        out.append(ln)
+        prev = ln
+    return "\n".join(out)
+
 def _postprocesar_informe(texto: str) -> str:
-    # Quitar meta primero, luego deduplicar encabezados
+    """Pipeline de limpieza del informe final."""
     texto = _limpiar_meta(texto)
-    texto = _dedupe_headers(texto, keep_first=True)  # si querés eliminar todos: keep_first=False
+    texto = _dedupe_headers(texto, keep_first=True)
+    texto = _eliminar_placeholders_vacios(texto)
+    texto = _dedupe_consecutivos(texto)
+    texto = re.sub(r"\n{3,}", "\n\n", texto).strip()
     return texto
+
 
 def analizar_con_openai(texto: str) -> str:
     """
@@ -248,8 +331,8 @@ def analizar_con_openai(texto: str) -> str:
             {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve ÚNICAMENTE el informe final (texto), sin preámbulos."}
         ]
         try:
-            resp = _llamada_openai(messages)
-            return _postprocesar_informe(resp.choices[0].message.content.strip())
+            resp_text = _llamada_openai(messages)
+            return _postprocesar_informe(resp_text)
         except Exception as e:
             return f"⚠️ Error al generar el análisis: {e}"
 
@@ -264,9 +347,8 @@ def analizar_con_openai(texto: str) -> str:
             {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n(No incluyas ningún encabezado genérico como 'Informe Estandarizado de pliego de Licitación' u otros títulos repetitivos.)\n\n## Guía de sinónimos/normalización\n{SINONIMOS_CANONICOS}\n\n=== FRAGMENTO {i}/{len(partes)} ===\n{parte}"}
         ]
         try:
-            r = _llamada_openai(msg, max_tokens=2000)
-            # limpieza temprana de encabezados/meta en cada bloque
-            notas.append(_postprocesar_informe(r.choices[0].message.content.strip()))
+            r_text = _llamada_openai(msg, max_tokens=2000)
+            notas.append(_postprocesar_informe(r_text))
         except Exception as e:
             notas.append(f"[ERROR] No se pudieron generar notas de la parte {i}: {e}")
 
@@ -287,14 +369,15 @@ def analizar_con_openai(texto: str) -> str:
     ]
 
     try:
-        resp_final = _llamada_openai(messages_final)
-        return _postprocesar_informe(resp_final.choices[0].message.content.strip())
+        resp_final = _llamada_openai(messages_final, max_tokens=MAX_TOKENS_SALIDA)
+        return _postprocesar_informe(resp_final)
     except Exception as e:
         # Fallback: al menos devolver las notas (ya limpias)
         return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias:\n{_postprocesar_informe(notas_integradas)}"
 
+
 # ============================
-# NUEVO: integración multi-anexo
+# Integración multi-anexo
 # ============================
 def analizar_anexos(files: list) -> str:
     if not files:
@@ -302,12 +385,12 @@ def analizar_anexos(files: list) -> str:
 
     bloques = []
     for idx, f in enumerate(files, 1):
+        # Extraer texto cuidando el puntero
         try:
-            f.file.seek(0)
             texto = extraer_texto_de_pdf(f)
         except Exception:
-            f.file.seek(0)
             try:
+                f.file.seek(0)
                 texto = f.file.read().decode("utf-8", errors="ignore")
             except Exception:
                 texto = ""
@@ -318,8 +401,9 @@ def analizar_anexos(files: list) -> str:
     contenido_unico = "\n".join(bloques)
     return analizar_con_openai(contenido_unico)
 
+
 # ============================================================
-# (NO TOCAR) — Chat IA
+# Chat IA (actualizado para usar call_llm y evitar 400)
 # ============================================================
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
     descripcion_interfaz = f"""
@@ -336,7 +420,7 @@ Sos el asistente inteligente de la plataforma web "Suizo Argentina - Licitacione
 Tu función principal es asistir al usuario en el entendimiento y lectura de los pliegos analizados. También brindás soporte sobre el uso general de la plataforma.
 
 El usuario actual es: {usuario}
-"""
+""".strip()
 
     if not contexto:
         contexto = "(No hay historial disponible actualmente.)"
@@ -351,33 +435,59 @@ El usuario actual es: {usuario}
 {mensaje}
 
 📌 Respondé de manera natural, directa y profesional. No repitas lo que hace la plataforma. Respondé exactamente lo que se te pregunta.
-"""
+""".strip()
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-            max_tokens=1200
-        )
-        return response.choices[0].message.content.strip()
+        messages = [
+            {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
+            {"role": "user", "content": prompt}
+        ]
+        return call_llm(model="gpt-4o", messages=messages, max_tokens=1200, temperature=0.3)
     except Exception as e:
         return f"⚠️ Error al generar respuesta: {e}"
 
+
 # ============================================================
-# (SIN CAMBIOS) — Generación de PDF
+# Generación de PDF (con limpieza previa y títulos controlados)
 # ============================================================
+
+# Patrones de "línea título" aceptados para negrita
+_RE_TITULO = re.compile(
+    r"""(?ix)
+    ( # cualquiera de estos:
+      ^\s*(\d+(\.\d+){0,3})\s+[^\:]{2,}\:?\s*$   # "2.1 Identificación ..." (opcional :)
+     |^\s*[-–—•]\s+[^\:]{2,}\:\s*$              # bullet + texto:
+     |^\s*[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÜÑ0-9\s]{3,}\:\s*$ # Texto Capitalizado que termina en ":"
+    )
+    """.strip()
+)
+
+def _preparar_texto_para_pdf(texto: str) -> str:
+    """Limpieza y normalización adicionales específicas para PDF."""
+    t = _postprocesar_informe(texto)
+    # Quitar espacios al borde y normalizar saltos
+    t = "\n".join([ln.rstrip() for ln in t.splitlines()])
+    t = re.sub(r"\n{3,}", "\n\n", t).strip()
+    return t
+
 def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
+    """
+    Genera un PDF simple (institucional) a partir de texto.
+    Reglas:
+    - Aplica limpieza para evitar encabezados repetidos y placeholders.
+    - Considera título solo si termina en ":" o coincide con patrón de sección.
+    """
     output_dir = os.path.join("generated_pdfs")
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, nombre_archivo)
 
+    # --- Limpieza previa del texto ---
+    resumen = _preparar_texto_para_pdf((resumen or "").replace("**", ""))
+
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
 
+    # Fondo institucional (opcional)
     plantilla_path = os.path.join("static", "fondo-pdf.png")
     if os.path.exists(plantilla_path):
         plantilla = ImageReader(plantilla_path)
@@ -393,7 +503,8 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     c.setFont("Helvetica", 10)
     fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
     c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_actual}")
-    resumen = resumen.replace("**", "")
+
+    # Tipografías base
     c.setFont("Helvetica", 11)
     margen_izquierdo = 20 * mm
     margen_superior = A4[1] - 54 * mm
@@ -401,21 +512,31 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     alto_linea = 14
     y = margen_superior
 
+    def _es_titulo_linea(s: str) -> bool:
+        s_strip = s.strip()
+        if not s_strip:
+            return False
+        if s_strip.endswith(":"):
+            return True
+        # patrón de sección (2.1, 2.10, etc.) o bullets formales
+        return bool(_RE_TITULO.match(s_strip))
+
     for parrafo in resumen.split("\n"):
-        if not parrafo.strip():
+        p = parrafo.strip()
+        if not p:
             y -= alto_linea
             continue
-        if (
-            parrafo.strip().endswith(":")
-            or parrafo.strip().startswith("📘")
-            or parrafo.strip().istitle()
-        ):
+
+        # Seteo estilo según sea título o cuerpo (sin usar .istitle() para evitar falsos positivos)
+        if _es_titulo_linea(p):
             c.setFont("Helvetica-Bold", 12)
             c.setFillColor(azul)
         else:
             c.setFont("Helvetica", 11)
             c.setFillColor("black")
-        for linea in dividir_texto(parrafo.strip(), c, ancho_texto):
+
+        # Escrito con wrap
+        for linea in dividir_texto(p, c, ancho_texto):
             if y <= 20 * mm:
                 c.showPage()
                 if os.path.exists(plantilla_path):
@@ -425,7 +546,7 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
                 y = margen_superior
             c.drawString(margen_izquierdo, y, linea)
             y -= alto_linea
-        y -= 6
+        y -= 6  # espacio entre párrafos
 
     c.save()
     with open(output_path, "wb") as f:
@@ -433,17 +554,20 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
 
     return output_path
 
+
 def dividir_texto(texto, canvas_obj, max_width):
-    palabras = texto.split(" ")
+    """Word-wrap simple basado en ancho medido por ReportLab."""
+    palabras = (texto or "").split(" ")
     lineas = []
     linea_actual = ""
 
     for palabra in palabras:
-        test_line = linea_actual + " " + palabra if linea_actual else palabra
+        test_line = (linea_actual + " " + palabra).strip() if linea_actual else palabra
         if canvas_obj.stringWidth(test_line, canvas_obj._fontname, canvas_obj._fontsize) <= max_width:
             linea_actual = test_line
         else:
-            lineas.append(linea_actual)
+            if linea_actual:
+                lineas.append(linea_actual)
             linea_actual = palabra
 
     if linea_actual:
