@@ -587,18 +587,34 @@ async def chat_openai_embed(request: Request):
       <div id="log" class="mb-2" style="height:410px; overflow:auto; background:#f6f8fb; border-radius:12px; padding:8px;"></div>
       <form id="f" class="d-flex gap-2">
         <input id="t" class="form-control" placeholder="Escribe tu pregunta..." autocomplete="off">
-        <button class="btn btn-primary">Enviar</button>
+        <button type="submit" class="btn btn-primary">Enviar</button>
       </form>
       <script>
         const log = document.getElementById('log');
+        const form = document.getElementById('f');
+        const input = document.getElementById('t');
+
         function add(b){ const p=document.createElement('div'); p.innerHTML=b; log.appendChild(p); log.scrollTop=log.scrollHeight; }
-        document.getElementById('f').addEventListener('submit', async (e)=>{
+
+        // ⏎ Enter para enviar (Shift+Enter = salto de línea)
+        input.addEventListener('keydown', (e)=>{
+          if(e.key === 'Enter' && !e.shiftKey){
+            e.preventDefault();
+            form.requestSubmit();   // dispara el submit del form
+          }
+        });
+
+        form.addEventListener('submit', async (e)=>{
           e.preventDefault();
-          const v = document.getElementById('t').value.trim();
+          const v = input.value.trim();
           if(!v) return;
           add('<div><b>Tú:</b> '+v+'</div>');
-          document.getElementById('t').value='';
-          const r = await fetch('/chat-openai', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mensaje:v})});
+          input.value='';
+          const r = await fetch('/chat-openai', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({mensaje:v})
+          });
           const j = await r.json();
           add('<div class="mt-1"><b>IA:</b> '+(j.respuesta||'')+'</div>');
         });
