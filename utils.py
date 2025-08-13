@@ -151,17 +151,29 @@ _META_PATTERNS = [
 ]
 
 # Frases de encabezado que algunos modelos tienden a repetir
+# Permitimos viñetas / símbolos al inicio (• ● ◦ ▪ ▫ ■ □ ▶ » - etc.)
 _HEADER_PATTERNS = [
-    re.compile(r"(?i)^\s*informe\s+estandarizado\s+de\s+pliego\s+de\s+licitaci[oó]n\s*:?.*$"),
-    re.compile(r"(?i)^\s*informe\s+de\s+pliego\s+de\s+licitaci[oó]n\s*:?.*$"),
+    re.compile(
+        r"(?i)^\s*(?:[•●◦▪▫■□▶»\-–—]\s*)*informe\s+(?:estandarizado\s+de\s+)?pliego\s+de\s+licitaci[oó]n\s*:?.*$"
+    ),
+    re.compile(
+        r"(?i)^\s*(?:[•●◦▪▫■□▶»\-–—]\s*)*informe\s+de\s+pliego\s+de\s+licitaci[oó]n\s*:?.*$"
+    ),
 ]
 
+# Patrón global para remover cualquier párrafo/linea que mencione "parte X de Y"
+_PARTES_GLOBAL = re.compile(r"(?im)^.*\bparte\s+\d+\s+de\s+\d+\b.*$", flags=re.MULTILINE)
+
 def _limpiar_meta(texto: str) -> str:
+    # 1) eliminar líneas con meta ("parte X de Y", etc.)
+    texto = _PARTES_GLOBAL.sub("", texto)
+    # 2) eliminar líneas con otras advertencias meta (por lista)
     lineas = []
     for ln in texto.splitlines():
         if any(p.search(ln) for p in _META_PATTERNS):
             continue
         lineas.append(ln)
+    # Compactar múltiples líneas vacías consecutivas
     limpio = re.sub(r"\n{3,}", "\n\n", "\n".join(lineas)).strip()
     return limpio
 
@@ -185,6 +197,7 @@ def _dedupe_headers(texto: str) -> str:
     return res
 
 def _postprocesar_informe(texto: str) -> str:
+    # Primero quitamos meta, luego deduplicamos encabezados
     return _dedupe_headers(_limpiar_meta(texto))
 
 
@@ -229,7 +242,7 @@ def analizar_con_openai(texto: str) -> str:
         except Exception as e:
             notas.append(f"[ERROR] No se pudieron generar notas de la parte {i}: {e}")
 
-    # Además, consolidamos y limpiamos posibles encabezados repetidos antes de la síntesis final
+    # Consolidar y limpiar posibles encabezados repetidos antes de la síntesis final
     notas_integradas = _dedupe_headers("\n".join(notas))
 
     # Etapa B: síntesis final única y deduplicada
