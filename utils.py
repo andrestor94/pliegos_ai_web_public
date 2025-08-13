@@ -151,7 +151,7 @@ _META_PATTERNS = [
 ]
 
 # Frases de encabezado que algunos modelos tienden a repetir
-# Permitimos viñetas / símbolos al inicio (• ● ◦ ▪ ▫ ■ □ ▶ » - etc.)
+# Permitimos viñetas / símbolos al inicio (• ● ◦ ▪ ▫ ■ □ ▶ » - – —)
 _HEADER_PATTERNS = [
     re.compile(
         r"(?i)^\s*(?:[•●◦▪▫■□▶»\-–—]\s*)*informe\s+(?:estandarizado\s+de\s+)?pliego\s+de\s+licitaci[oó]n\s*:?.*$"
@@ -161,8 +161,8 @@ _HEADER_PATTERNS = [
     ),
 ]
 
-# Patrón global para remover cualquier párrafo/linea que mencione "parte X de Y"
-_PARTES_GLOBAL = re.compile(r"(?im)^.*\bparte\s+\d+\s+de\s+\d+\b.*$", flags=re.MULTILINE)
+# Patrón global para remover cualquier línea que mencione "parte X de Y"
+_PARTES_GLOBAL = re.compile(r"(?im)^.*\bparte\s+\d+\s+de\s+\d+\b.*$")
 
 def _limpiar_meta(texto: str) -> str:
     # 1) eliminar líneas con meta ("parte X de Y", etc.)
@@ -177,28 +177,22 @@ def _limpiar_meta(texto: str) -> str:
     limpio = re.sub(r"\n{3,}", "\n\n", "\n".join(lineas)).strip()
     return limpio
 
-def _dedupe_headers(texto: str) -> str:
+def _drop_all_headers(texto: str) -> str:
     """
-    Mantiene solo la PRIMERA aparición de títulos genéricos (e.g., 'Informe Estandarizado...').
-    Elimina repeticiones posteriores y espacios en blanco redundantes alrededor.
+    Elimina TODAS las apariciones de encabezados genéricos (“Informe Estandarizado...”, etc.).
     """
-    seen = False
     out = []
     for ln in texto.splitlines():
         if any(p.match(ln) for p in _HEADER_PATTERNS):
-            if seen:
-                # omitir duplicado
-                continue
-            seen = True
+            continue  # descartar siempre
         out.append(ln)
     res = "\n".join(out)
-    # Compactar saltos extra producidos por la eliminación
     res = re.sub(r"\n{3,}", "\n\n", res).strip()
     return res
 
 def _postprocesar_informe(texto: str) -> str:
-    # Primero quitamos meta, luego deduplicamos encabezados
-    return _dedupe_headers(_limpiar_meta(texto))
+    # Primero quitamos meta (partes/avisos), luego eliminamos todos los encabezados genéricos
+    return _drop_all_headers(_limpiar_meta(texto))
 
 
 def analizar_con_openai(texto: str) -> str:
@@ -238,12 +232,12 @@ def analizar_con_openai(texto: str) -> str:
         ]
         try:
             r = _llamada_openai(msg, max_tokens=2000)
-            notas.append(_dedupe_headers(r.choices[0].message.content.strip()))
+            notas.append(_drop_all_headers(r.choices[0].message.content.strip()))
         except Exception as e:
             notas.append(f"[ERROR] No se pudieron generar notas de la parte {i}: {e}")
 
     # Consolidar y limpiar posibles encabezados repetidos antes de la síntesis final
-    notas_integradas = _dedupe_headers("\n".join(notas))
+    notas_integradas = _drop_all_headers("\n".join(notas))
 
     # Etapa B: síntesis final única y deduplicada
     messages_final = [
