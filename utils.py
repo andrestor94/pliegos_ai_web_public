@@ -15,23 +15,10 @@ load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def extraer_texto_de_pdf(file) -> str:
-    """
-    Extrae texto de un PDF (UploadFile de FastAPI). Intenta modo 'text' y
-    fallback simple si hay error. Retorna string concatenado de todas las páginas.
-    """
     texto_completo = ""
-    try:
-        file.file.seek(0)
-        with fitz.open(stream=file.file.read(), filetype="pdf") as doc:
-            for pagina in doc:
-                # get_text() ya usa "text" por defecto; si querés, podés usar "blocks"
-                texto_completo += pagina.get_text() + "\n"
-    except Exception:
-        try:
-            file.file.seek(0)
-            texto_completo = file.file.read().decode("utf-8", errors="ignore")
-        except Exception:
-            texto_completo = ""
+    with fitz.open(stream=file.file.read(), filetype="pdf") as doc:
+        for pagina in doc:
+            texto_completo += pagina.get_text()
     return texto_completo
 
 
@@ -42,10 +29,10 @@ def extraer_texto_de_pdf(file) -> str:
 MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
 
 # Heurísticas de particionado
-MAX_SINGLE_PASS_CHARS = 55000   # umbral alto: favorece síntesis única
-CHUNK_SIZE = 16000              # cortes grandes: mejor contexto por chunk
+MAX_SINGLE_PASS_CHARS = 55000   # subimos umbral para forzar síntesis única
+CHUNK_SIZE = 16000              # menos cortes → mejor contexto
 TEMPERATURE_ANALISIS = 0.2
-MAX_TOKENS_SALIDA = 5000        # un poco más de margen
+MAX_TOKENS_SALIDA = 4000
 
 # Guía de sinónimos/normalización para evitar "no especificado" falsos
 SINONIMOS_CANONICOS = r"""
@@ -70,12 +57,12 @@ CRAFT_PROMPT_MAESTRO = r"""
 Trabajas con **pliegos** con **varios anexos**. La info es crítica (fechas, montos, normativa, garantías, etc.). Debes **leer TODO** e integrar en **un único informe** con **trazabilidad**.
 
 **Reglas clave**
-- **Trazabilidad total**: cada dato crítico con **fuente** `(Anexo X[, p. Y])`. Si no hay paginación/ID, usar `(Fuente: documento provisto)`.
+- **Trazabilidad total**: cada dato crítico con **fuente** (Anexo X[, p. Y]). Si no hay paginación/ID, usar (Fuente: documento provisto).
 - **Cero invenciones**; si algo falta/ambigua, indícalo y sugiere consulta.
 - **Cobertura total** (oferta, evaluación, adjudicación, perfeccionamiento, ejecución).
 - **Normativa** citada por tipo/numero/artículo con fuente.
 - **No repetir** contenido: deduplicar y fusionar datos si aparecen en varios anexos.
-- **Prohibido** incluir frases tipo: "parte 1 de 7", "informe basado en parte x/y", "revise el resto".
+- **No repitas encabezados genéricos** (p. ej. “Informe Estandarizado de pliego de Licitación”). Si aparece, incluirlo **una sola vez** al inicio del documento o **omitirlo**.
 
 ## R — Rol
 Equipo experto (Derecho Administrativo, Analista de Licitaciones Sanitarias, Redactor técnico-jurídico). Estilo técnico, sobrio y preciso.
@@ -129,7 +116,7 @@ CRAFT_PROMPT_NOTAS = r"""
 Genera **NOTAS INTERMEDIAS CRAFT** ultra concisas para síntesis posterior, a partir del fragmento.
 Reglas:
 - SOLO bullets (sin encabezados, sin "parte x/y", sin conclusiones).
-- Etiqueta del tema + **cita** entre paréntesis. Si no hay paginación/ID, usa `(Fuente: documento provisto)`.
+- Etiqueta del tema + **cita** entre paréntesis. Si no hay paginación/ID, usa (Fuente: documento provisto).
 - Aplica la **Guía de sinónimos/normalización**: si aparece con nombre alternativo, consérvalo.
 
 Ejemplos:
@@ -154,70 +141,52 @@ def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANAL
         max_tokens=max_tokens
     )
 
-# ---- Filtros de limpieza/deduplicación post-IA ----
+# --- Filtros de meta y post-procesado anti-duplicados ---------------------
 
-# Frases meta que no deben aparecer
 _META_PATTERNS = [
     re.compile(r"(?i)\bparte\s+\d+\s+de\s+\d+"),
     re.compile(r"(?i)informe\s+basado\s+en\s+la\s+parte"),
     re.compile(r"(?i)revise\s+las\s+partes\s+restantes"),
-    re.compile(r"(?i)información\s+puede\s+estar\s+incompleta"),
+    re.compile(r"(?i)información\s+puede\s+estar\s+incompleta")
 ]
 
-# Títulos que deben aparecer una sola vez; si se repiten, se eliminan los siguientes
-_TITULOS_SINGULARES = [
-    re.compile(r"(?i)^informe\s+estandarizad[oa].*$"),
-    re.compile(r"(?i)^informe\s+est[aá]ndar.*licitaci[oó]n.*$"),
-    re.compile(r"(?i)^resumen\s+ejecutivo\s*:?\s*$"),
+# Frases de encabezado que algunos modelos tienden a repetir
+_HEADER_PATTERNS = [
+    re.compile(r"(?i)^\s*informe\s+estandarizado\s+de\s+pliego\s+de\s+licitaci[oó]n\s*:?.*$"),
+    re.compile(r"(?i)^\s*informe\s+de\s+pliego\s+de\s+licitaci[oó]n\s*:?.*$"),
 ]
 
 def _limpiar_meta(texto: str) -> str:
-    """Elimina líneas meta y compacta saltos."""
     lineas = []
     for ln in texto.splitlines():
         if any(p.search(ln) for p in _META_PATTERNS):
             continue
         lineas.append(ln)
-    limpio = "\n".join(lineas)
-    limpio = re.sub(r"\n{3,}", "\n\n", limpio).strip()
+    limpio = re.sub(r"\n{3,}", "\n\n", "\n".join(lineas)).strip()
     return limpio
 
-def _dedupe_titulos(texto: str) -> str:
+def _dedupe_headers(texto: str) -> str:
     """
-    Mantiene solo la primera aparición de títulos 'singulares'
-    (p.ej., 'Informe Estandarizado...', 'Resumen Ejecutivo').
+    Mantiene solo la PRIMERA aparición de títulos genéricos (e.g., 'Informe Estandarizado...').
+    Elimina repeticiones posteriores y espacios en blanco redundantes alrededor.
     """
-    vistos = [False] * len(_TITULOS_SINGULARES)
+    seen = False
     out = []
     for ln in texto.splitlines():
-        skip = False
-        for i, pat in enumerate(_TITULOS_SINGULARES):
-            if pat.match(ln.strip()):
-                if vistos[i]:
-                    skip = True
-                    break
-                vistos[i] = True
-        if not skip:
-            out.append(ln)
-    s = "\n".join(out)
-    # Colapsar duplicados de encabezados decorativos o líneas vacías contiguas
-    s = re.sub(r"\n{3,}", "\n\n", s).strip()
-    return s
+        if any(p.match(ln) for p in _HEADER_PATTERNS):
+            if seen:
+                # omitir duplicado
+                continue
+            seen = True
+        out.append(ln)
+    res = "\n".join(out)
+    # Compactar saltos extra producidos por la eliminación
+    res = re.sub(r"\n{3,}", "\n\n", res).strip()
+    return res
 
-def _limpieza_final(texto: str) -> str:
-    """
-    Pipeline de salida:
-    1) Quita meta/disclaimers
-    2) Deduplica títulos singulares
-    3) Normaliza espacios
-    """
-    s = _limpiar_meta(texto)
-    s = _dedupe_titulos(s)
-    # Quitar espacios innecesarios al final de línea
-    s = re.sub(r"[ \t]+(\r?\n)", r"\1", s)
-    # Evitar doble 'Resumen Ejecutivo' si la IA lo repitiera con variantes mínimas
-    s = re.sub(r"(?si)^(resumen ejecutivo\s*:?\s*\n)(?:\s*\n)*", r"\1", s)
-    return s.strip()
+def _postprocesar_informe(texto: str) -> str:
+    return _dedupe_headers(_limpiar_meta(texto))
+
 
 def analizar_con_openai(texto: str) -> str:
     """
@@ -228,7 +197,7 @@ def analizar_con_openai(texto: str) -> str:
     if not texto or not texto.strip():
         return "No se recibió contenido para analizar."
 
-    # Detectar si parece haber múltiples anexos
+    # Detectar si parece haber múltiples anexos (marcadores comunes)
     separadores = ["===ANEXO===", "=== ANEXO ===", "### ANEXO", "## ANEXO", "\nAnexo "]
     varios_anexos = any(sep.lower() in texto.lower() for sep in separadores)
 
@@ -240,8 +209,7 @@ def analizar_con_openai(texto: str) -> str:
         ]
         try:
             resp = _llamada_openai(messages)
-            bruto = resp.choices[0].message.content.strip()
-            return _limpieza_final(bruto)
+            return _postprocesar_informe(resp.choices[0].message.content.strip())
         except Exception as e:
             return f"⚠️ Error al generar el análisis: {e}"
 
@@ -279,15 +247,14 @@ def analizar_con_openai(texto: str) -> str:
 
     try:
         resp_final = _llamada_openai(messages_final)
-        bruto = resp_final.choices[0].message.content.strip()
-        return _limpieza_final(bruto)
+        return _postprocesar_informe(resp_final.choices[0].message.content.strip())
     except Exception as e:
         # Fallback: al menos devolver las notas (limpias de meta)
-        return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias:\n{_limpiar_meta(notas_integradas)}"
+        return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias:\n{_postprocesar_informe(notas_integradas)}"
 
 
 # ============================
-# Integración multi-anexo
+# NUEVO: integración multi-anexo
 # ============================
 def analizar_anexos(files: list) -> str:
     """
@@ -300,9 +267,11 @@ def analizar_anexos(files: list) -> str:
     bloques = []
     for idx, f in enumerate(files, 1):
         try:
+            # Importante: hay que reposicionar el puntero para cada lectura
             f.file.seek(0)
             texto = extraer_texto_de_pdf(f)
         except Exception:
+            # si no es PDF, intentar leer bytes y decodificar a texto simple
             f.file.seek(0)
             try:
                 texto = f.file.read().decode("utf-8", errors="ignore")
@@ -392,10 +361,7 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     c.setFont("Helvetica", 10)
     fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
     c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_actual}")
-
-    # El informe ya viene limpio; quitamos negritas markdown por si acaso
     resumen = resumen.replace("**", "")
-
     c.setFont("Helvetica", 11)
     margen_izquierdo = 20 * mm
     margen_superior = A4[1] - 54 * mm
@@ -446,8 +412,7 @@ def dividir_texto(texto, canvas_obj, max_width):
         if canvas_obj.stringWidth(test_line, canvas_obj._fontname, canvas_obj._fontsize) <= max_width:
             linea_actual = test_line
         else:
-            if linea_actual:
-                lineas.append(linea_actual)
+            lineas.append(linea_actual)
             linea_actual = palabra
 
     if linea_actual:
