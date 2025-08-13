@@ -3,7 +3,7 @@ import sqlite3
 import uuid
 import asyncio
 from typing import List, Optional, Dict, Set
-from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body, WebSocket, WebSocketDisconnect, Depends, status
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -40,7 +40,9 @@ from database import (
     # Hilos ocultos
     ocultar_hilo, restaurar_hilo,
     # Adjuntos (chat)
-    guardar_adjunto
+    guardar_adjunto,
+    # Roles helpers
+    es_admin
 )
 
 # ORM (audit_logs)
@@ -63,6 +65,32 @@ app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="gene
 
 templates = Jinja2Templates(directory="templates")
 templates.env.globals['os'] = os
+
+# ================== Guardas/Dependencias de auth/roles ==================
+def require_auth(request: Request):
+    """Obliga a tener sesión iniciada."""
+    if not request.session.get("usuario"):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
+
+def require_admin(request: Request):
+    """
+    Requiere rol admin.
+    Valida primero contra sesión y, por robustez, revalida en BD si la sesión dice que no.
+    """
+    email = request.session.get("usuario")
+    if not email:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
+    rol = request.session.get("rol")
+    if rol == "admin":
+        return
+    # Fallback: por si el rol cambió en BD y la sesión quedó vieja
+    try:
+        if es_admin(email):
+            request.session["rol"] = "admin"  # refrescamos sesión
+            return
+    except Exception:
+        pass
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admins")
 
 # ================== Alert/WS manager ==================
 class ConnectionManager:
@@ -420,25 +448,22 @@ async def cambiar_password_submit(request: Request,
         "error": ""
     })
 
-# ================== Admin ==================
-@app.get("/admin", response_class=HTMLResponse)
+# ================== Admin (todas las rutas protegidas) ==================
+@app.get("/admin", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def vista_admin(request: Request):
-    if request.session.get("rol") != "admin":
-        return RedirectResponse("/")
     return templates.TemplateResponse("admin.html", {"request": request})
 
-@app.get("/admin/usuarios")
+@app.get("/admin/usuarios", dependencies=[Depends(require_admin)])
 async def listar_usuarios_api():
     return JSONResponse(listar_usuarios())
 
-@app.post("/admin/crear-usuario")
+@app.post("/admin/crear-usuario", dependencies=[Depends(require_admin)])
 async def crear_usuario_api(request: Request):
     try:
         data = await request.json()
         nombre = data.get("nombre")
         email = data.get("email")
         rol = data.get("rol")
-        # 🔧 FIX: 'or' (no 'o r')
         if not nombre or not email or not rol:
             return JSONResponse({"error": "Faltan campos: nombre, email, rol"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
@@ -448,7 +473,7 @@ async def crear_usuario_api(request: Request):
         print("❌ Error crear-usuario:", repr(e))
         return JSONResponse({"error": f"Error al crear usuario: {e}"}, status_code=400)
 
-@app.post("/admin/blanquear-password")
+@app.post("/admin/blanquear-password", dependencies=[Depends(require_admin)])
 async def blanquear_password(request: Request):
     try:
         data = await request.json()
@@ -462,7 +487,7 @@ async def blanquear_password(request: Request):
         print("❌ Error blanquear-password:", repr(e))
         return JSONResponse({"error": f"Error al blanquear: {e}"}, status_code=400)
 
-@app.post("/admin/desactivar-usuario")
+@app.post("/admin/desactivar-usuario", dependencies=[Depends(require_admin)])
 async def desactivar_usuario(request: Request):
     data = await request.json()
     email = data.get("email")
@@ -472,7 +497,7 @@ async def desactivar_usuario(request: Request):
     cambiar_estado_usuario(email, 0, actor_user_id=actor_user_id, ip=ip)
     return JSONResponse({"mensaje": "Usuario desactivado"})
 
-@app.post("/admin/activar-usuario")
+@app.post("/admin/activar-usuario", dependencies=[Depends(require_admin)])
 async def activar_usuario(request: Request):
     data = await request.json()
     email = data.get("email")
@@ -482,11 +507,9 @@ async def activar_usuario(request: Request):
     cambiar_estado_usuario(email, 1, actor_user_id=actor_user_id, ip=ip)
     return JSONResponse({"mensaje": "Usuario activado"})
 
-@app.post("/admin/eliminar-usuario")
+@app.post("/admin/eliminar-usuario", dependencies=[Depends(require_admin)])
 async def eliminar_usuario(request: Request):
     try:
-        if request.session.get("rol") != "admin":
-            return JSONResponse({"error": "Acceso denegado"}, status_code=403)
         data = await request.json()
         email = data.get("email")
         if not email:
@@ -879,10 +902,8 @@ async def chat_abrir(request: Request):
         return JSONResponse({"error": "No se pudo abrir el hilo"}, status_code=500)
 
 # ================== Auditoría (vista) ==================
-@app.get("/auditoria", response_class=HTMLResponse)
+@app.get("/auditoria", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def ver_auditoria(request: Request):
-    if request.session.get("rol") != "admin":
-        return RedirectResponse("/")
     logs = obtener_auditoria()
     return templates.TemplateResponse("auditoria.html", {
         "request": request,
