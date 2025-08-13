@@ -144,24 +144,32 @@ def _particionar(texto: str, max_chars: int) -> list[str]:
 
 
 # ============================================================
-# NUEVO: Helper LLM que evita el error de max_tokens
+# Helper LLM: usa Responses para gpt-5 / gpt-4.1 / o4
 # ============================================================
 
 def call_llm(model: str, messages: list, max_tokens: int = 2000, temperature: float = 0.2) -> str:
     """
-    Intenta usar Responses API (max_completion_tokens) y si falla,
-    cae a Chat Completions (max_tokens). Devuelve SIEMPRE el texto.
+    Usa Responses API para modelos que lo requieren (p.ej. gpt-5, gpt-4.1, o4).
+    Solo usa Chat Completions si el modelo NO requiere Responses.
+    Evita el error: Unsupported parameter 'max_tokens' (usar 'max_completion_tokens').
     """
-    # 1) Responses API
-    try:
-        # Responses espera "input" (lista role/content) o string
+    def _requires_responses(m: str) -> bool:
+        m = (m or "").lower()
+        return m.startswith("gpt-5") or m.startswith("gpt-4.1") or m.startswith("o4")
+
+    if _requires_responses(model):
+        # Debe existir client.responses.create en openai>=1.40.0
+        if not hasattr(client, "responses") or not hasattr(client.responses, "create"):
+            raise RuntimeError(
+                "Este modelo requiere la Responses API. Actualizá el paquete 'openai' a >= 1.40.0 y redeploy."
+            )
         resp = client.responses.create(
             model=model,
             input=[{"role": m["role"], "content": m["content"]} for m in messages],
             temperature=temperature,
             max_completion_tokens=max_tokens,
         )
-        # Extraer texto unificado del output (shape depende del SDK)
+        # Unificar texto (varía según SDK)
         chunks = []
         for o in getattr(resp, "output", []) or []:
             for b in getattr(o, "content", []) or []:
@@ -169,27 +177,20 @@ def call_llm(model: str, messages: list, max_tokens: int = 2000, temperature: fl
                     chunks.append(getattr(b, "text", ""))
         if chunks:
             return "".join(chunks).strip()
-        # Fallback de texto directo por si cambia el shape
         if hasattr(resp, "output_text"):
             return (resp.output_text or "").strip()
         if hasattr(resp, "text"):
             return (resp.text or "").strip()
-        # último recurso
         return str(resp).strip()
-    except Exception:
-        pass
 
-    # 2) Chat Completions
-    try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return resp.choices[0].message.content.strip()
-    except Exception as e:
-        raise RuntimeError(f"Fallo LLM: {e}")
+    # Modelos clásicos (Chat Completions)
+    resp = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    return resp.choices[0].message.content.strip()
 
 
 def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_tokens=MAX_TOKENS_SALIDA) -> str:
@@ -296,7 +297,6 @@ def _dedupe_consecutivos(texto: str) -> str:
     prev = None
     for ln in texto.splitlines():
         if prev is not None and _normalize(prev) == _normalize(ln):
-            # saltear duplicado consecutivo
             continue
         out.append(ln)
         prev = ln
@@ -403,7 +403,7 @@ def analizar_anexos(files: list) -> str:
 
 
 # ============================================================
-# Chat IA (actualizado para usar call_llm y evitar 400)
+# Chat IA (usa call_llm y evita 400)
 # ============================================================
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
     descripcion_interfaz = f"""
@@ -442,6 +442,7 @@ El usuario actual es: {usuario}
             {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
             {"role": "user", "content": prompt}
         ]
+        # Para chat seguimos con gpt-4o (acepta chat.completions). Ajustá si querés.
         return call_llm(model="gpt-4o", messages=messages, max_tokens=1200, temperature=0.3)
     except Exception as e:
         return f"⚠️ Error al generar respuesta: {e}"
@@ -527,7 +528,7 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
             y -= alto_linea
             continue
 
-        # Seteo estilo según sea título o cuerpo (sin usar .istitle() para evitar falsos positivos)
+        # Seteo estilo según sea título o cuerpo
         if _es_titulo_linea(p):
             c.setFont("Helvetica-Bold", 12)
             c.setFillColor(azul)

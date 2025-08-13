@@ -1,15 +1,19 @@
-fastapi
-uvicorn[standard]      # trae websockets, httptools, uvloop, watchfiles
-openai
+fastapi>=0.110
+uvicorn[standard]>=0.30
+
+# 👇 Necesario para usar la Responses API con max_completion_tokens
+openai>=1.40.0
+
 python-multipart
 jinja2
-xhtml2pdf
 itsdangerous
-pymupdf
-reportlab
-python-dotenv>=1.0     # (quita la línea duplicada de python-dotenv)
+
+# PDF / parsing
+pymupdf>=1.24.2          # (el paquete correcto se llama "pymupdf")
+reportlab>=4.0.0
+
+python-dotenv>=1.0
 SQLAlchemy>=2.0
 psycopg2-binary>=2.9
 passlib[bcrypt]>=1.7
 websockets>=12.0
-
