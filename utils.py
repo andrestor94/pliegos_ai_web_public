@@ -29,8 +29,8 @@ def extraer_texto_de_pdf(file) -> str:
 MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
 
 # Heurísticas de particionado
-MAX_SINGLE_PASS_CHARS = 55000   # subimos umbral para forzar síntesis única
-CHUNK_SIZE = 16000              # menos cortes → mejor contexto
+MAX_SINGLE_PASS_CHARS = 55000
+CHUNK_SIZE = 16000
 TEMPERATURE_ANALISIS = 0.2
 MAX_TOKENS_SALIDA = 4000
 
@@ -150,24 +150,28 @@ _META_PATTERNS = [
     re.compile(r"(?i)información\s+puede\s+estar\s+incompleta")
 ]
 
-# Frases de encabezado que algunos modelos tienden a repetir
-# Permitimos viñetas / símbolos al inicio (• ● ◦ ▪ ▫ ■ □ ▶ » - – —)
+# Encabezados genéricos (varias formas, con viñetas, guiones o hashes)
 _HEADER_PATTERNS = [
     re.compile(
-        r"(?i)^\s*(?:[•●◦▪▫■□▶»\-–—]\s*)*informe\s+(?:estandarizado\s+de\s+)?pliego\s+de\s+licitaci[oó]n\s*:?.*$"
+        r"(?i)^\s*(?:[•●◦▪▫■□▶»\-–—#]{1,6}\s*)*(?:informe|resumen)\s+(?:estandarizado\s+de\s+)?pliego\s+de\s+licitaci[oó]n\b.*$"
     ),
     re.compile(
-        r"(?i)^\s*(?:[•●◦▪▫■□▶»\-–—]\s*)*informe\s+de\s+pliego\s+de\s+licitaci[oó]n\s*:?.*$"
+        r"(?i)^\s*(?:[•●◦▪▫■□▶»\-–—#]{1,6}\s*)*informe\s+de\s+pliego\s+de\s+licitaci[oó]n\b.*$"
     ),
 ]
 
-# Patrón global para remover cualquier línea que mencione "parte X de Y"
-_PARTES_GLOBAL = re.compile(r"(?im)^.*\bparte\s+\d+\s+de\s+\d+\b.*$")
+# Patrón global para remover cualquier línea con "parte X de Y"
+_PARTES_GLOBAL = re.compile(r"(?im)^.*\bparte\s+\d+\s+de\s+\d+\b.*$", flags=re.MULTILINE)
+
+# Patrón adicional por si el LLM mete la frase completa
+_PARTES_FRASE = re.compile(r"(?is)este\s+informe\s+se\s+basa.*?\bparte\s+\d+\s+de\s+\d+\b.*?(?:\n|$)")
 
 def _limpiar_meta(texto: str) -> str:
-    # 1) eliminar líneas con meta ("parte X de Y", etc.)
+    # 1) eliminar líneas con "parte X de Y"
     texto = _PARTES_GLOBAL.sub("", texto)
-    # 2) eliminar líneas con otras advertencias meta (por lista)
+    # 2) eliminar oraciones completas que mencionen "este informe se basa ... parte X de Y"
+    texto = _PARTES_FRASE.sub("", texto)
+    # 3) eliminar otras advertencias meta por línea
     lineas = []
     for ln in texto.splitlines():
         if any(p.search(ln) for p in _META_PATTERNS):
@@ -177,22 +181,26 @@ def _limpiar_meta(texto: str) -> str:
     limpio = re.sub(r"\n{3,}", "\n\n", "\n".join(lineas)).strip()
     return limpio
 
-def _drop_all_headers(texto: str) -> str:
+def _dedupe_headers(texto: str) -> str:
     """
-    Elimina TODAS las apariciones de encabezados genéricos (“Informe Estandarizado...”, etc.).
+    Mantiene solo la PRIMERA aparición de títulos genéricos (e.g., 'Informe Estandarizado...').
+    Elimina repeticiones posteriores.
     """
+    seen = False
     out = []
     for ln in texto.splitlines():
         if any(p.match(ln) for p in _HEADER_PATTERNS):
-            continue  # descartar siempre
+            if seen:
+                continue
+            seen = True
         out.append(ln)
     res = "\n".join(out)
     res = re.sub(r"\n{3,}", "\n\n", res).strip()
     return res
 
 def _postprocesar_informe(texto: str) -> str:
-    # Primero quitamos meta (partes/avisos), luego eliminamos todos los encabezados genéricos
-    return _drop_all_headers(_limpiar_meta(texto))
+    # Meta → encabezados duplicados → recorte espacios
+    return _dedupe_headers(_limpiar_meta(texto))
 
 
 def analizar_con_openai(texto: str) -> str:
@@ -204,11 +212,9 @@ def analizar_con_openai(texto: str) -> str:
     if not texto or not texto.strip():
         return "No se recibió contenido para analizar."
 
-    # Detectar si parece haber múltiples anexos (marcadores comunes)
     separadores = ["===ANEXO===", "=== ANEXO ===", "### ANEXO", "## ANEXO", "\nAnexo "]
     varios_anexos = any(sep.lower() in texto.lower() for sep in separadores)
 
-    # Pasada única SOLO si es corto y no hay indicios de multi-anexo
     if len(texto) <= MAX_SINGLE_PASS_CHARS and not varios_anexos:
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
@@ -224,20 +230,19 @@ def analizar_con_openai(texto: str) -> str:
     partes = _particionar(texto, CHUNK_SIZE)
     notas = []
 
-    # Etapa A: notas intermedias (con instrucción anti-encabezados y limpieza)
+    # Etapa A: notas intermedias (sin encabezados)
     for i, parte in enumerate(partes, 1):
         msg = [
             {"role": "system", "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
-            {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n(No incluyas ningún encabezado genérico como 'Informe Estandarizado de pliego de Licitación' u otros títulos repetitivos.)\n\n## Guía de sinónimos/normalización\n{SINONIMOS_CANONICOS}\n\n=== FRAGMENTO {i}/{len(partes)} ===\n{parte}"}
+            {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n(No incluyas ningún encabezado genérico como 'Informe Estandarizado de pliego de Licitación' ni frases de 'parte X de Y'.)\n\n## Guía de sinónimos/normalización\n{SINONIMOS_CANONICOS}\n\n=== FRAGMENTO {i}/{len(partes)} ===\n{parte}"}
         ]
         try:
             r = _llamada_openai(msg, max_tokens=2000)
-            notas.append(_drop_all_headers(r.choices[0].message.content.strip()))
+            notas.append(_postprocesar_informe(r.choices[0].message.content.strip()))
         except Exception as e:
             notas.append(f"[ERROR] No se pudieron generar notas de la parte {i}: {e}")
 
-    # Consolidar y limpiar posibles encabezados repetidos antes de la síntesis final
-    notas_integradas = _drop_all_headers("\n".join(notas))
+    notas_integradas = _postprocesar_informe("\n".join(notas))
 
     # Etapa B: síntesis final única y deduplicada
     messages_final = [
@@ -257,7 +262,6 @@ def analizar_con_openai(texto: str) -> str:
         resp_final = _llamada_openai(messages_final)
         return _postprocesar_informe(resp_final.choices[0].message.content.strip())
     except Exception as e:
-        # Fallback: al menos devolver las notas (limpias de meta y encabezados)
         return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias:\n{_postprocesar_informe(notas_integradas)}"
 
 
@@ -275,11 +279,9 @@ def analizar_anexos(files: list) -> str:
     bloques = []
     for idx, f in enumerate(files, 1):
         try:
-            # Importante: hay que reposicionar el puntero para cada lectura
             f.file.seek(0)
             texto = extraer_texto_de_pdf(f)
         except Exception:
-            # si no es PDF, intentar leer bytes y decodificar a texto simple
             f.file.seek(0)
             try:
                 texto = f.file.read().decode("utf-8", errors="ignore")
@@ -344,7 +346,8 @@ El usuario actual es: {usuario}
 
 
 # ============================================================
-# (SIN CAMBIOS) — Generación de PDF
+# (SIN CAMBIOS visibles) — Generación de PDF
+#  *Agrego saneo final antes de dibujar*
 # ============================================================
 def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     output_dir = os.path.join("generated_pdfs")
@@ -369,7 +372,12 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     c.setFont("Helvetica", 10)
     fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
     c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_actual}")
-    resumen = resumen.replace("**", "")
+
+    # --- Saneo extra ANTES de dibujar (doble cinturón) ---
+    if resumen:
+        resumen = resumen.replace("**", "")
+        resumen = _postprocesar_informe(resumen)
+
     c.setFont("Helvetica", 11)
     margen_izquierdo = 20 * mm
     margen_superior = A4[1] - 54 * mm
@@ -377,7 +385,7 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     alto_linea = 14
     y = margen_superior
 
-    for parrafo in resumen.split("\n"):
+    for parrafo in (resumen or "").split("\n"):
         if not parrafo.strip():
             y -= alto_linea
             continue
