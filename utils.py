@@ -22,12 +22,9 @@ def _sanitize_text(s: str) -> str:
     """Quita caracteres de control, normaliza espacios y recorta."""
     if not s:
         return ""
-    # Quitar NULLs y control chars (excepto \n y \t)
     s = s.replace("\x00", " ")
-    s = re.sub(r"[\x01-\x08\x0B\x0C\x0E-\x1F]", " ", s)
-    # Colapsar espacios
+    s = re.sub(r"[\x01-\x08\x0B\x0C\x0E-\x1F]", " ", s)  # deja \n y \t
     s = re.sub(r"[ \t]+", " ", s)
-    # Limitar saltos de línea seguidos
     s = re.sub(r"\n{3,}", "\n\n", s)
     return s.strip()
 
@@ -51,21 +48,18 @@ def extraer_texto_de_pdf(file) -> str:
 # NUEVO ANALIZADOR (C.R.A.F.T. + guard-rails)
 # ============================================================
 
-# Modelo (podés override con OPENAI_MODEL_ANALISIS=gpt-5, gpt-4o, etc.)
 MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
 
-# Límites y heurísticas
-MAX_SINGLE_PASS_CHARS = 24000     # si el texto total es menor, va en una sola pasada
-CHUNK_SIZE = 8000                 # tamaño por parte si es muy grande
-TEMPERATURE_ANALISIS = 0.2
-MAX_TOKENS_SALIDA = 4000          # margen para informes extensos
+MAX_SINGLE_PASS_CHARS = 24000
+CHUNK_SIZE = 8000
+TEMPERATURE_ANALISIS = 0.2  # se omitirá si el modelo no lo soporta
+MAX_TOKENS_SALIDA = 4000
 FALLBACK_EMPTY = (
     "No se pudo generar un resumen automático. "
     "Verificá que los PDFs tengan texto seleccionable (no imágenes escaneadas) "
     "y que el contenido sea legible."
 )
 
-# -------- Prompt maestro (síntesis final única) --------
 CRAFT_PROMPT_MAESTRO = r"""
 # C.R.A.F.T. — Prompt maestro para leer, analizar y generar un **informe quirúrgico** de pliegos (con múltiples anexos)
 
@@ -120,19 +114,8 @@ Objeto, organismo, proceso/modalidad, fechas clave, riesgos mayores, acciones in
 - **Citas** al lado de cada dato crítico `(Anexo X[, p. Y])`. Si no hay paginación/ID en el insumo, indicarlo.
 - **No repetir** contenido: deduplicar y usar referencias internas.
 - Si hay discordancia unitario vs total, **explicar la regla aplicable** con cita.
-
-## T — Público objetivo
-Áreas de Compras/Contrataciones, Farmacia/Abastecimiento, Asesoría Legal y Dirección; proveedores del rubro. Español (AR), precisión jurídica y operatividad.
-
-## Checklist de campos a extraer (mínimo)
-Identificación; Calendario; Contactos/Portales; Alcance/Plazo; Modalidad/Normativa; Mantenimiento de oferta; Garantías; Presentación de ofertas; Apertura/Evaluación/Adjudicación; Subsanación; Perfeccionamiento/Modificaciones; Entrega; Planilla/Renglones; Muestras; Cláusulas adicionales; **Normativa citada**.
-
-## Nota
-- Devuelve **solo el informe final en texto**, perfectamente organizado. **No incluyas JSON**.
-- No incluyas “parte 1/2/3” ni encabezados repetidos por cada segmento del documento.
 """
 
-# -------- Prompt para "Notas intermedias" por chunk --------
 CRAFT_PROMPT_NOTAS = r"""
 Genera **NOTAS INTERMEDIAS CRAFT** ultra concisas para síntesis posterior, a partir del fragmento dado.
 Reglas:
@@ -163,15 +146,21 @@ def _extract_content(resp) -> str:
 
 def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_tokens=MAX_TOKENS_SALIDA):
     """
-    Wrapper que usa SIEMPRE max_completion_tokens (modelos nuevos no aceptan max_tokens).
-    El nombre del parámetro aquí se mantiene como max_tokens por compatibilidad interna.
+    Llama a chat.completions usando SIEMPRE max_completion_tokens.
+    Si el modelo rechaza 'temperature', reintenta sin ese parámetro.
     """
-    return client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        max_completion_tokens=max_tokens
-    )
+    kwargs = dict(model=model, messages=messages, max_completion_tokens=max_tokens)
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    try:
+        return client.chat.completions.create(**kwargs)
+    except Exception as e:
+        # Modelos como algunos "gpt-5" no aceptan temperature != 1
+        msg = str(e)
+        if "temperature" in msg and ("unsupported" in msg.lower() or "Unsupported value" in msg):
+            kwargs.pop("temperature", None)
+            return client.chat.completions.create(**kwargs)
+        raise
 
 def _fallback_resumen(texto: str) -> str:
     """Reintento corto si la salida vino vacía."""
@@ -183,7 +172,7 @@ def _fallback_resumen(texto: str) -> str:
             "Usá español (AR) y marcá [FALTA] donde algo no conste. Texto:\n\n" + texto_corto}
     ]
     try:
-        r = _llamada_openai(mensajes, max_tokens=1200)
+        r = _llamada_openai(mensajes, max_tokens=1200, temperature=None)  # evita problemas con temperature
         out = _extract_content(r)
         return out or FALLBACK_EMPTY
     except Exception:
@@ -192,9 +181,6 @@ def _fallback_resumen(texto: str) -> str:
 def analizar_con_openai(texto: str) -> str:
     """
     Analiza el contenido completo y devuelve **un único informe** en texto.
-    - Si el texto total es corto: una sola pasada (síntesis final).
-    - Si es largo: notas intermedias por chunk + síntesis final única.
-    Siempre garantiza que el string retornado NO sea vacío.
     """
     texto = _sanitize_text(texto)
     if not texto:
@@ -207,10 +193,9 @@ def analizar_con_openai(texto: str) -> str:
                 {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
                 {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve ÚNICAMENTE el informe final (texto), sin preámbulos."}
             ]
-            resp = _llamada_openai(messages)
+            resp = _llamada_openai(messages, temperature=TEMPERATURE_ANALISIS, max_tokens=MAX_TOKENS_SALIDA)
             salida = _extract_content(resp)
             if not salida:
-                # Reintento corto
                 print("[ANALISIS] single-pass vacío → fallback")
                 return _fallback_resumen(texto)
             return salida
@@ -226,13 +211,13 @@ def analizar_con_openai(texto: str) -> str:
                 {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n=== FRAGMENTO {i}/{len(partes)} ===\n{parte}"}
             ]
             try:
-                r = _llamada_openai(msg, max_tokens=2000)
+                r = _llamada_openai(msg, max_tokens=2000, temperature=TEMPERATURE_ANALISIS)
                 out = _extract_content(r)
                 notas.append(out or f"[FALTA] No se obtuvieron notas del fragmento {i}. (Fuente: documento provisto)")
             except Exception as e:
                 notas.append(f"[ERROR] Parte {i}: {e}")
 
-        notas_integradas = "\n".join(notas)[:24000]  # cinturón de seguridad
+        notas_integradas = "\n".join(notas)[:24000]
 
         messages_final = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
@@ -245,7 +230,7 @@ def analizar_con_openai(texto: str) -> str:
 👉 Devuelve SOLO el informe final en texto."""}
         ]
 
-        resp_final = _llamada_openai(messages_final)
+        resp_final = _llamada_openai(messages_final, temperature=TEMPERATURE_ANALISIS, max_tokens=MAX_TOKENS_SALIDA)
         salida_final = _extract_content(resp_final)
         if not salida_final:
             print("[ANALISIS] síntesis vacía → fallback")
@@ -254,11 +239,10 @@ def analizar_con_openai(texto: str) -> str:
 
     except Exception as e:
         print(f"[ANALISIS] excepción: {e!r}")
-        # Último recurso
         return _fallback_resumen(texto)
 
 # ============================================================
-# Chat IA (sin cambios funcionales, corrige parámetro tokens)
+# Chat IA (mismo fix de temperature)
 # ============================================================
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
     descripcion_interfaz = f"""
@@ -293,14 +277,15 @@ El usuario actual es: {usuario}
 """
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
+        # Reutilizamos _llamada_openai para heredar el manejo de temperature
+        response = _llamada_openai(
             messages=[
                 {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
                 {"role": "user", "content": prompt}
             ],
+            model="gpt-4o",
             temperature=0.3,
-            max_completion_tokens=1200
+            max_tokens=1200
         )
         out = _extract_content(response)
         return out or "No tengo suficiente contexto para responder con precisión. ¿Podés reformular o dar más detalle?"
@@ -315,7 +300,6 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, nombre_archivo)
 
-    # Cinturón de seguridad: nunca permitir resumen vacío
     resumen = (resumen or "").strip() or FALLBACK_EMPTY
 
     buffer = io.BytesIO()
@@ -337,7 +321,6 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
     c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_actual}")
 
-    # Evitar markdown básico en PDF
     resumen = resumen.replace("**", "")
     c.setFont("Helvetica", 11)
     margen_izquierdo = 20 * mm
