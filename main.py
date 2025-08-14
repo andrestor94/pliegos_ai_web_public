@@ -52,13 +52,17 @@ from db_orm import inicializar_bd_orm, SessionLocal, AuditLog
 
 # ================== App & Middlewares ==================
 app = FastAPI(middleware=[
-    Middleware(SessionMiddleware, secret_key="clave_secreta_super_segura")
+    Middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", "clave_secreta_super_segura"))
 ])
 
 # Inicializa BD SQLite (usuarios, historial, tickets, mensajes, hilos_ocultos, adjuntos)
 inicializar_bd()
 # Inicializa ORM (audit_logs) según DATABASE_URL
 inicializar_bd_orm()
+
+# Asegurar carpetas estáticas
+os.makedirs("static", exist_ok=True)
+os.makedirs("generated_pdfs", exist_ok=True)
 
 # Static
 # Si tus archivos están en backend/static, cambia a directory="backend/static"

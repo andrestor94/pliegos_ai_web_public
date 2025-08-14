@@ -34,6 +34,13 @@ CHUNK_SIZE = 16000              # menos cortes → mejor contexto
 TEMPERATURE_ANALISIS = 0.2
 MAX_TOKENS_SALIDA = 4000
 
+# Modelos que hoy sólo aceptan temperatura por defecto (no personalizada)
+MODELOS_TEMPERATURA_FIJA = {
+    "gpt-5",
+    "gpt-5-mini",
+    "gpt-5.0",
+}
+
 # Guía de sinónimos/normalización para evitar "no especificado" falsos
 SINONIMOS_CANONICOS = r"""
 [Guía de mapeo semántico]
@@ -133,10 +140,47 @@ Si falta, anota: [FALTA] campo X — no consta.
 def _particionar(texto: str, max_chars: int) -> list[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
-def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_completion_tokens=MAX_TOKENS_SALIDA):
-    return client.chat.completions.create(
-        model=model,
+def _modelo_tiene_temp_personalizada(model: str) -> bool:
+    m = (model or "").lower()
+    return not any(m.startswith(pref) for pref in MODELOS_TEMPERATURA_FIJA)
+
+def _create_chat_completion(messages, model, temperature, max_completion_tokens):
+    """
+    Crea la completion con manejo de compatibilidad:
+    - Envía temperature sólo si el modelo lo soporta.
+    - Si la API devuelve error 'unsupported_value' para temperature, reintenta sin temperature.
+    """
+    kwargs = {
+        "model": model,
+        "messages": messages,
+        "max_completion_tokens": max_completion_tokens
+    }
+
+    if temperature is not None and _modelo_tiene_temp_personalizada(model):
+        kwargs["temperature"] = temperature
+
+    try:
+        return client.chat.completions.create(**kwargs)
+    except Exception as e:
+        es_temp_unsupported = (
+            "temperature" in str(e).lower() and
+            ("unsupported_value" in str(e).lower() or "does not support" in str(e).lower())
+        )
+        if es_temp_unsupported and "temperature" in kwargs:
+            # reintento sin temperature
+            kwargs.pop("temperature", None)
+            return client.chat.completions.create(**kwargs)
+        raise
+
+def _llamada_openai(
+    messages,
+    model=MODEL_ANALISIS,
+    temperature=TEMPERATURE_ANALISIS,
+    max_completion_tokens=MAX_TOKENS_SALIDA
+):
+    return _create_chat_completion(
         messages=messages,
+        model=model,
         temperature=temperature,
         max_completion_tokens=max_completion_tokens
     )
@@ -290,17 +334,22 @@ El usuario actual es: {usuario}
 📌 Respondé de manera natural, directa y profesional. No repitas lo que hace la plataforma. Respondé exactamente lo que se te pregunta.
 """
 
+    messages = [
+        {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
+        {"role": "user", "content": prompt}
+    ]
+
+    model_chat = os.getenv("OPENAI_MODEL_CHAT", "gpt-4o")
+    temp_chat = 0.3
+
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
+        resp = _create_chat_completion(
+            messages=messages,
+            model=model_chat,
+            temperature=temp_chat,
             max_completion_tokens=1200
         )
-        return response.choices[0].message.content.strip()
+        return resp.choices[0].message.content.strip()
     except Exception as e:
         return f"⚠️ Error al generar respuesta: {e}"
 
