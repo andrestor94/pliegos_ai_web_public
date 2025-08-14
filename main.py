@@ -17,8 +17,7 @@ from utils import (
     extraer_texto_de_pdf,     # se mantiene por compatibilidad en otros puntos si lo usas
     analizar_con_openai,      # idem
     generar_pdf_con_plantilla,
-    responder_chat_openai,
-    analizar_anexos           # 👈 NUEVO: análisis unificado multi-anexo
+    responder_chat_openai
 )
 
 from database import (
@@ -331,15 +330,19 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     if not archivos:
         return JSONResponse({"error": "Subí al menos un archivo"}, status_code=400)
 
-    # Validación mínima de extensiones (pueden venir PDFs/DOCX/XLSX)
+    # Solo aceptamos PDFs para el análisis (el extractor actual espera PDF)
     for a in archivos:
         if not a or not a.filename:
             continue
-        _validate_ext(a.filename)
+        if os.path.splitext(a.filename)[1].lower() != ".pdf":
+            return JSONResponse({"error": f"Sólo se aceptan PDF para el análisis: {a.filename}"}, status_code=400)
 
-    # 1) Análisis integrado (bloqueante → lo mando al threadpool)
+    # 1) Extraer texto de todos los PDFs y analizar
     try:
-        resumen = await run_in_threadpool(analizar_anexos, archivos)
+        texto_total = ""
+        for archivo in archivos:
+            texto_total += extraer_texto_de_pdf(archivo) + "\n\n"
+        resumen = await run_in_threadpool(analizar_con_openai, texto_total)
     except Exception as e:
         return JSONResponse({"error": f"Fallo en el análisis: {e}"}, status_code=500)
 
@@ -595,7 +598,7 @@ async def crear_usuario_api(request: Request):
         nombre = data.get("nombre")
         email = data.get("email")
         rol = data.get("rol")
-        if not nombre o  not email or not rol:  # noqa: E712 (evita error linter si no usás)
+        if not nombre or not email or not rol:  # noqa: E712 (evita error linter si no usás)
             return JSONResponse({"error": "Faltan campos: nombre, email, rol"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
         agregar_usuario(nombre, email, "1234", rol, actor_user_id=actor_user_id, ip=ip)
