@@ -150,8 +150,8 @@ def _particionar(texto: str, max_chars: int) -> list[str]:
 def call_llm(model: str, messages: list, max_tokens: int = 2000, temperature: float = 0.2) -> str:
     """
     Usa Responses API para modelos que lo requieren (p.ej. gpt-5, gpt-4.1, o4).
-    Solo usa Chat Completions si el modelo NO requiere Responses.
-    Evita el error: 'Unsupported parameter max_tokens' usando 'max_output_tokens'.
+    - En Responses: no enviamos 'temperature' (no está soportado).
+    - En Chat Completions: usamos 'temperature' y 'max_tokens' como siempre.
     """
     def _requires_responses(m: str) -> bool:
         m = (m or "").lower()
@@ -160,22 +160,20 @@ def call_llm(model: str, messages: list, max_tokens: int = 2000, temperature: fl
     if _requires_responses(model):
         if not hasattr(client, "responses") or not hasattr(client.responses, "create"):
             raise RuntimeError(
-                "Este modelo requiere la Responses API. Actualizá el paquete 'openai' a una versión reciente (p.ej. >= 1.40.0)."
+                "Este modelo requiere la Responses API. Actualizá el paquete 'openai' (p.ej. >= 1.40.0) y redeploy."
             )
-        # Intento con max_output_tokens (SDKs recientes)
+        # Intento con max_output_tokens (SDKs recientes). SIN 'temperature'.
         try:
             resp = client.responses.create(
                 model=model,
                 input=[{"role": m["role"], "content": m["content"]} for m in messages],
-                temperature=temperature,
                 max_output_tokens=max_tokens,
             )
         except TypeError:
-            # Reintento sin el parámetro si el SDK no lo soporta
+            # Reintento sin max_output_tokens si el SDK no lo soporta
             resp = client.responses.create(
                 model=model,
                 input=[{"role": m["role"], "content": m["content"]} for m in messages],
-                temperature=temperature,
             )
 
         # Unificar texto
@@ -451,7 +449,7 @@ El usuario actual es: {usuario}
             {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
             {"role": "user", "content": prompt}
         ]
-        # Chat ahora con gpt-5 (usa Responses bajo el capó si aplica)
+        # Chat ahora con gpt-5 (Responses no acepta 'temperature')
         return call_llm(model="gpt-5", messages=messages, max_tokens=1200, temperature=0.3)
     except Exception as e:
         return f"⚠️ Error al generar respuesta: {e}"
