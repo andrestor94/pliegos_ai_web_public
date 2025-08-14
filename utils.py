@@ -1,7 +1,10 @@
 import fitz  # PyMuPDF
 import io
 import os
+import zipfile
+import xml.etree.ElementTree as ET
 from datetime import datetime
+from typing import List
 from openai import OpenAI
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -13,13 +16,205 @@ from dotenv import load_dotenv
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def extraer_texto_de_pdf(file) -> str:
-    texto_completo = ""
-    with fitz.open(stream=file.file.read(), filetype="pdf") as doc:
-        for pagina in doc:
-            texto_completo += pagina.get_text()
-    return texto_completo
+# ============================================================
+# Extracción básica de texto por tipo de archivo
+# ============================================================
 
+def extraer_texto_de_pdf(file) -> str:
+    """Lee un UploadFile PDF y devuelve su texto."""
+    try:
+        file.file.seek(0)
+        with fitz.open(stream=file.file.read(), filetype="pdf") as doc:
+            return "\n".join(p.get_text() for p in doc)
+    except Exception:
+        return ""
+
+def _read_bytes(upload_file) -> bytes:
+    try:
+        upload_file.file.seek(0)
+    except Exception:
+        pass
+    return upload_file.file.read()
+
+def _txt_from_txt(upload_file) -> str:
+    data = _read_bytes(upload_file)
+    try:
+        return data.decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+def _txt_from_csv(upload_file) -> str:
+    data = _read_bytes(upload_file)
+    try:
+        return data.decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+def _txt_from_docx(upload_file) -> str:
+    """
+    Extractor DOCX sin dependencias externas:
+    Lee word/document.xml y concatena los nodos w:t.
+    """
+    try:
+        data = _read_bytes(upload_file)
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            with z.open("word/document.xml") as f:
+                xml = f.read()
+        root = ET.fromstring(xml)
+        ns = {
+            "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        }
+        texts = []
+        for t in root.findall(".//w:t", ns):
+            if t.text:
+                texts.append(t.text)
+        return " ".join(texts)
+    except Exception:
+        return ""
+
+def _txt_from_pptx(upload_file) -> str:
+    """
+    Extractor PPTX sin dependencias externas:
+    Recorre ppt/slides/slide*.xml y concatena a:t (text runs).
+    """
+    try:
+        data = _read_bytes(upload_file)
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            slide_names = [n for n in z.namelist() if n.startswith("ppt/slides/slide") and n.endswith(".xml")]
+            slide_names.sort()
+            chunks = []
+            for name in slide_names:
+                with z.open(name) as f:
+                    xml = f.read()
+                root = ET.fromstring(xml)
+                ns = {
+                    "a": "http://schemas.openxmlformats.org/drawingml/2006/main"
+                }
+                for t in root.findall(".//a:t", ns):
+                    if t.text:
+                        chunks.append(t.text)
+            return "\n".join(chunks)
+    except Exception:
+        return ""
+
+def _txt_from_xlsx(upload_file) -> str:
+    """
+    Extractor XLSX simple sin dependencias externas:
+    - Lee sharedStrings.xml para recuperar strings compartidas.
+    - Recorre worksheets y mapea c/@t == 's' con sharedStrings.
+    Nota: Es un best-effort básico.
+    """
+    try:
+        data = _read_bytes(upload_file)
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            # sharedStrings
+            shared = []
+            if "xl/sharedStrings.xml" in z.namelist():
+                with z.open("xl/sharedStrings.xml") as f:
+                    xml = f.read()
+                root = ET.fromstring(xml)
+                ns = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+                for si in root.findall(".//s:si", ns):
+                    # Un si puede tener múltiples t (con formato), los unimos
+                    parts = []
+                    for t in si.findall(".//s:t", ns):
+                        if t.text:
+                            parts.append(t.text)
+                    shared.append("".join(parts))
+            # hojas
+            ws_names = [n for n in z.namelist() if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")]
+            ws_names.sort()
+            out_lines = []
+            ns = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+            for name in ws_names:
+                with z.open(name) as f:
+                    xml = f.read()
+                root = ET.fromstring(xml)
+                for row in root.findall(".//s:row", ns):
+                    row_vals = []
+                    for c in row.findall("s:c", ns):
+                        typ = c.get("t")
+                        v = c.find("s:v", ns)
+                        if v is None or v.text is None:
+                            row_vals.append("")
+                            continue
+                        if typ == "s":
+                            # índice a shared strings
+                            try:
+                                idx = int(v.text)
+                                row_vals.append(shared[idx] if 0 <= idx < len(shared) else "")
+                            except Exception:
+                                row_vals.append("")
+                        else:
+                            # números/fechas (sin formato)
+                            row_vals.append(v.text)
+                    if any(cell.strip() for cell in row_vals):
+                        out_lines.append(" | ".join(row_vals))
+            return "\n".join(out_lines)
+    except Exception:
+        return ""
+
+def _ext(fname: str) -> str:
+    return os.path.splitext((fname or "").lower())[1]
+
+def _safe_name(fname: str) -> str:
+    base = os.path.basename(fname or "archivo")
+    return "".join(c for c in base if c.isalnum() or c in ("-", "_", ".", " "))
+
+# ============================================================
+# Analizador multi-anexo para la ruta /analizar-pliego
+# ============================================================
+
+def analizar_anexos(archivos: List) -> str:
+    """
+    Recibe una lista de UploadFile (FastAPI) y:
+      1) Extrae texto de cada uno (PDF, TXT, CSV, DOCX, PPTX, XLSX best-effort).
+      2) Concatena con separadores y metadatos mínimos.
+      3) Llama a analizar_con_openai() para producir el informe final único.
+    Devuelve el informe como str. Si no hay texto legible, retorna mensaje claro.
+    """
+    if not archivos:
+        return "No se recibió ningún archivo."
+
+    piezas = []
+    legibles = 0
+
+    for i, a in enumerate(archivos, start=1):
+        if not a or not getattr(a, "filename", ""):
+            continue
+        nombre = _safe_name(a.filename)
+        ext = _ext(nombre)
+        texto = ""
+
+        if ext == ".pdf":
+            texto = extraer_texto_de_pdf(a)
+        elif ext in {".txt"}:
+            texto = _txt_from_txt(a)
+        elif ext in {".csv"}:
+            texto = _txt_from_csv(a)
+        elif ext in {".docx"}:
+            texto = _txt_from_docx(a)
+        elif ext in {".pptx"}:
+            texto = _txt_from_pptx(a)
+        elif ext in {".xlsx"}:
+            texto = _txt_from_xlsx(a)
+        else:
+            # Otros no soportados de forma nativa
+            texto = ""
+
+        if texto.strip():
+            legibles += 1
+            piezas.append(f"\n\n===== ANEXO {i}: {nombre} =====\n{texto.strip()}\n")
+        else:
+            piezas.append(f"\n\n===== ANEXO {i}: {nombre} =====\n[No se pudo extraer texto legible de este archivo]\n")
+
+    corpus = "\n".join(piezas).strip()
+
+    if not corpus:
+        return "No se pudo extraer texto de los anexos provistos. Verificá que sean PDFs o formatos de texto legibles."
+
+    # Llamada al analizador C.R.A.F.T.
+    return analizar_con_openai(corpus)
 
 # ============================================================
 # NUEVO ANALIZADOR (usa tu C.R.A.F.T. mejorado + GPT-5)
@@ -44,7 +239,7 @@ Estás trabajando con **pliegos de licitación** (a menudo sanitarios) con **var
 - **Normativa**: citar (ley/decreto/resolución + artículo) con **fuente**.
 
 ## R — Rol
-Actúas como equipo experto (Derecho Administrativo, Analista de Licitaciones Sanitarias, Redactor técnico-jurídico). Escritura técnica, sobria y precisa.
+Actuás como equipo experto (Derecho Administrativo, Analista de Licitaciones Sanitarias, Redactor técnico-jurídico). Escritura técnica, sobria y precisa.
 
 ## A — Acción (resumen)
 1) Indexar y normalizar (fechas DD/MM/AAAA, horas HH:MM, precios con 2 decimales).
@@ -120,6 +315,7 @@ def _particionar(texto: str, max_chars: int) -> list[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
 def _llamada_openai(messages, model=MODEL_ANALISIS, max_tokens=MAX_TOKENS_SALIDA):
+    # Importante: usar max_completion_tokens y no pasar temperature para evitar errores del modelo.
     return client.chat.completions.create(
         model=model,
         messages=messages,
@@ -127,9 +323,14 @@ def _llamada_openai(messages, model=MODEL_ANALISIS, max_tokens=MAX_TOKENS_SALIDA
     )
 
 def analizar_con_openai(texto: str) -> str:
+    """
+    Si es corto: una sola pasada (síntesis final).
+    Si es largo: notas intermedias por chunk + síntesis final única.
+    """
     if not texto or not texto.strip():
         return "No se recibió contenido para analizar."
 
+    # Caso 1: una sola pasada
     if len(texto) <= MAX_SINGLE_PASS_CHARS:
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
@@ -137,13 +338,15 @@ def analizar_con_openai(texto: str) -> str:
         ]
         try:
             resp = _llamada_openai(messages)
-            return resp.choices[0].message.content.strip()
+            return (resp.choices[0].message.content or "").strip()
         except Exception as e:
             return f"⚠️ Error al generar el análisis: {e}"
 
+    # Caso 2: dos etapas
     partes = _particionar(texto, CHUNK_SIZE)
     notas = []
 
+    # Etapa A: notas intermedias
     for i, parte in enumerate(partes, 1):
         msg = [
             {"role": "system", "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
@@ -151,12 +354,13 @@ def analizar_con_openai(texto: str) -> str:
         ]
         try:
             r = _llamada_openai(msg, max_tokens=2000)
-            notas.append(r.choices[0].message.content.strip())
+            notas.append((r.choices[0].message.content or "").strip())
         except Exception as e:
             notas.append(f"[ERROR] No se pudieron generar notas de la parte {i}: {e}")
 
     notas_integradas = "\n".join(notas)
 
+    # Etapa B: síntesis final única
     messages_final = [
         {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
         {"role": "user", "content": f"""{CRAFT_PROMPT_MAESTRO}
@@ -170,14 +374,14 @@ def analizar_con_openai(texto: str) -> str:
 
     try:
         resp_final = _llamada_openai(messages_final)
-        return resp_final.choices[0].message.content.strip()
+        return (resp_final.choices[0].message.content or "").strip()
     except Exception as e:
         return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias:\n{notas_integradas}"
-
 
 # ============================================================
 # Chat IA (gpt-5)
 # ============================================================
+
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
     descripcion_interfaz = f"""
 Sos el asistente inteligente de la plataforma web "Suizo Argentina - Licitaciones IA". Esta plataforma permite:
@@ -219,14 +423,14 @@ El usuario actual es: {usuario}
             ],
             max_completion_tokens=1200
         )
-        return response.choices[0].message.content.strip()
+        return (response.choices[0].message.content or "").strip()
     except Exception as e:
         return f"⚠️ Error al generar respuesta: {e}"
-
 
 # ============================================================
 # Generación de PDF
 # ============================================================
+
 def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     output_dir = os.path.join("generated_pdfs")
     os.makedirs(output_dir, exist_ok=True)
@@ -250,7 +454,7 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     c.setFont("Helvetica", 10)
     fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
     c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_actual}")
-    resumen = resumen.replace("**", "")
+    resumen = (resumen or "").replace("**", "")
     c.setFont("Helvetica", 11)
     margen_izquierdo = 20 * mm
     margen_superior = A4[1] - 54 * mm
@@ -291,16 +495,17 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     return output_path
 
 def dividir_texto(texto, canvas_obj, max_width):
-    palabras = texto.split(" ")
+    palabras = (texto or "").split(" ")
     lineas = []
     linea_actual = ""
 
     for palabra in palabras:
-        test_line = linea_actual + " " + palabra if linea_actual else palabra
+        test_line = (linea_actual + " " + palabra) if linea_actual else palabra
         if canvas_obj.stringWidth(test_line, canvas_obj._fontname, canvas_obj._fontsize) <= max_width:
             linea_actual = test_line
         else:
-            lineas.append(linea_actual)
+            if linea_actual:
+                lineas.append(linea_actual)
             linea_actual = palabra
 
     if linea_actual:
