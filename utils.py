@@ -15,33 +15,35 @@ load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def extraer_texto_de_pdf(file) -> str:
-    texto_completo = ""
-    with fitz.open(stream=file.file.read(), filetype="pdf") as doc:
-        for pagina in doc:
-            texto_completo += pagina.get_text()
-    return texto_completo
-
+    """
+    Lee el PDF desde UploadFile y devuelve su texto. Reposiciona el puntero.
+    """
+    try:
+        file.file.seek(0)
+        data = file.file.read()
+        if not data:
+            return ""
+        with fitz.open(stream=data, filetype="pdf") as doc:
+            texto = []
+            for pagina in doc:
+                texto.append(pagina.get_text() or "")
+        return "\n".join(texto).strip()
+    except Exception:
+        return ""
 
 # ============================================================
-# ANALIZADOR (C.R.A.F.T. + GPT-5) con integración multi-anexo
+# ANALIZADOR (C.R.A.F.T. + GPT-5/4o) con integración multi-anexo
 # ============================================================
 
 MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
 
 # Heurísticas de particionado
-MAX_SINGLE_PASS_CHARS = 55000   # subimos umbral para forzar síntesis única
-CHUNK_SIZE = 16000              # menos cortes → mejor contexto
+MAX_SINGLE_PASS_CHARS = 55000
+CHUNK_SIZE = 16000
 TEMPERATURE_ANALISIS = 0.2
 MAX_TOKENS_SALIDA = 4000
 
-# Modelos que hoy sólo aceptan temperatura por defecto (no personalizada)
-MODELOS_TEMPERATURA_FIJA = {
-    "gpt-5",
-    "gpt-5-mini",
-    "gpt-5.0",
-}
-
-# Guía de sinónimos/normalización para evitar "no especificado" falsos
+# Guía de sinónimos/normalización
 SINONIMOS_CANONICOS = r"""
 [Guía de mapeo semántico]
 - "Fecha de publicación" ≈ "fecha del llamado", "fecha de difusión del llamado", "fecha de convocatoria".
@@ -118,7 +120,7 @@ Objeto, organismo, proceso/modalidad, fechas clave, riesgos, acciones inmediatas
 {SINONIMOS_CANONICOS}
 """
 
-# -------- Prompt para "Notas intermedias" por chunk --------
+# -------- Prompt para "Notas intermedias" --------
 CRAFT_PROMPT_NOTAS = r"""
 Genera **NOTAS INTERMEDIAS CRAFT** ultra concisas para síntesis posterior, a partir del fragmento.
 Reglas:
@@ -140,50 +142,93 @@ Si falta, anota: [FALTA] campo X — no consta.
 def _particionar(texto: str, max_chars: int) -> list[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
-def _modelo_tiene_temp_personalizada(model: str) -> bool:
-    m = (model or "").lower()
-    return not any(m.startswith(pref) for pref in MODELOS_TEMPERATURA_FIJA)
-
-def _create_chat_completion(messages, model, temperature, max_completion_tokens):
+def _modelo_sin_temperature(model: str) -> bool:
     """
-    Crea la completion con manejo de compatibilidad:
-    - Envía temperature sólo si el modelo lo soporta.
-    - Si la API devuelve error 'unsupported_value' para temperature, reintenta sin temperature.
+    Algunos modelos nuevos solo admiten la temperatura por defecto.
+    Si detectamos uno conocido, no enviamos 'temperature'.
+    """
+    m = (model or "").lower()
+    return any(x in m for x in ["gpt-5", "gpt-4.1", "o4", "o3", "omni"])
+
+def _extraer_contenido_de_respuesta(resp) -> str:
+    """
+    Soporta tanto chat.completions como responses.
+    """
+    # chat.completions
+    try:
+        txt = resp.choices[0].message.content
+        if txt:
+            return txt
+    except Exception:
+        pass
+    # responses
+    try:
+        parts = resp.output if hasattr(resp, "output") else resp.choices[0].message
+    except Exception:
+        parts = None
+
+    try:
+        # SDK nuevo: resp.output_text
+        if hasattr(resp, "output_text") and resp.output_text:
+            return resp.output_text
+    except Exception:
+        pass
+
+    # SDK con contenido por bloques
+    try:
+        if hasattr(resp, "output") and isinstance(resp.output, list):
+            out_chunks = []
+            for blk in resp.output:
+                if getattr(blk, "type", "") == "output_text":
+                    out_chunks.append(getattr(blk, "text", ""))
+                elif getattr(blk, "type", "") == "message" and getattr(blk, "content", None):
+                    for c in blk.content:
+                        if getattr(c, "type", "") == "output_text":
+                            out_chunks.append(getattr(c, "text", ""))
+                        elif getattr(c, "type", "") == "text":
+                            out_chunks.append(getattr(c, "text", ""))
+            if out_chunks:
+                return "\n".join([t for t in out_chunks if t]).strip()
+    except Exception:
+        pass
+
+    return ""
+
+def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_completion_tokens=MAX_TOKENS_SALIDA):
+    """
+    Llama a OpenAI con compatibilidad hacia atrás y reintento con Responses.
+    - Usa max_completion_tokens (no max_tokens).
+    - Omite 'temperature' si el modelo no lo soporta.
+    Devuelve el objeto de respuesta (no el texto).
     """
     kwargs = {
         "model": model,
         "messages": messages,
         "max_completion_tokens": max_completion_tokens
     }
-
-    if temperature is not None and _modelo_tiene_temp_personalizada(model):
+    if not _modelo_sin_temperature(model) and temperature is not None:
         kwargs["temperature"] = temperature
 
+    # Primer intento: chat.completions
     try:
         return client.chat.completions.create(**kwargs)
-    except Exception as e:
-        es_temp_unsupported = (
-            "temperature" in str(e).lower() and
-            ("unsupported_value" in str(e).lower() or "does not support" in str(e).lower())
-        )
-        if es_temp_unsupported and "temperature" in kwargs:
-            # reintento sin temperature
-            kwargs.pop("temperature", None)
-            return client.chat.completions.create(**kwargs)
-        raise
-
-def _llamada_openai(
-    messages,
-    model=MODEL_ANALISIS,
-    temperature=TEMPERATURE_ANALISIS,
-    max_completion_tokens=MAX_TOKENS_SALIDA
-):
-    return _create_chat_completion(
-        messages=messages,
-        model=model,
-        temperature=temperature,
-        max_completion_tokens=max_completion_tokens
-    )
+    except Exception as e1:
+        msg = str(e1).lower()
+        # Reintento con Responses si parámetros no soportados
+        if "unsupported" in msg or "not supported" in msg or "unknown parameter" in msg:
+            try:
+                rkwargs = {
+                    "model": model,
+                    "input": [{"role": m["role"], "content": m["content"]} for m in messages],
+                    "max_completion_tokens": max_completion_tokens
+                }
+                # Responses suele ignorar temperature si no aplica; solo la pasamos si el modelo la admite
+                if not _modelo_sin_temperature(model) and temperature is not None:
+                    rkwargs["temperature"] = temperature
+                return client.responses.create(**rkwargs)
+            except Exception as e2:
+                raise e2
+        raise e1
 
 _META_PATTERNS = [
     re.compile(r"(?i)\bparte\s+\d+\s+de\s+\d+"),
@@ -198,24 +243,21 @@ def _limpiar_meta(texto: str) -> str:
         if any(p.search(ln) for p in _META_PATTERNS):
             continue
         lineas.append(ln)
-    # Compactar múltiples líneas vacías consecutivas
     limpio = re.sub(r"\n{3,}", "\n\n", "\n".join(lineas)).strip()
     return limpio
 
 def analizar_con_openai(texto: str) -> str:
     """
-    Analiza el contenido completo y devuelve **un único informe** en texto listo para PDF.
-    - Si es corto y no hay múltiples anexos: 1 pasada.
-    - Si es largo o con anexos: notas intermedias + síntesis final única.
+    Analiza el contenido completo y devuelve **un único informe**.
+    Si falla la llamada al modelo, devuelve un mensaje de error con información útil.
     """
     if not texto or not texto.strip():
         return "No se recibió contenido para analizar."
 
-    # Detectar si parece haber múltiples anexos (marcadores comunes)
     separadores = ["===ANEXO===", "=== ANEXO ===", "### ANEXO", "## ANEXO", "\nAnexo "]
     varios_anexos = any(sep.lower() in texto.lower() for sep in separadores)
 
-    # Pasada única SOLO si es corto y no hay indicios de multi-anexo
+    # Pasada única
     if len(texto) <= MAX_SINGLE_PASS_CHARS and not varios_anexos:
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
@@ -223,7 +265,8 @@ def analizar_con_openai(texto: str) -> str:
         ]
         try:
             resp = _llamada_openai(messages)
-            return _limpiar_meta(resp.choices[0].message.content.strip())
+            out = _extraer_contenido_de_respuesta(resp).strip()
+            return _limpiar_meta(out) if out else "⚠️ El modelo no devolvió contenido."
         except Exception as e:
             return f"⚠️ Error al generar el análisis: {e}"
 
@@ -239,11 +282,12 @@ def analizar_con_openai(texto: str) -> str:
         ]
         try:
             r = _llamada_openai(msg, max_completion_tokens=2000)
-            notas.append(r.choices[0].message.content.strip())
+            txt = _extraer_contenido_de_respuesta(r).strip()
+            notas.append(txt or f"[FALTA] El modelo no devolvió notas para la parte {i}.")
         except Exception as e:
             notas.append(f"[ERROR] No se pudieron generar notas de la parte {i}: {e}")
 
-    notas_integradas = "\n".join(notas)
+    notas_integradas = "\n".join(notas).strip()
 
     # Etapa B: síntesis final única y deduplicada
     messages_final = [
@@ -261,11 +305,11 @@ def analizar_con_openai(texto: str) -> str:
 
     try:
         resp_final = _llamada_openai(messages_final)
-        return _limpiar_meta(resp_final.choices[0].message.content.strip())
+        out = _extraer_contenido_de_respuesta(resp_final).strip()
+        out = _limpiar_meta(out)
+        return out if out else f"⚠️ El modelo no devolvió la síntesis.\n\nNotas intermedias:\n{_limpiar_meta(notas_integradas)}"
     except Exception as e:
-        # Fallback: al menos devolver las notas (limpias de meta)
         return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias:\n{_limpiar_meta(notas_integradas)}"
-
 
 # ============================
 # NUEVO: integración multi-anexo
@@ -280,24 +324,25 @@ def analizar_anexos(files: list) -> str:
 
     bloques = []
     for idx, f in enumerate(files, 1):
-        try:
-            # Importante: hay que reposicionar el puntero para cada lectura
-            f.file.seek(0)
-            texto = extraer_texto_de_pdf(f)
-        except Exception:
-            # si no es PDF, intentar leer bytes y decodificar a texto simple
-            f.file.seek(0)
+        nombre = getattr(f, "filename", f"anexo_{idx}.pdf")
+        texto = ""
+        # Intento PDF
+        texto = extraer_texto_de_pdf(f)
+        # Si no se pudo, intento leer como texto plano
+        if not texto:
             try:
-                texto = f.file.read().decode("utf-8", errors="ignore")
+                f.file.seek(0)
+                texto = f.file.read().decode("utf-8", errors="ignore").strip()
             except Exception:
                 texto = ""
 
-        nombre = getattr(f, "filename", f"anexo_{idx}.pdf")
+        if not texto:
+            texto = f"[FALTA] No se pudo extraer texto del anexo {idx} ({nombre})."
+
         bloques.append(f"=== ANEXO {idx:02d}: {nombre} ===\n{texto}\n")
 
-    contenido_unico = "\n".join(bloques)
+    contenido_unico = "\n".join(bloques).strip()
     return analizar_con_openai(contenido_unico)
-
 
 # ============================================================
 # (NO TOCAR) — Chat IA
@@ -334,25 +379,28 @@ El usuario actual es: {usuario}
 📌 Respondé de manera natural, directa y profesional. No repitas lo que hace la plataforma. Respondé exactamente lo que se te pregunta.
 """
 
-    messages = [
-        {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
-        {"role": "user", "content": prompt}
-    ]
-
-    model_chat = os.getenv("OPENAI_MODEL_CHAT", "gpt-4o")
-    temp_chat = 0.3
-
     try:
-        resp = _create_chat_completion(
-            messages=messages,
-            model=model_chat,
-            temperature=temp_chat,
-            max_completion_tokens=1200
-        )
-        return resp.choices[0].message.content.strip()
+        # Misma compatibilidad que arriba: usar max_completion_tokens
+        kwargs = {
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
+                {"role": "user", "content": prompt}
+            ],
+            "max_completion_tokens": 1200
+        }
+        # gpt-4o suele aceptar temperature; si falla se ignora abajo.
+        try:
+            kwargs["temperature"] = 0.3
+            resp = client.chat.completions.create(**kwargs)
+        except Exception:
+            # reintento sin temperature
+            kwargs.pop("temperature", None)
+            resp = client.chat.completions.create(**kwargs)
+        out = _extraer_contenido_de_respuesta(resp).strip()
+        return out if out else "No pude generar una respuesta en este momento."
     except Exception as e:
         return f"⚠️ Error al generar respuesta: {e}"
-
 
 # ============================================================
 # (SIN CAMBIOS) — Generación de PDF
@@ -380,13 +428,17 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     c.setFont("Helvetica", 10)
     fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
     c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_actual}")
-    resumen = resumen.replace("**", "")
+    resumen = (resumen or "").replace("**", "")
     c.setFont("Helvetica", 11)
     margen_izquierdo = 20 * mm
     margen_superior = A4[1] - 54 * mm
     ancho_texto = 170 * mm
     alto_linea = 14
     y = margen_superior
+
+    # Si por alguna razón vino vacío, lo marcamos explícitamente
+    if not resumen.strip():
+        resumen = "⚠️ No se obtuvo contenido del análisis. Revise la configuración del modelo o intente nuevamente."
 
     for parrafo in resumen.split("\n"):
         if not parrafo.strip():
@@ -420,7 +472,6 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
 
     return output_path
 
-
 def dividir_texto(texto, canvas_obj, max_width):
     palabras = texto.split(" ")
     lineas = []
@@ -431,7 +482,8 @@ def dividir_texto(texto, canvas_obj, max_width):
         if canvas_obj.stringWidth(test_line, canvas_obj._fontname, canvas_obj._fontsize) <= max_width:
             linea_actual = test_line
         else:
-            lineas.append(linea_actual)
+            if linea_actual:
+                lineas.append(linea_actual)
             linea_actual = palabra
 
     if linea_actual:
