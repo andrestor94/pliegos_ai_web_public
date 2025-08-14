@@ -25,16 +25,12 @@ def extraer_texto_de_pdf(file) -> str:
 # NUEVO ANALIZADOR (usa tu C.R.A.F.T. mejorado + GPT-5)
 # ============================================================
 
-# Modelo (puedes override con OPENAI_MODEL_ANALISIS=gpt-5)
 MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
 
-# Heurísticas de particionado
-MAX_SINGLE_PASS_CHARS = 45000   # si el texto total es menor, va en una sola pasada
-CHUNK_SIZE = 12000              # tamaño por parte si es muy grande
-TEMPERATURE_ANALISIS = 0.2
-MAX_TOKENS_SALIDA = 4000        # margen para informes extensos
+MAX_SINGLE_PASS_CHARS = 45000
+CHUNK_SIZE = 12000
+MAX_TOKENS_SALIDA = 4000
 
-# -------- Prompt maestro (síntesis final única) --------
 CRAFT_PROMPT_MAESTRO = r"""
 # C.R.A.F.T. — Prompt maestro para leer, analizar y generar un **informe quirúrgico** de pliegos (con múltiples anexos)
 
@@ -101,7 +97,6 @@ Identificación; Calendario; Contactos/Portales; Alcance/Plazo; Modalidad/Normat
 - No incluyas “parte 1/2/3” ni encabezados repetidos por cada segmento del documento.
 """
 
-# -------- Prompt para "Notas intermedias" por chunk --------
 CRAFT_PROMPT_NOTAS = r"""
 Genera **NOTAS INTERMEDIAS CRAFT** ultra concisas para síntesis posterior, a partir del fragmento dado.
 Reglas:
@@ -121,32 +116,20 @@ No inventes. Si falta, anota: [FALTA] campo X — no consta.
 Devuelve **solo bullets** (sin encabezados ni conclusiones).
 """
 
-
 def _particionar(texto: str, max_chars: int) -> list[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
-
-def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_tokens=MAX_TOKENS_SALIDA):
-    # Mantiene compatibilidad del nombre del parámetro y usa el nuevo de la API
+def _llamada_openai(messages, model=MODEL_ANALISIS, max_tokens=MAX_TOKENS_SALIDA):
     return client.chat.completions.create(
         model=model,
         messages=messages,
-        temperature=temperature,
         max_completion_tokens=max_tokens
     )
 
-
 def analizar_con_openai(texto: str) -> str:
-    """
-    Analiza el contenido completo y devuelve **un único informe** en texto,
-    listo para renderizar a PDF. Usa el prompt C.R.A.F.T. mejorado y gpt-5.
-    - Si el texto total es corto: una sola pasada (síntesis final).
-    - Si es largo: notas intermedias por chunk + síntesis final única.
-    """
     if not texto or not texto.strip():
         return "No se recibió contenido para analizar."
 
-    # Caso 1: una sola pasada
     if len(texto) <= MAX_SINGLE_PASS_CHARS:
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
@@ -158,11 +141,9 @@ def analizar_con_openai(texto: str) -> str:
         except Exception as e:
             return f"⚠️ Error al generar el análisis: {e}"
 
-    # Caso 2: dos etapas (notas intermedias + síntesis)
     partes = _particionar(texto, CHUNK_SIZE)
     notas = []
 
-    # Etapa A: notas intermedias
     for i, parte in enumerate(partes, 1):
         msg = [
             {"role": "system", "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
@@ -176,7 +157,6 @@ def analizar_con_openai(texto: str) -> str:
 
     notas_integradas = "\n".join(notas)
 
-    # Etapa B: síntesis final única (informe completo)
     messages_final = [
         {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
         {"role": "user", "content": f"""{CRAFT_PROMPT_MAESTRO}
@@ -192,12 +172,11 @@ def analizar_con_openai(texto: str) -> str:
         resp_final = _llamada_openai(messages_final)
         return resp_final.choices[0].message.content.strip()
     except Exception as e:
-        # Si falla la síntesis, al menos devolvemos las notas
         return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias:\n{notas_integradas}"
 
 
 # ============================================================
-# (NO TOCAR) — Chat IA
+# Chat IA (gpt-5)
 # ============================================================
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
     descripcion_interfaz = f"""
@@ -233,12 +212,11 @@ El usuario actual es: {usuario}
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5",
             messages=[
                 {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3,
             max_completion_tokens=1200
         )
         return response.choices[0].message.content.strip()
@@ -247,7 +225,7 @@ El usuario actual es: {usuario}
 
 
 # ============================================================
-# (SIN CAMBIOS) — Generación de PDF
+# Generación de PDF
 # ============================================================
 def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     output_dir = os.path.join("generated_pdfs")
@@ -311,7 +289,6 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
         f.write(buffer.getvalue())
 
     return output_path
-
 
 def dividir_texto(texto, canvas_obj, max_width):
     palabras = texto.split(" ")
