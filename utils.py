@@ -127,11 +127,12 @@ def _particionar(texto: str, max_chars: int) -> list[str]:
 
 
 def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_tokens=MAX_TOKENS_SALIDA):
+    # Mantiene compatibilidad del nombre del parámetro y usa el nuevo de la API
     return client.chat.completions.create(
         model=model,
         messages=messages,
         temperature=temperature,
-        max_tokens=max_tokens
+        max_completion_tokens=max_tokens
     )
 
 
@@ -184,8 +185,7 @@ def analizar_con_openai(texto: str) -> str:
 {notas_integradas}
 
 👉 Usa ÚNICAMENTE estas notas para elaborar el **informe final único** (sin repetir encabezados por fragmento, sin meta-comentarios). 
-👉 Devuelve SOLO el informe final en texto."""
-        }
+👉 Devuelve SOLO el informe final en texto."""}
     ]
 
     try:
@@ -239,7 +239,7 @@ El usuario actual es: {usuario}
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
-            max_tokens=1200
+            max_completion_tokens=1200
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
