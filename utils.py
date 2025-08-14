@@ -42,7 +42,7 @@ FALLBACK_MODELS = [m.strip() for m in os.getenv("OPENAI_MODEL_FALLBACKS", "gpt-4
 
 MAX_SINGLE_PASS_CHARS = int(os.getenv("MAX_SINGLE_PASS_CHARS", "45000"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "12000"))
-MAX_COMPLETION_TOKENS = int(os.getenv("MAX_COMPLETION_TOKENS", "4000"))
+MAX_COMPLETION_TOKENS = int(os.getenv("MAX_COMPLETION_TOKENS", "4000"))  # mapeado a max_output_tokens
 
 CRAFT_PROMPT_MAESTRO = r"""
 # C.R.A.F.T. — Prompt maestro para leer, analizar y generar un **informe quirúrgico** de pliegos (con múltiples anexos)
@@ -138,26 +138,38 @@ def _sanitize(s: str) -> str:
     s = "".join(ch for ch in s if ch >= " " or ch in "\n\r\t")
     return s.strip()
 
-def _call_openai(messages, model: str) -> str:
+def _responses_call(input_payload: list[dict], model: str) -> str:
     """
-    Llama al modelo indicado sin 'temperature' (algunos modelos no lo aceptan).
-    Usa 'max_completion_tokens' (no 'max_tokens').
-    Devuelve string (puede ser vacío) o marcador "__ERROR__::...".
+    Llama a Responses API (válida para GPT-5 y modelos recientes).
+    Usa 'max_output_tokens' (equivalente moderno).
+    Devuelve string (posiblemente vacío) o '__ERROR__::...'.
     """
     try:
-        resp = client.chat.completions.create(
+        resp = client.responses.create(
             model=model,
-            messages=messages,
-            max_completion_tokens=MAX_COMPLETION_TOKENS
+            input=input_payload,
+            max_output_tokens=MAX_COMPLETION_TOKENS,
+            # Si tu modelo lo tolera y querés usarlo, podrías agregar temperature aquí.
+            # temperature=0.2,
         )
-        content = getattr(resp.choices[0].message, "content", "") or ""
+        content = getattr(resp, "output_text", "") or ""
         content = _sanitize(content)
-        finish = getattr(resp.choices[0], "finish_reason", None)
-        print(f"[ANALISIS] model={model} finish={finish} content_len={len(content)}")
+        print(f"[ANALISIS] model={model} content_len={len(content)}")
         return content
     except Exception as e:
         print(f"[ANALISIS] exception model={model}: {repr(e)}")
         return f"__ERROR__::{e}"
+
+def _call_openai(messages, model: str) -> str:
+    """
+    Adaptador: convierte 'messages' estilo chat a 'input' de Responses.
+    """
+    input_payload = []
+    for m in messages:
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        input_payload.append({"role": role, "content": content})
+    return _responses_call(input_payload, model)
 
 def _try_models(messages) -> str:
     """
@@ -227,7 +239,7 @@ def analizar_con_openai(texto: str) -> str:
     return out_final
 
 # ============================================================
-# Chat IA (gpt-4o) — sin cambios relevantes
+# Chat IA (migrado a Responses API)
 # ============================================================
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
     descripcion_interfaz = f"""
@@ -259,17 +271,17 @@ El usuario actual es: {usuario}
 
 📌 Respondé de manera natural, directa y profesional. No repitas lo que hace la plataforma. Respondé exactamente lo que se te pregunta.
 """
+
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
+        resp = client.responses.create(
+            model=os.getenv("OPENAI_MODEL_CHAT", "gpt-4o"),
+            input=[
                 {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": prompt},
             ],
-            # sin temperature explícito para máxima compatibilidad
-            max_completion_tokens=1200
+            max_output_tokens=1200
         )
-        return (response.choices[0].message.content or "").strip()
+        return (getattr(resp, "output_text", "") or "").strip()
     except Exception as e:
         return f"⚠️ Error al generar respuesta: {e}"
 
