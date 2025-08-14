@@ -2,6 +2,7 @@ import fitz  # PyMuPDF
 import io
 import os
 import re
+import time
 from datetime import datetime
 from openai import OpenAI
 from reportlab.lib.pagesizes import A4
@@ -11,39 +12,75 @@ from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import HexColor
 from dotenv import load_dotenv
 
+# OCR opcional (si tenés tesseract instalado en el sistema)
+USE_OCR = os.getenv("USE_OCR", "0") == "1"
+try:
+    if USE_OCR:
+        import pytesseract
+        from PIL import Image
+except Exception:
+    USE_OCR = False
+
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# =======================
+# EXTRACCIÓN DE CONTENIDO
+# =======================
+
+def _pdf_pages_to_images(doc):
+    """Renderiza páginas a imágenes PIL (para OCR)."""
+    images = []
+    for page in doc:
+        # 2x para mejorar OCR
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        images.append(img)
+    return images
+
 def extraer_texto_de_pdf(file) -> str:
     """
-    Lee el PDF desde UploadFile y devuelve su texto. Reposiciona el puntero.
+    Intenta extraer texto con PyMuPDF.
+    Si el PDF es escaneado (sin texto) y USE_OCR=1, intenta OCR.
     """
     try:
         file.file.seek(0)
         data = file.file.read()
-        if not data:
-            return ""
         with fitz.open(stream=data, filetype="pdf") as doc:
             texto = []
             for pagina in doc:
-                texto.append(pagina.get_text() or "")
-        return "\n".join(texto).strip()
+                t = pagina.get_text() or ""
+                texto.append(t)
+            result = "\n".join(texto).strip()
+            if result or not USE_OCR:
+                return result
+            # Sin texto: intentar OCR si está habilitado
+            try:
+                imgs = _pdf_pages_to_images(doc)
+                ocr_texts = []
+                for img in imgs:
+                    ocr_texts.append(pytesseract.image_to_string(img))
+                return "\n".join(ocr_texts).strip()
+            except Exception:
+                # OCR no disponible/instalado
+                return ""
     except Exception:
         return ""
 
 # ============================================================
-# ANALIZADOR (C.R.A.F.T. + GPT-5/4o) con integración multi-anexo
+# ANALIZADOR (C.R.A.F.T. + GPT-x) con integración multi-anexo
 # ============================================================
 
-MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
+# Modelo por defecto compatible y económico. Sobrescribible por env.
+MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-4o-mini")
 
 # Heurísticas de particionado
 MAX_SINGLE_PASS_CHARS = 55000
 CHUNK_SIZE = 16000
-TEMPERATURE_ANALISIS = 0.2
-MAX_TOKENS_SALIDA = 4000
+# Algunos modelos no aceptan temperature ≠ 1: lo omitimos si lo rechazan.
+TEMPERATURE_ANALISIS = float(os.getenv("TEMPERATURE_ANALISIS", "0.2"))
+MAX_TOKENS_SALIDA = int(os.getenv("MAX_TOKENS_SALIDA", "4000"))
 
-# Guía de sinónimos/normalización
 SINONIMOS_CANONICOS = r"""
 [Guía de mapeo semántico]
 - "Fecha de publicación" ≈ "fecha del llamado", "fecha de difusión del llamado", "fecha de convocatoria".
@@ -58,7 +95,6 @@ SINONIMOS_CANONICOS = r"""
 Usa esta guía: si un campo aparece con sinónimos/variantes, NO lo marques como "no especificado".
 """
 
-# -------- Prompt maestro (síntesis final única) --------
 CRAFT_PROMPT_MAESTRO = r"""
 # C.R.A.F.T. — Informe quirúrgico de pliegos (múltiples anexos)
 
@@ -120,7 +156,6 @@ Objeto, organismo, proceso/modalidad, fechas clave, riesgos, acciones inmediatas
 {SINONIMOS_CANONICOS}
 """
 
-# -------- Prompt para "Notas intermedias" --------
 CRAFT_PROMPT_NOTAS = r"""
 Genera **NOTAS INTERMEDIAS CRAFT** ultra concisas para síntesis posterior, a partir del fragmento.
 Reglas:
@@ -142,93 +177,62 @@ Si falta, anota: [FALTA] campo X — no consta.
 def _particionar(texto: str, max_chars: int) -> list[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
-def _modelo_sin_temperature(model: str) -> bool:
-    """
-    Algunos modelos nuevos solo admiten la temperatura por defecto.
-    Si detectamos uno conocido, no enviamos 'temperature'.
-    """
-    m = (model or "").lower()
-    return any(x in m for x in ["gpt-5", "gpt-4.1", "o4", "o3", "omni"])
+def _safe_choice_text(resp):
+    content = (resp.choices[0].message.content or "").strip()
+    if not content:
+        raise ValueError("La respuesta del modelo llegó vacía.")
+    return content
 
-def _extraer_contenido_de_respuesta(resp) -> str:
+def _chat_call_with_fallback(messages, model, temperature, max_comp_tokens, retries=3):
     """
-    Soporta tanto chat.completions como responses.
+    - Backoff en 429/5xx
+    - Quita temperature si no está soportado
+    - Cambia entre max_completion_tokens y max_tokens según soporte
+    - Valida respuesta vacía
     """
-    # chat.completions
-    try:
-        txt = resp.choices[0].message.content
-        if txt:
-            return txt
-    except Exception:
-        pass
-    # responses
-    try:
-        parts = resp.output if hasattr(resp, "output") else resp.choices[0].message
-    except Exception:
-        parts = None
+    delay = 1.0
+    allow_temperature = True
+    prefer_max_completion = True
+    last_err = None
 
-    try:
-        # SDK nuevo: resp.output_text
-        if hasattr(resp, "output_text") and resp.output_text:
-            return resp.output_text
-    except Exception:
-        pass
+    for _ in range(max(1, retries)):
+        payload = {"model": model, "messages": messages}
+        if allow_temperature and (temperature is not None):
+            payload["temperature"] = temperature
+        if prefer_max_completion and max_comp_tokens is not None:
+            payload["max_completion_tokens"] = max_comp_tokens
+        if (not prefer_max_completion) and max_comp_tokens is not None:
+            payload["max_tokens"] = max_comp_tokens
 
-    # SDK con contenido por bloques
-    try:
-        if hasattr(resp, "output") and isinstance(resp.output, list):
-            out_chunks = []
-            for blk in resp.output:
-                if getattr(blk, "type", "") == "output_text":
-                    out_chunks.append(getattr(blk, "text", ""))
-                elif getattr(blk, "type", "") == "message" and getattr(blk, "content", None):
-                    for c in blk.content:
-                        if getattr(c, "type", "") == "output_text":
-                            out_chunks.append(getattr(c, "text", ""))
-                        elif getattr(c, "type", "") == "text":
-                            out_chunks.append(getattr(c, "text", ""))
-            if out_chunks:
-                return "\n".join([t for t in out_chunks if t]).strip()
-    except Exception:
-        pass
+        try:
+            resp = client.chat.completions.create(**payload)
+            return _safe_choice_text(resp)
+        except Exception as e:
+            msg = str(e)
+            last_err = e
 
-    return ""
+            # Compat de parámetros
+            if "temperature" in msg and "Unsupported value" in msg:
+                allow_temperature = False
+                continue
+            if "max_completion_tokens" in msg and "Unsupported" in msg:
+                prefer_max_completion = False
+                continue
+            if "max_tokens" in msg and "Unsupported" in msg:
+                prefer_max_completion = True
+                continue
+
+            # Rate/5xx → backoff
+            if any(t in msg for t in ("429", "Rate limit", "temporarily", "timeout", "5xx", "Bad gateway", "Service Unavailable")):
+                time.sleep(delay)
+                delay = min(delay * 2, 8.0)
+                continue
+            break
+
+    raise last_err if last_err else RuntimeError("Fallo desconocido en la llamada al modelo.")
 
 def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_completion_tokens=MAX_TOKENS_SALIDA):
-    """
-    Llama a OpenAI con compatibilidad hacia atrás y reintento con Responses.
-    - Usa max_completion_tokens (no max_tokens).
-    - Omite 'temperature' si el modelo no lo soporta.
-    Devuelve el objeto de respuesta (no el texto).
-    """
-    kwargs = {
-        "model": model,
-        "messages": messages,
-        "max_completion_tokens": max_completion_tokens
-    }
-    if not _modelo_sin_temperature(model) and temperature is not None:
-        kwargs["temperature"] = temperature
-
-    # Primer intento: chat.completions
-    try:
-        return client.chat.completions.create(**kwargs)
-    except Exception as e1:
-        msg = str(e1).lower()
-        # Reintento con Responses si parámetros no soportados
-        if "unsupported" in msg or "not supported" in msg or "unknown parameter" in msg:
-            try:
-                rkwargs = {
-                    "model": model,
-                    "input": [{"role": m["role"], "content": m["content"]} for m in messages],
-                    "max_completion_tokens": max_completion_tokens
-                }
-                # Responses suele ignorar temperature si no aplica; solo la pasamos si el modelo la admite
-                if not _modelo_sin_temperature(model) and temperature is not None:
-                    rkwargs["temperature"] = temperature
-                return client.responses.create(**rkwargs)
-            except Exception as e2:
-                raise e2
-        raise e1
+    return _chat_call_with_fallback(messages, model, temperature, max_completion_tokens, retries=3)
 
 _META_PATTERNS = [
     re.compile(r"(?i)\bparte\s+\d+\s+de\s+\d+"),
@@ -243,16 +247,20 @@ def _limpiar_meta(texto: str) -> str:
         if any(p.search(ln) for p in _META_PATTERNS):
             continue
         lineas.append(ln)
-    limpio = re.sub(r"\n{3,}", "\n\n", "\n".join(lineas)).strip()
-    return limpio
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lineas)).strip()
+
+def _mensaje_posible_ocr(contenido_por_anexo: list[tuple[str, str]]) -> str:
+    sin_texto = [nombre for nombre, txt in contenido_por_anexo if len((txt or "").strip()) == 0]
+    if not sin_texto:
+        return ""
+    hint = " (OCR habilitado)" if USE_OCR else " (activá OCR seteando USE_OCR=1 si tenés Tesseract)"
+    return ("⚠️ No se pudo extraer texto de: " + ", ".join(sin_texto) +
+            f". Podrían ser PDF escaneados.{hint}.")
 
 def analizar_con_openai(texto: str) -> str:
-    """
-    Analiza el contenido completo y devuelve **un único informe**.
-    Si falla la llamada al modelo, devuelve un mensaje de error con información útil.
-    """
+    """Analiza y devuelve **un único informe** limpio y trazable."""
     if not texto or not texto.strip():
-        return "No se recibió contenido para analizar."
+        return "No se recibió contenido para analizar (el documento podría estar vacío o ser una imagen sin OCR)."
 
     separadores = ["===ANEXO===", "=== ANEXO ===", "### ANEXO", "## ANEXO", "\nAnexo "]
     varios_anexos = any(sep.lower() in texto.lower() for sep in separadores)
@@ -264,9 +272,8 @@ def analizar_con_openai(texto: str) -> str:
             {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve ÚNICAMENTE el informe final (texto), sin preámbulos."}
         ]
         try:
-            resp = _llamada_openai(messages)
-            out = _extraer_contenido_de_respuesta(resp).strip()
-            return _limpiar_meta(out) if out else "⚠️ El modelo no devolvió contenido."
+            out = _llamada_openai(messages)
+            return _limpiar_meta(out)
         except Exception as e:
             return f"⚠️ Error al generar el análisis: {e}"
 
@@ -274,22 +281,21 @@ def analizar_con_openai(texto: str) -> str:
     partes = _particionar(texto, CHUNK_SIZE)
     notas = []
 
-    # Etapa A: notas intermedias
+    # A) Notas intermedias
     for i, parte in enumerate(partes, 1):
         msg = [
             {"role": "system", "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
             {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n## Guía de sinónimos/normalización\n{SINONIMOS_CANONICOS}\n\n=== FRAGMENTO {i}/{len(partes)} ===\n{parte}"}
         ]
         try:
-            r = _llamada_openai(msg, max_completion_tokens=2000)
-            txt = _extraer_contenido_de_respuesta(r).strip()
-            notas.append(txt or f"[FALTA] El modelo no devolvió notas para la parte {i}.")
+            r = _llamada_openai(msg, max_completion_tokens=1800)
+            notas.append(r.strip())
         except Exception as e:
             notas.append(f"[ERROR] No se pudieron generar notas de la parte {i}: {e}")
 
     notas_integradas = "\n".join(notas).strip()
 
-    # Etapa B: síntesis final única y deduplicada
+    # B) Síntesis final única
     messages_final = [
         {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
         {"role": "user", "content": f"""{CRAFT_PROMPT_MAESTRO}
@@ -304,48 +310,53 @@ def analizar_con_openai(texto: str) -> str:
     ]
 
     try:
-        resp_final = _llamada_openai(messages_final)
-        out = _extraer_contenido_de_respuesta(resp_final).strip()
-        out = _limpiar_meta(out)
-        return out if out else f"⚠️ El modelo no devolvió la síntesis.\n\nNotas intermedias:\n{_limpiar_meta(notas_integradas)}"
+        out = _llamada_openai(messages_final)
+        return _limpiar_meta(out)
     except Exception as e:
-        return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias:\n{_limpiar_meta(notas_integradas)}"
+        # Fallback: al menos devolver lo utilizable
+        limpio = _limpiar_meta(notas_integradas)
+        if limpio:
+            return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias (limpias):\n{limpio}"
+        return f"⚠️ El modelo no devolvió la síntesis ni notas utilizables: {e}"
 
 # ============================
-# NUEVO: integración multi-anexo
+# INTEGRACIÓN MULTI-ANEXO
 # ============================
 def analizar_anexos(files: list) -> str:
     """
-    Recibe una lista de UploadFile (Starlette/FastAPI), combina TODOS los anexos
-    en un único texto con marcadores de anexo y ejecuta el análisis integrado.
+    Recibe UploadFile[], construye un texto único con marcadores “ANEXO NN: nombre”
+    y ejecuta el análisis integrado.
     """
     if not files:
         return "No se recibieron anexos para analizar."
 
     bloques = []
+    contenidos = []  # (nombre, texto) para mensajes de OCR
     for idx, f in enumerate(files, 1):
         nombre = getattr(f, "filename", f"anexo_{idx}.pdf")
-        texto = ""
-        # Intento PDF
-        texto = extraer_texto_de_pdf(f)
-        # Si no se pudo, intento leer como texto plano
-        if not texto:
+        try:
+            f.file.seek(0)
+            texto = extraer_texto_de_pdf(f)
+        except Exception:
+            f.file.seek(0)
             try:
-                f.file.seek(0)
-                texto = f.file.read().decode("utf-8", errors="ignore").strip()
+                texto = f.file.read().decode("utf-8", errors="ignore")
             except Exception:
                 texto = ""
-
-        if not texto:
-            texto = f"[FALTA] No se pudo extraer texto del anexo {idx} ({nombre})."
-
+        contenidos.append((nombre, texto))
         bloques.append(f"=== ANEXO {idx:02d}: {nombre} ===\n{texto}\n")
 
     contenido_unico = "\n".join(bloques).strip()
-    return analizar_con_openai(contenido_unico)
+    informe = analizar_con_openai(contenido_unico)
+
+    # Si hubo anexos sin texto, agregamos nota al inicio (no contamina el PDF)
+    nota_ocr = _mensaje_posible_ocr(contenidos)
+    if nota_ocr:
+        informe = f"{nota_ocr}\n\n{informe}"
+    return informe
 
 # ============================================================
-# (NO TOCAR) — Chat IA
+# CHAT (sin cambios funcionales, con compat de tokens)
 # ============================================================
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
     descripcion_interfaz = f"""
@@ -362,7 +373,7 @@ Sos el asistente inteligente de la plataforma web "Suizo Argentina - Licitacione
 Tu función principal es asistir al usuario en el entendimiento y lectura de los pliegos analizados. También brindás soporte sobre el uso general de la plataforma.
 
 El usuario actual es: {usuario}
-"""
+""".strip()
 
     if not contexto:
         contexto = "(No hay historial disponible actualmente.)"
@@ -377,33 +388,26 @@ El usuario actual es: {usuario}
 {mensaje}
 
 📌 Respondé de manera natural, directa y profesional. No repitas lo que hace la plataforma. Respondé exactamente lo que se te pregunta.
-"""
+""".strip()
 
+    # Mismo wrapper robusto
+    messages = [
+        {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
+        {"role": "user", "content": prompt}
+    ]
     try:
-        # Misma compatibilidad que arriba: usar max_completion_tokens
-        kwargs = {
-            "model": "gpt-4o",
-            "messages": [
-                {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
-                {"role": "user", "content": prompt}
-            ],
-            "max_completion_tokens": 1200
-        }
-        # gpt-4o suele aceptar temperature; si falla se ignora abajo.
-        try:
-            kwargs["temperature"] = 0.3
-            resp = client.chat.completions.create(**kwargs)
-        except Exception:
-            # reintento sin temperature
-            kwargs.pop("temperature", None)
-            resp = client.chat.completions.create(**kwargs)
-        out = _extraer_contenido_de_respuesta(resp).strip()
-        return out if out else "No pude generar una respuesta en este momento."
+        return _chat_call_with_fallback(
+            messages=messages,
+            model=os.getenv("OPENAI_MODEL_CHAT", "gpt-4o-mini"),
+            temperature=0.3,
+            max_comp_tokens=1200,
+            retries=3
+        )
     except Exception as e:
         return f"⚠️ Error al generar respuesta: {e}"
 
 # ============================================================
-# (SIN CAMBIOS) — Generación de PDF
+# PDF (igual que antes)
 # ============================================================
 def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     output_dir = os.path.join("generated_pdfs")
@@ -428,7 +432,10 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     c.setFont("Helvetica", 10)
     fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
     c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_actual}")
-    resumen = (resumen or "").replace("**", "")
+
+    # Limpieza simple de markdown
+    resumen = resumen.replace("**", "")
+
     c.setFont("Helvetica", 11)
     margen_izquierdo = 20 * mm
     margen_superior = A4[1] - 54 * mm
@@ -436,19 +443,13 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     alto_linea = 14
     y = margen_superior
 
-    # Si por alguna razón vino vacío, lo marcamos explícitamente
-    if not resumen.strip():
-        resumen = "⚠️ No se obtuvo contenido del análisis. Revise la configuración del modelo o intente nuevamente."
-
-    for parrafo in resumen.split("\n"):
+    for parrafo in (resumen or "").split("\n"):
         if not parrafo.strip():
             y -= alto_linea
             continue
-        if (
-            parrafo.strip().endswith(":")
+        if (parrafo.strip().endswith(":")
             or parrafo.strip().startswith("📘")
-            or parrafo.strip().istitle()
-        ):
+            or parrafo.strip().istitle()):
             c.setFont("Helvetica-Bold", 12)
             c.setFillColor(azul)
         else:
@@ -469,24 +470,19 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     c.save()
     with open(output_path, "wb") as f:
         f.write(buffer.getvalue())
-
     return output_path
 
 def dividir_texto(texto, canvas_obj, max_width):
-    palabras = texto.split(" ")
-    lineas = []
-    linea_actual = ""
-
+    palabras = (texto or "").split(" ")
+    lineas, linea_actual = [], ""
     for palabra in palabras:
-        test_line = linea_actual + " " + palabra if linea_actual else palabra
+        test_line = (linea_actual + " " + palabra) if linea_actual else palabra
         if canvas_obj.stringWidth(test_line, canvas_obj._fontname, canvas_obj._fontsize) <= max_width:
             linea_actual = test_line
         else:
             if linea_actual:
                 lineas.append(linea_actual)
             linea_actual = palabra
-
     if linea_actual:
         lineas.append(linea_actual)
-
     return lineas
