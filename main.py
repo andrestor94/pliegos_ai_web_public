@@ -12,7 +12,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.concurrency import run_in_threadpool
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import or_, and_
 
 from utils import (
@@ -20,7 +20,7 @@ from utils import (
     analizar_con_openai,
     generar_pdf_con_plantilla,
     responder_chat_openai,
-    analizar_anexos
+    # ❌ quitar analizar_anexos: lo reconstruimos acá
 )
 
 from database import (
@@ -262,6 +262,26 @@ def _sanear_informe(texto: str) -> str:
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     return cleaned
 
+# --- Stubs públicos para el front (evitar 404 de presencia/notifs/calendario) ---
+@app.get("/presence/online")
+async def presence_online():
+    return {"online": True, "ts": datetime.now(timezone.utc).isoformat()}
+
+@app.post("/presence/ping")
+async def presence_ping():
+    return {"ok": True, "ts": datetime.now(timezone.utc).isoformat()}
+
+@app.get("/notificaciones")
+async def notificaciones():
+    return {"items": []}
+
+@app.get("/api/calendar/events")
+async def calendar_events(
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None)
+):
+    return {"events": []}
+
 # --- Config pública para el front ---
 @app.get("/chat/config")
 async def chat_config():
@@ -307,6 +327,25 @@ async def logout_get(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 # ================== Análisis ==================
+def _leer_archivo_generico(upload: UploadFile) -> str:
+    """
+    Intenta extraer texto; si es PDF usa PyMuPDF, si no, intenta decodificar como texto.
+    """
+    nombre = upload.filename or ""
+    ext = os.path.splitext(nombre)[1].lower()
+    try:
+        if ext == ".pdf":
+            return extraer_texto_de_pdf(upload)
+        # fallback texto plano/otros
+        upload.file.seek(0)
+        return upload.file.read().decode("utf-8", errors="ignore")
+    except Exception:
+        try:
+            upload.file.seek(0)
+            return upload.file.read().decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
     """
@@ -325,14 +364,22 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             continue
         _validate_ext(a.filename)
 
-    # 1) Análisis integrado
+    # 1) Construir contenido unificado (reemplaza a utils.analizar_anexos ausente)
+    bloques = []
+    for idx, up in enumerate(archivos, start=1):
+        nombre = up.filename or f"anexo_{idx}.pdf"
+        texto = await run_in_threadpool(_leer_archivo_generico, up)
+        bloques.append(f"=== ANEXO {idx:02d}: {nombre} ===\n{texto}\n")
+    contenido_unico = "\n".join(bloques)
+
+    # 2) Análisis integrado
     try:
-        resumen = await run_in_threadpool(analizar_anexos, archivos)
+        resumen = await run_in_threadpool(analizar_con_openai, contenido_unico)
         resumen = _sanear_informe(resumen)
     except Exception as e:
         return JSONResponse({"error": f"Fallo en el análisis: {e}"}, status_code=500)
 
-    # 2) Generar PDF
+    # 3) Generar PDF
     try:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         nombre_archivo = f"resumen_{timestamp}.pdf"
@@ -340,7 +387,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     except Exception as e:
         return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
 
-    # 3) Persistir en historial
+    # 4) Persistir en historial
     try:
         guardar_en_historial(timestamp, usuario, nombre_archivo, nombre_archivo, resumen)
     except Exception:
@@ -683,7 +730,7 @@ async def api_chat_openai(request: Request, payload: dict = Body(...)):
 
     contexto_general = "\n".join([
         f"- [{h.get('fecha')}] {h.get('usuario')} analizó '{h.get('nombre_archivo')}' y obtuvo:\n{h.get('resumen')}\n"
-        for h in historial if h.get("resumen")
+        for h in historial if h.get('resumen')
     ])
 
     contexto = f"{ultimo_resumen}\n\n📚 Historial completo:\n{contexto_general}"
