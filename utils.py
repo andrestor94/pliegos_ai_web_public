@@ -133,12 +133,12 @@ Si falta, anota: [FALTA] campo X — no consta.
 def _particionar(texto: str, max_chars: int) -> list[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
-def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_tokens=MAX_TOKENS_SALIDA):
+def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_completion_tokens=MAX_TOKENS_SALIDA):
     return client.chat.completions.create(
         model=model,
         messages=messages,
         temperature=temperature,
-        max_tokens=max_tokens
+        max_completion_tokens=max_completion_tokens
     )
 
 _META_PATTERNS = [
@@ -194,7 +194,7 @@ def analizar_con_openai(texto: str) -> str:
             {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n## Guía de sinónimos/normalización\n{SINONIMOS_CANONICOS}\n\n=== FRAGMENTO {i}/{len(partes)} ===\n{parte}"}
         ]
         try:
-            r = _llamada_openai(msg, max_tokens=2000)
+            r = _llamada_openai(msg, max_completion_tokens=2000)
             notas.append(r.choices[0].message.content.strip())
         except Exception as e:
             notas.append(f"[ERROR] No se pudieron generar notas de la parte {i}: {e}")
@@ -298,7 +298,7 @@ El usuario actual es: {usuario}
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
-            max_tokens=1200
+            max_completion_tokens=1200
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
