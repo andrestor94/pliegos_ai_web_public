@@ -12,9 +12,11 @@ from starlette.middleware.sessions import SessionMiddleware
 from fastapi.concurrency import run_in_threadpool
 from datetime import datetime
 from sqlalchemy import or_, and_
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from utils import (
     extraer_texto_de_pdf,
+    extraer_texto_de_pdf_bytes,   # 👈 NUEVO (usado para extracción paralela)
     analizar_con_openai,
     generar_pdf_con_plantilla,
     responder_chat_openai
@@ -280,6 +282,11 @@ async def chat_config():
         "max_total_mb": CHAT_MAX_TOTAL_MB
     }
 
+# ========= Healthcheck mínimo =========
+@app.get("/health")
+async def health():
+    return {"ok": True, "ts": datetime.utcnow().isoformat() + "Z"}
+
 # ================== Rutas base ==================
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -318,20 +325,109 @@ async def logout_get(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 # ================== Análisis ==================
+ANALISIS_TIMEOUT = int(os.getenv("ANALISIS_TIMEOUT", "240"))          # 🔧 timeout duro para análisis (seg)
+CHAT_TIMEOUT     = int(os.getenv("CHAT_TIMEOUT", "35"))               # 🔧 timeout duro para chat (seg)
+UPLOADS_MAX_TOTAL_MB = int(os.getenv("UPLOADS_MAX_TOTAL_MB", "200"))  # 🔧 límite opcional (0 = sin límite)
+
+def _limpiar_errores_extraccion(texto: str) -> str:
+    """Quita líneas de error de extracción como [ERROR_EXTRAER_PDF] ..."""
+    if not texto:
+        return ""
+    lines = []
+    for ln in texto.splitlines():
+        if not ln.strip().startswith("[ERROR_EXTRAER_PDF]"):
+            lines.append(ln)
+    return "\n".join(lines).strip()
+
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
     usuario = request.session.get("usuario", "Anónimo")
-    texto_total = ""
-    for archivo in archivos:
-        texto = extraer_texto_de_pdf(archivo)
-        texto_total += texto + "\n\n"
-    resumen = analizar_con_openai(texto_total)
+
+    if not archivos:
+        return JSONResponse({"resumen": "No se adjuntaron archivos.", "pdf": None}, status_code=400)
+
+    # 1) Leer todos los archivos en memoria (async) y chequear tamaño total
+    archivos_mem = []
+    total_bytes = 0
+    for a in archivos:
+        try:
+            data = await a.read()
+            await a.seek(0)
+        except Exception as e:
+            return JSONResponse({"resumen": f"No se pudo leer {a.filename}: {e}", "pdf": None}, status_code=400)
+        total_bytes += len(data)
+        archivos_mem.append((a.filename or "archivo.pdf", data))
+
+    if UPLOADS_MAX_TOTAL_MB > 0 and (total_bytes / (1024*1024)) > UPLOADS_MAX_TOTAL_MB:
+        return JSONResponse(
+            {"resumen": f"Los archivos superan el máximo de {UPLOADS_MAX_TOTAL_MB} MB.", "pdf": None},
+            status_code=400
+        )
+
+    # 2) Extracción de texto en paralelo (ThreadPool) por archivo
+    textos: List[str] = []
+    errores: List[str] = []
+
+    def _extract_pair(name: str, data: bytes) -> str:
+        try:
+            return extraer_texto_de_pdf_bytes(data)
+        except Exception as e:
+            return f"[ERROR_EXTRAER_PDF] {e}"
+
+    with ThreadPoolExecutor(max_workers=min(8, max(2, len(archivos_mem)))) as pool:
+        futures = {pool.submit(_extract_pair, n, d): n for (n, d) in archivos_mem}
+        for fut in as_completed(futures):
+            name = futures[fut]
+            try:
+                t = fut.result()
+                if t and "[ERROR_EXTRAER_PDF]" in t:
+                    errores.append(f"{name}: {t}")
+                textos.append(t or "")
+            except Exception as e:
+                errores.append(f"{name}: {e}")
+                textos.append("")
+
+    texto_total = _limpiar_errores_extraccion("\n\n".join([t for t in textos if t]))
+
+    if not texto_total.strip():
+        msg = "No se pudo extraer texto de los PDF cargados. Verificá que no sean escaneados sin OCR."
+        if errores:
+            msg += " Detalle: " + " | ".join(errores[:3])
+        return JSONResponse({"resumen": msg, "pdf": None}, status_code=400)
+
+    # 3) Ejecutar análisis en threadpool con timeout (evita cuelgues en PDFs largos)
+    async def _do_analisis(txt: str) -> str:
+        return await run_in_threadpool(analizar_con_openai, txt)
+
+    try:
+        resumen = await asyncio.wait_for(_do_analisis(texto_total), timeout=ANALISIS_TIMEOUT)
+    except asyncio.TimeoutError:
+        return JSONResponse({"resumen": f"El análisis superó el tiempo máximo ({ANALISIS_TIMEOUT}s). Probá con menos anexos o verificá la calidad del PDF.", "pdf": None}, status_code=504)
+    except Exception as e:
+        return JSONResponse({"resumen": f"Error en el análisis: {e}", "pdf": None}, status_code=500)
+
+    resumen = (resumen or "").strip()
+
+    # 4) Generar PDF en threadpool
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     nombre_archivo = f"resumen_{timestamp}.pdf"
-    generar_pdf_con_plantilla(resumen, nombre_archivo)
+    try:
+        await run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo)
+    except Exception as e:
+        # Si falla la generación del PDF, devolvemos el texto igual
+        return JSONResponse({"resumen": resumen, "pdf": None, "warning": f"No se pudo generar el PDF: {e}"}, status_code=200)
 
-    guardar_en_historial(timestamp, usuario, nombre_archivo, nombre_archivo, resumen)
-    return {"resumen": resumen, "pdf": nombre_archivo}
+    # 5) Guardar en historial (best-effort)
+    try:
+        guardar_en_historial(timestamp, usuario, nombre_archivo, nombre_archivo, resumen)
+    except Exception:
+        pass
+
+    # 6) Responder al front
+    resp = {"resumen": resumen, "pdf": nombre_archivo}
+    if errores:
+        resp["notas"] = f"Se detectaron problemas en algunos archivos: {' | '.join(errores[:3])}"
+    return resp
 
 # ================== Historial ==================
 @app.get("/historial")
@@ -631,35 +727,51 @@ async def eliminar_usuario(request: Request):
 @app.post("/chat-openai")
 async def chat_openai(request: Request):
     data = await request.json()
-    mensaje = data.get("mensaje", "")
+    mensaje = (data.get("mensaje") or "").strip()
     usuario_actual = request.session.get("usuario", "Desconocido")
 
-    historial = obtener_historial_completo()
+    if not mensaje:
+        return JSONResponse({"respuesta": "Decime qué necesitás revisar del pliego 👌"})
+
+    try:
+        historial = obtener_historial_completo()
+    except Exception:
+        historial = []
+
     ultimo_analisis_usuario = next(
-        (h for h in historial if h["usuario"] == usuario_actual and h["resumen"]),
+        (h for h in historial if h.get("usuario") == usuario_actual and h.get("resumen")),
         None
     )
 
     if ultimo_analisis_usuario:
         ultimo_resumen = f"""
 📌 Último análisis del usuario actual:
-- Fecha: {ultimo_analisis_usuario['fecha']}
-- Archivo: {ultimo_analisis_usuario['nombre_archivo']}
+- Fecha: {ultimo_analisis_usuario.get('fecha')}
+- Archivo: {ultimo_analisis_usuario.get('nombre_archivo')}
 - Resumen:
-{ultimo_analisis_usuario['resumen']}
+{ultimo_analisis_usuario.get('resumen')}
 """
     else:
         ultimo_resumen = "(El usuario aún no tiene análisis registrados.)"
 
     contexto_general = "\n".join([
-        f"- [{h['fecha']}] {h['usuario']} analizó '{h['nombre_archivo']}' y obtuvo:\n{h['resumen']}\n"
-        for h in historial if h['resumen']
+        f"- [{h.get('fecha')}] {h.get('usuario')} analizó '{h.get('nombre_archivo')}' y obtuvo:\n{h.get('resumen')}\n"
+        for h in historial if h.get("resumen")
     ])
 
     contexto = f"{ultimo_resumen}\n\n📚 Historial completo:\n{contexto_general}"
 
-    respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
-    return JSONResponse({"respuesta": respuesta})
+    async def _do_chat():
+        return await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
+
+    try:
+        respuesta = await asyncio.wait_for(_do_chat(), timeout=CHAT_TIMEOUT)
+    except asyncio.TimeoutError:
+        respuesta = "Estoy tardando más de lo normal en responder. Intentá nuevamente o reformulá la consulta con más precisión."
+    except Exception as e:
+        respuesta = f"⚠️ Error al generar respuesta: {e}"
+
+    return JSONResponse({"respuesta": (respuesta or "").strip()})
 
 # ================== API puente para el drawer (formato reply) ==============
 @app.post("/api/chat-openai")
@@ -698,8 +810,17 @@ async def api_chat_openai(request: Request, payload: dict = Body(...)):
 
     contexto = f"{ultimo_resumen}\n\n📚 Historial completo:\n{contexto_general}"
 
-    respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
-    return JSONResponse({"reply": respuesta})
+    async def _do_chat():
+        return await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
+
+    try:
+        respuesta = await asyncio.wait_for(_do_chat(), timeout=CHAT_TIMEOUT)
+    except asyncio.TimeoutError:
+        respuesta = "Estoy tardando más de lo normal en responder. Intentá nuevamente o reformulá la consulta con más precisión."
+    except Exception as e:
+        respuesta = f"⚠️ Error al generar respuesta: {e}"
+
+    return JSONResponse({"reply": (respuesta or "").strip()})
 
 # ===== Mini vista embebida para el widget del topbar/FAB (Enter envía) =====
 @app.get("/chat_openai_embed", response_class=HTMLResponse)
@@ -708,7 +829,7 @@ async def chat_openai_embed(request: Request):
         return HTMLResponse("<div style='padding:12px'>Iniciá sesión para usar el chat.</div>")
     html = """
     <!doctype html><html><head>
-    <meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
+    <meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
     <style>
       #t{ resize:none; min-height:42px; max-height:150px; }
@@ -1258,7 +1379,7 @@ async def cal_create(request: Request):
     title = (data.get("title") or "").strip()
     start = data.get("start")
     end   = data.get("end")
-    all_day = 1 if data.get("allDay") else 0
+    all_day = 1 if data.get("AllDay") or data.get("allDay") else 0
     desc  = (data.get("description") or "").strip()
     color = (data.get("color") or "#0ea5e9").strip()
     if not title or not start:
@@ -1301,7 +1422,7 @@ async def cal_update(evt_id: str, request: Request):
     if desc  is not None: sets.append("description=?"); vals.append(desc)
     if color is not None: sets.append("color=?"); vals.append(color)
     if start is not None: sets.append("start=?"); vals.append(start)
-    if end   is not None: sets.append("end=?");   vals.append(end)
+    if end   is not None: sets.append("end=?"); vals.append(end)
     if all_day is not None: sets.append("all_day=?"); vals.append(1 if all_day else 0)
     sets.append("updated_at=?"); vals.append(_now_iso())
     vals.append(evt_id)

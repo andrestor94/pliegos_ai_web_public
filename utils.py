@@ -11,8 +11,40 @@ from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import HexColor
 from dotenv import load_dotenv
 
+# Nuevos imports (performance)
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from typing import List
+
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# ======================= TOGGLES DE RENDIMIENTO =======================
+# 1 = usar Responses API; 0 = usar chat.completions (más estable si Responses está lento)
+USE_RESPONSES = int(os.getenv("USE_RESPONSES", "1"))
+
+# Modelos
+MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
+# Por pedido: priorizamos GPT-5 también en notas y chat; se puede override por .env si querés.
+MODEL_NOTAS = os.getenv("OPENAI_MODEL_NOTAS", "gpt-5")               # rápido/preciso para notas
+MODEL_SINTESIS = os.getenv("OPENAI_MODEL_SINTESIS", MODEL_ANALISIS)  # fuerte para el informe final
+MODEL_CHAT = os.getenv("OPENAI_MODEL_CHAT", "gpt-5")
+# Fallbacks por si el principal falla o devuelve vacío
+FALLBACK_MODELS = [m.strip() for m in os.getenv(
+    "OPENAI_MODEL_FALLBACKS",
+    "gpt-5-mini,gpt-4o,gpt-4o-mini"
+).split(",") if m.strip()]
+
+# Concurrencia y timeouts
+OPENAI_CONCURRENCY = int(os.getenv("OPENAI_CONCURRENCY", "6"))     # hilos para notas
+OPENAI_CALL_TIMEOUT = int(os.getenv("OPENAI_CALL_TIMEOUT", "45"))  # seg por llamada de modelo
+OPENAI_RETRIES = int(os.getenv("OPENAI_RETRIES", "0"))             # reintentos por modelo
+
+# Contexto y chunking
+MAX_SINGLE_PASS_CHARS = int(os.getenv("MAX_SINGLE_PASS_CHARS", "45000"))
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "12000"))
+MAX_COMPLETION_TOKENS = int(os.getenv("MAX_COMPLETION_TOKENS", "6000"))  # mapeado a max_output_tokens (↑ para informes cortos)
+CTX_TOKENS = int(os.getenv("OPENAI_CONTEXT_TOKENS", "128000"))  # tope aprox. contexto
 
 # ======================= PDF -> TEXTO =======================
 def extraer_texto_de_pdf(file) -> str:
@@ -33,17 +65,23 @@ def extraer_texto_de_pdf(file) -> str:
     except Exception as e:
         return f"[ERROR_EXTRAER_PDF] {e}"
 
-# ============================================================
-# ANALIZADOR (C.R.A.F.T.) — con fallbacks de modelo
-# ============================================================
-MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
-# Fallbacks por si el principal falla o devuelve vacío
-FALLBACK_MODELS = [m.strip() for m in os.getenv("OPENAI_MODEL_FALLBACKS", "gpt-4o,gpt-4o-mini").split(",") if m.strip()]
+def extraer_texto_de_pdf_bytes(data: bytes) -> str:
+    """
+    Igual que extraer_texto_de_pdf pero recibe bytes. Útil para extracción concurrente.
+    """
+    try:
+        texto_completo = ""
+        with fitz.open(stream=data, filetype="pdf") as doc:
+            for pagina in doc:
+                texto_completo += pagina.get_text() or ""
+        texto_completo = "".join(ch for ch in texto_completo if ch >= " " or ch in "\n\r\t")
+        return texto_completo.strip()
+    except Exception as e:
+        return f"[ERROR_EXTRAER_PDF] {e}"
 
-MAX_SINGLE_PASS_CHARS = int(os.getenv("MAX_SINGLE_PASS_CHARS", "45000"))
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "12000"))
-MAX_COMPLETION_TOKENS = int(os.getenv("MAX_COMPLETION_TOKENS", "4000"))  # mapeado a max_output_tokens
-
+# ============================================================
+# C.R.A.F.T. — Prompts
+# ============================================================
 CRAFT_PROMPT_MAESTRO = r"""
 # C.R.A.F.T. — Prompt maestro para leer, analizar y generar un **informe quirúrgico** de pliegos (con múltiples anexos)
 
@@ -129,7 +167,8 @@ No inventes. Si falta, anota: [FALTA] campo X — no consta.
 Devuelve **solo bullets** (sin encabezados ni conclusiones).
 """
 
-def _particionar(texto: str, max_chars: int) -> list[str]:
+# ======================= HELPERS =======================
+def _particionar(texto: str, max_chars: int) -> List[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
 def _sanitize(s: str) -> str:
@@ -138,90 +177,149 @@ def _sanitize(s: str) -> str:
     s = "".join(ch for ch in s if ch >= " " or ch in "\n\r\t")
     return s.strip()
 
-def _responses_call(input_payload: list[dict], model: str) -> str:
-    """
-    Llama a Responses API (válida para GPT-5 y modelos recientes).
-    Usa 'max_output_tokens' (equivalente moderno).
-    Devuelve string (posiblemente vacío) o '__ERROR__::...'.
-    """
+def _approx_tokens(s: str) -> int:
+    # heurística ~4 chars/token
+    return max(1, len(s) // 4)
+
+# ======================= LLAMADAS A OPENAI (conmutables) =======================
+def _responses_call_sync(input_payload: list[dict], model: str) -> str:
     try:
         resp = client.responses.create(
             model=model,
             input=input_payload,
             max_output_tokens=MAX_COMPLETION_TOKENS,
-            # Si tu modelo lo tolera y querés usarlo, podrías agregar temperature aquí.
-            # temperature=0.2,
         )
         content = getattr(resp, "output_text", "") or ""
-        content = _sanitize(content)
-        print(f"[ANALISIS] model={model} content_len={len(content)}")
-        return content
+        return _sanitize(content)
     except Exception as e:
-        print(f"[ANALISIS] exception model={model}: {repr(e)}")
+        print(f"[ANALISIS] exception RESP model={model}: {repr(e)}")
         return f"__ERROR__::{e}"
 
-def _call_openai(messages, model: str) -> str:
-    """
-    Adaptador: convierte 'messages' estilo chat a 'input' de Responses.
-    """
-    input_payload = []
-    for m in messages:
-        role = m.get("role", "user")
-        content = m.get("content", "")
-        input_payload.append({"role": role, "content": content})
-    return _responses_call(input_payload, model)
+def _chat_call_sync(messages: list[dict], model: str) -> str:
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_completion_tokens=MAX_COMPLETION_TOKENS
+        )
+        content = getattr(resp.choices[0].message, "content", "") or ""
+        return _sanitize(content)
+    except Exception as e:
+        print(f"[ANALISIS] exception CHAT model={model}: {repr(e)}")
+        return f"__ERROR__::{e}"
 
-def _try_models(messages) -> str:
+def _call_with_timeout(func, *args, timeout: int = OPENAI_CALL_TIMEOUT) -> str:
     """
-    Intenta con el modelo principal y luego con los fallbacks
-    hasta obtener texto no vacío. Si todos fallan, devuelve "".
+    Ejecuta func(*args) en un executor de 1 hilo con timeout.
+    Evita bloqueos si el SDK queda 'colgado'.
     """
-    models = [MODEL_ANALISIS] + [m for m in FALLBACK_MODELS if m and m != MODEL_ANALISIS]
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(func, *args)
+        try:
+            return fut.result(timeout=timeout)
+        except FuturesTimeoutError:
+            print("[ANALISIS] TIMEOUT en llamada OpenAI")
+            return "__ERROR__::TIMEOUT"
+
+def _call_openai(messages: list[dict], model: str) -> str:
+    """
+    Enruta según USE_RESPONSES con timeout y reintentos.
+    """
+    # Normalizamos payload
+    if USE_RESPONSES:
+        input_payload = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in messages]
+        caller = _responses_call_sync
+        args = (input_payload, model)
+    else:
+        caller = _chat_call_sync
+        args = (messages, model)
+
+    # Retries
+    for attempt in range(OPENAI_RETRIES + 1):
+        out = _call_with_timeout(caller, *args, timeout=OPENAI_CALL_TIMEOUT)
+        if out and not out.startswith("__ERROR__::"):
+            return out
+        print(f"[OPENAI] intento={attempt} model={model} -> {out[:120] if out else 'vacío'}")
+    return ""
+
+def _try_models(messages: list[dict], prefer_model: str | None = None) -> str:
+    """
+    Intenta con prefer_model/MODEL_ANALISIS y luego fallbacks.
+    """
+    base = [prefer_model] if prefer_model else [MODEL_ANALISIS]
+    models = [m for m in base if m] + [m for m in FALLBACK_MODELS if m and m not in base]
     for m in models:
         out = _call_openai(messages, m)
-        if out and not out.startswith("__ERROR__::"):
+        if out:
             return out
     return ""
 
+# ======================= ANALIZADOR =======================
 def analizar_con_openai(texto: str) -> str:
     """
-    Devuelve un **informe único** en texto. Si los modelos no devuelven
-    contenido, retorna un mensaje claro para el front.
+    Devuelve un **informe único** en texto (sincrónico).
+    Optimizado: conmutador de endpoint, timeouts, notas paralelas con modelo rápido, plan B.
     """
     texto = _sanitize(texto)
     if not texto:
         return "No se recibió contenido para analizar."
 
-    # ---------- Caso 1: una sola pasada ----------
-    if len(texto) <= MAX_SINGLE_PASS_CHARS:
+    # ---------- Caso 1: una sola pasada (rápido) ----------
+    if len(texto) <= MAX_SINGLE_PASS_CHARS and (_approx_tokens(texto) + 3000) < CTX_TOKENS:
         print(f"[ANALISIS] single-pass len={len(texto)}")
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
             {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve ÚNICAMENTE el informe final (texto), sin preámbulos."}
         ]
-        out = _try_models(messages)
+        out = _try_models(messages, prefer_model=MODEL_SINTESIS)
         if not out:
-            print("[ANALISIS] single-pass vacío → fallback")
+            print("[ANALISIS] single-pass vacío → aviso")
             return ("No se pudo generar un resumen automático. Verificá que los PDFs "
                     "tengan texto seleccionable (no imágenes escaneadas) y que el contenido sea legible.")
         return out
 
-    # ---------- Caso 2: particionado + síntesis ----------
+    # ---------- Caso 2: particionado + notas paralelas ----------
     partes = _particionar(texto, CHUNK_SIZE)
-    notas = []
+    print(f"[ANALISIS] multipart partes={len(partes)} chunk={CHUNK_SIZE}")
 
-    # A) Notas intermedias
-    for i, parte in enumerate(partes, 1):
+    def _nota_fn(idx: int, contenido: str) -> str:
         msg = [
             {"role": "system", "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
-            {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n=== FRAGMENTO {i}/{len(partes)} ===\n{parte}"}
+            {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n=== FRAGMENTO {idx+1}/{len(partes)} ===\n{contenido}"}
         ]
-        out = _try_models(msg)
-        notas.append(out or f"[FALTA] No se pudieron generar notas de la parte {i} — (Fuente: documento provisto)")
+        out = _try_models(msg, prefer_model=MODEL_NOTAS)
+        return out or f"[FALTA] No se pudieron generar notas de la parte {idx+1} — (Fuente: documento provisto)"
+
+    notas: List[str] = [""] * len(partes)
+    with ThreadPoolExecutor(max_workers=max(1, OPENAI_CONCURRENCY)) as pool:
+        futs = {pool.submit(_nota_fn, i, p): i for i, p in enumerate(partes)}
+        for fut in futs:
+            i = futs[fut]
+            try:
+                notas[i] = fut.result()
+            except Exception as e:
+                notas[i] = f"[FALTA] Error en parte {i+1}: {e}"
+
+    # ¿Demasiadas notas vacías? → Plan B (chunks más chicos)
+    faltantes = sum(1 for n in notas if (not n) or n.startswith("[FALTA]"))
+    if faltantes > max(2, len(partes) // 3):
+        print("[ANALISIS] demasiadas notas vacías → plan B (re-chunk)")
+        small_chunk = max(3000, CHUNK_SIZE // 2)
+        partes2 = _particionar(texto, small_chunk)
+        notas_b: List[str] = [""] * len(partes2)
+        with ThreadPoolExecutor(max_workers=max(1, OPENAI_CONCURRENCY)) as pool:
+            futs = {pool.submit(_nota_fn, i, p): i for i, p in enumerate(partes2)}
+            for fut in futs:
+                i = futs[fut]
+                try:
+                    notas_b[i] = fut.result()
+                except Exception as e:
+                    notas_b[i] = f"[FALTA] Error en parte {i+1}: {e}"
+        notas = notas_b
 
     notas_integradas = "\n".join(notas)
 
-    # B) Síntesis final única
+    # ---------- Síntesis final única (modelo fuerte) ----------
     messages_final = [
         {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
         {"role": "user", "content": f"""{CRAFT_PROMPT_MAESTRO}
@@ -232,14 +330,14 @@ def analizar_con_openai(texto: str) -> str:
 👉 Usa ÚNICAMENTE estas notas para elaborar el **informe final único** (sin repetir encabezados por fragmento, sin meta-comentarios).
 👉 Devuelve SOLO el informe final en texto."""}
     ]
-    out_final = _try_models(messages_final)
+    out_final = _try_models(messages_final, prefer_model=MODEL_SINTESIS)
     if not out_final:
         return ("No se pudo generar un resumen automático. Verificá que los PDFs "
                 "tengan texto seleccionable (no imágenes escaneadas) y que el contenido sea legible.")
     return out_final
 
 # ============================================================
-# Chat IA (migrado a Responses API)
+# Chat IA (switch Responses / Chat + timeout)
 # ============================================================
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
     descripcion_interfaz = f"""
@@ -272,21 +370,18 @@ El usuario actual es: {usuario}
 📌 Respondé de manera natural, directa y profesional. No repitas lo que hace la plataforma. Respondé exactamente lo que se te pregunta.
 """
 
-    try:
-        resp = client.responses.create(
-            model=os.getenv("OPENAI_MODEL_CHAT", "gpt-4o"),
-            input=[
-                {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
-                {"role": "user", "content": prompt},
-            ],
-            max_output_tokens=1200
-        )
-        return (getattr(resp, "output_text", "") or "").strip()
-    except Exception as e:
-        return f"⚠️ Error al generar respuesta: {e}"
+    messages = [
+        {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
+        {"role": "user", "content": prompt},
+    ]
+
+    out = _try_models(messages, prefer_model=MODEL_CHAT)
+    if not out:
+        return "Estoy tardando más de lo normal en responder. Intentá nuevamente en unos segundos o reformulá la consulta de forma más concreta."
+    return out.strip()
 
 # ============================================================
-# Generación de PDF — sin cambios
+# Generación de PDF — (sin tocar plantilla)
 # ============================================================
 def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     output_dir = os.path.join("generated_pdfs")
