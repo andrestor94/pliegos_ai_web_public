@@ -187,10 +187,8 @@ def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANAL
 
 def analizar_con_openai(texto: str) -> str:
     """
-    Analiza el contenido completo y devuelve **un único informe** en texto,
-    listo para renderizar a PDF. Usa el prompt C.R.A.F.T. mejorado.
-    - Si el texto total es corto: una sola pasada (síntesis final).
-    - Si es largo: notas intermedias por chunk + síntesis final única.
+    Analiza el contenido completo y devuelve un único informe en texto,
+    listo para renderizar a PDF.
     """
     if not texto or not texto.strip():
         return "No se recibió contenido para analizar."
@@ -199,7 +197,7 @@ def analizar_con_openai(texto: str) -> str:
     if len(texto) <= MAX_SINGLE_PASS_CHARS:
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
-            {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve ÚNICAMENTE el informe final (texto), sin preámbulos."}
+            {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve UNICAMENTE el informe final (texto), sin preámbulos."}
         ]
         try:
             contenido = _llamada_openai(messages)
@@ -233,7 +231,7 @@ def analizar_con_openai(texto: str) -> str:
 === NOTAS INTERMEDIAS INTEGRADAS (DEDUPE Y TRAZABILIDAD) ===
 {notas_integradas}
 
-👉 Usa ÚNICAMENTE estas notas para elaborar el **informe final único** (sin repetir encabezados por fragmento, sin meta-comentarios). 
+👉 Usa UNICAMENTE estas notas para elaborar el informe final unico (sin repetir encabezados por fragmento, sin meta-comentarios).
 👉 Devuelve SOLO el informe final en texto."""}
     ]
 
@@ -241,8 +239,38 @@ def analizar_con_openai(texto: str) -> str:
         informe = _llamada_openai(messages_final, max_tokens=MAX_TOKENS_SALIDA)
         return informe.strip()
     except Exception as e:
-        # Si falla la síntesis, al menos devolvemos las notas
         return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias:\n{notas_integradas}"
+
+
+# ============================================================
+# NUEVO: integrar múltiples anexos (necesario para main.py)
+# ============================================================
+def analizar_anexos(files: list) -> str:
+    """
+    Recibe una lista de UploadFile y produce un único contenido etiquetado por anexo,
+    luego llama a analizar_con_openai.
+    """
+    if not files:
+        return "No se recibieron anexos para analizar."
+
+    bloques = []
+    for idx, f in enumerate(files, 1):
+        # Intentar extraer como PDF
+        try:
+            texto = extraer_texto_de_pdf(f)
+        except Exception:
+            # Fallback: intentar leer texto plano
+            try:
+                f.file.seek(0)
+                texto = f.file.read().decode("utf-8", errors="ignore")
+            except Exception:
+                texto = ""
+
+        nombre = getattr(f, "filename", f"anexo_{idx}.pdf")
+        bloques.append(f"=== ANEXO {idx:02d}: {nombre} ===\n{texto}\n")
+
+    contenido_unico = "\n".join(bloques)
+    return analizar_con_openai(contenido_unico)
 
 
 # ============================================================
@@ -285,7 +313,6 @@ El usuario actual es: {usuario}
             {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
             {"role": "user", "content": prompt}
         ]
-        # Forzamos gpt-5 para el chat y usamos Responses si corresponde
         chat_model = "gpt-5"
         if _requires_responses(chat_model):
             return _responses_call(messages, chat_model, max_tokens=1200)
