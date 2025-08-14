@@ -1,26 +1,24 @@
-# main.py
 import os
 import sqlite3
 import uuid
 import asyncio
-import re
 from typing import List, Optional, Dict, Set
-from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body, WebSocket, WebSocketDisconnect, Depends, status, Query
+from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body, WebSocket, WebSocketDisconnect, Depends, status
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.concurrency import run_in_threadpool
-from datetime import datetime, timezone
+from datetime import datetime
 from sqlalchemy import or_, and_
 
 from utils import (
-    extraer_texto_de_pdf,
-    analizar_con_openai,
+    extraer_texto_de_pdf,     # se mantiene por compatibilidad en otros puntos si lo usas
+    analizar_con_openai,      # idem
     generar_pdf_con_plantilla,
     responder_chat_openai,
-    # ❌ quitar analizar_anexos: lo reconstruimos acá
+    analizar_anexos           # 👈 NUEVO: análisis unificado multi-anexo
 )
 
 from database import (
@@ -29,7 +27,7 @@ from database import (
     # Usuarios
     obtener_usuario_por_email, agregar_usuario, listar_usuarios,
     actualizar_password, cambiar_estado_usuario, borrar_usuario,
-    buscar_usuarios,
+    buscar_usuarios,                      # 👈 autocompletar
     # Historial
     guardar_en_historial, obtener_historial, eliminar_del_historial,
     obtener_historial_completo,
@@ -63,6 +61,7 @@ inicializar_bd()
 inicializar_bd_orm()
 
 # Static
+# Si tus archivos están en backend/static, cambia a directory="backend/static"
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="generated_pdfs")
 
@@ -71,19 +70,25 @@ templates.env.globals['os'] = os
 
 # ================== Guardas/Dependencias de auth/roles ==================
 def require_auth(request: Request):
+    """Obliga a tener sesión iniciada."""
     if not request.session.get("usuario"):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
 
 def require_admin(request: Request):
+    """
+    Requiere rol admin.
+    Valida primero contra sesión y, por robustez, revalida en BD si la sesión dice que no.
+    """
     email = request.session.get("usuario")
     if not email:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
     rol = request.session.get("rol")
     if rol == "admin":
         return
+    # Fallback: por si el rol cambió en BD y la sesión quedó vieja
     try:
         if es_admin(email):
-            request.session["rol"] = "admin"
+            request.session["rol"] = "admin"  # refrescamos sesión
             return
     except Exception:
         pass
@@ -91,6 +96,9 @@ def require_admin(request: Request):
 
 # ================== Alert/WS manager ==================
 class ConnectionManager:
+    """
+    Mantiene websockets por usuario (email). Permite enviar eventos en tiempo real.
+    """
     def __init__(self):
         self._by_user: Dict[str, Set[WebSocket]] = {}
 
@@ -118,6 +126,7 @@ class ConnectionManager:
                 await ws.send_json(payload)
             except Exception:
                 dead.append(ws)
+        # Limpieza
         for ws in dead:
             self._by_user.get(email, set()).discard(ws)
 
@@ -128,8 +137,12 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 def _get_ws_email(websocket: WebSocket) -> str:
+    """
+    Intenta obtener el email de la sesión. Si no, toma query param ?email=.
+    """
     email = None
     try:
+        # Disponible gracias a SessionMiddleware
         email = websocket.scope.get("session", {}).get("usuario")
     except Exception:
         email = None
@@ -143,7 +156,9 @@ async def ws_endpoint(websocket: WebSocket):
     await manager.connect(websocket, email)
     try:
         while True:
+            # Mantener la conexión viva (recibir pings del front).
             _ = await websocket.receive_text()
+            # Si querés responder a pings:
             try:
                 await websocket.send_json({"event": "ws:pong", "ts": datetime.utcnow().isoformat() + "Z"})
             except Exception:
@@ -154,19 +169,29 @@ async def ws_endpoint(websocket: WebSocket):
         manager.disconnect(websocket, email)
 
 async def emit_alert(email: str, title: str, body: str = "", extra: dict = None):
+    """
+    Empuja una alerta genérica a un usuario.
+    """
     payload = {"event": "alert:new", "title": title, "body": body, "ts": datetime.utcnow().isoformat() + "Z"}
     if extra:
         payload["extra"] = extra
     await manager.send_to_user(email, payload)
 
 async def emit_chat_new_message(para_email: str, de_email: str, msg_id: int, preview: str = ""):
-    payload = {"event": "chat:new_message", "from": de_email, "id": msg_id, "preview": preview[:120], "ts": datetime.utcnow().isoformat() + "Z"}
+    payload = {
+        "event": "chat:new_message",
+        "from": de_email,
+        "id": msg_id,
+        "preview": preview[:120],
+        "ts": datetime.utcnow().isoformat() + "Z"
+    }
     await manager.send_to_user(para_email, payload)
 
 # ================== Archivos de chat (adjuntos) ==================
 CHAT_ATTACH_DIR = os.path.join("static", "chat_adjuntos")
 os.makedirs(CHAT_ATTACH_DIR, exist_ok=True)
 
+# Límites y validaciones para adjuntos del chat (alineados con el front)
 CHAT_ALLOWED_EXT = {
     ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp",
     ".txt", ".csv", ".xlsx", ".xls", ".docx", ".doc", ".pptx"
@@ -198,10 +223,11 @@ def _email_safe(s: str) -> str:
     return (s or "anon").replace("@", "_at_").replace(".", "_dot_")
 
 async def _save_upload_stream(upload: UploadFile, dst_path: str) -> int:
+    """Guarda el UploadFile en disco por chunks. Devuelve tamaño en bytes."""
     size = 0
     with open(dst_path, "wb") as f:
         while True:
-            chunk = await upload.read(1024 * 1024)
+            chunk = await upload.read(1024 * 1024)  # 1MB
             if not chunk:
                 break
             size += len(chunk)
@@ -216,6 +242,10 @@ def _validate_ext(filename: str):
 
 # --- Filtros para eliminación masiva de auditoría ---
 def _build_audit_filters(q, filtros):
+    """
+    Aplica filtros al query de AuditLog.
+    filtros: dict con claves opcionales: accion, desde (YYYY-MM-DD), hasta (YYYY-MM-DD), term (texto)
+    """
     if not filtros:
         return q
     acc = (filtros.get("accion") or "").strip()
@@ -225,10 +255,12 @@ def _build_audit_filters(q, filtros):
 
     if acc:
         q = q.filter(AuditLog.accion == acc)
+
     if d:
         q = q.filter(AuditLog.fecha >= f"{d} 00:00:00")
     if h:
         q = q.filter(AuditLog.fecha <= f"{h} 23:59:59")
+
     if term:
         like = f"%{term}%"
         ors = []
@@ -237,52 +269,10 @@ def _build_audit_filters(q, filtros):
                 ors.append(getattr(AuditLog, col).like(like))
         if ors:
             q = q.filter(or_(*ors))
+
     return q
 
-# --- Saneo de informe (extra por si llega ruido del modelo) ---
-_TITLE_RE = re.compile(
-    r'^\s*(informe\s+estandarizad[oa]\s+de\s+pliego\s+de\s+licitación)\s*:?\s*$',
-    re.IGNORECASE
-)
-def _sanear_informe(texto: str) -> str:
-    if not texto:
-        return texto
-    lines = texto.splitlines()
-    out = []
-    title_seen = False
-    for ln in lines:
-        if _TITLE_RE.match(ln or ""):
-            if title_seen:
-                continue
-            title_seen = True
-            out.append("Informe Estandarizado de Pliego de Licitación")
-        else:
-            out.append(ln)
-    cleaned = "\n".join(out)
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
-    return cleaned
-
-# --- Stubs públicos para el front (evitar 404 de presencia/notifs/calendario) ---
-@app.get("/presence/online")
-async def presence_online():
-    return {"online": True, "ts": datetime.now(timezone.utc).isoformat()}
-
-@app.post("/presence/ping")
-async def presence_ping():
-    return {"ok": True, "ts": datetime.now(timezone.utc).isoformat()}
-
-@app.get("/notificaciones")
-async def notificaciones():
-    return {"items": []}
-
-@app.get("/api/calendar/events")
-async def calendar_events(
-    start: str | None = Query(default=None),
-    end: str | None = Query(default=None)
-):
-    return {"events": []}
-
-# --- Config pública para el front ---
+# --- Config pública para el front (límites de adjuntos) ---
 @app.get("/chat/config")
 async def chat_config():
     return {
@@ -309,13 +299,15 @@ async def login_form(request: Request):
 async def login(request: Request, email: str = Form(...), password: str = Form(...)):
     usuario = obtener_usuario_por_email(email)
     if usuario and usuario[3] == password:
+        # Guardamos ambas claves para compatibilidad con plantillas
         request.session["usuario"] = usuario[2]   # email
         request.session["email"] = usuario[2]
         request.session["rol"] = usuario[4]
-        request.session["nombre"] = usuario[1] or usuario[2]
+        request.session["nombre"] = usuario[1] or usuario[2]  # 👈 nombre en sesión para el front
         return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse("login.html", {"request": request, "error": "Credenciales incorrectas"})
 
+# Logout por POST (existente) y por GET (para el link del menú)
 @app.post("/logout")
 async def logout_post(request: Request):
     request.session.clear()
@@ -327,25 +319,6 @@ async def logout_get(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 # ================== Análisis ==================
-def _leer_archivo_generico(upload: UploadFile) -> str:
-    """
-    Intenta extraer texto; si es PDF usa PyMuPDF, si no, intenta decodificar como texto.
-    """
-    nombre = upload.filename or ""
-    ext = os.path.splitext(nombre)[1].lower()
-    try:
-        if ext == ".pdf":
-            return extraer_texto_de_pdf(upload)
-        # fallback texto plano/otros
-        upload.file.seek(0)
-        return upload.file.read().decode("utf-8", errors="ignore")
-    except Exception:
-        try:
-            upload.file.seek(0)
-            return upload.file.read().decode("utf-8", errors="ignore")
-        except Exception:
-            return ""
-
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
     """
@@ -358,28 +331,19 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     if not archivos:
         return JSONResponse({"error": "Subí al menos un archivo"}, status_code=400)
 
-    # Validación de extensiones
+    # Validación mínima de extensiones (pueden venir PDFs/DOCX/XLSX)
     for a in archivos:
         if not a or not a.filename:
             continue
         _validate_ext(a.filename)
 
-    # 1) Construir contenido unificado (reemplaza a utils.analizar_anexos ausente)
-    bloques = []
-    for idx, up in enumerate(archivos, start=1):
-        nombre = up.filename or f"anexo_{idx}.pdf"
-        texto = await run_in_threadpool(_leer_archivo_generico, up)
-        bloques.append(f"=== ANEXO {idx:02d}: {nombre} ===\n{texto}\n")
-    contenido_unico = "\n".join(bloques)
-
-    # 2) Análisis integrado
+    # 1) Análisis integrado (bloqueante → lo mando al threadpool)
     try:
-        resumen = await run_in_threadpool(analizar_con_openai, contenido_unico)
-        resumen = _sanear_informe(resumen)
+        resumen = await run_in_threadpool(analizar_anexos, archivos)
     except Exception as e:
         return JSONResponse({"error": f"Fallo en el análisis: {e}"}, status_code=500)
 
-    # 3) Generar PDF
+    # 2) Generar PDF (también en thread para no bloquear el loop)
     try:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         nombre_archivo = f"resumen_{timestamp}.pdf"
@@ -387,10 +351,11 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     except Exception as e:
         return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
 
-    # 4) Persistir en historial
+    # 3) Persistir en historial
     try:
         guardar_en_historial(timestamp, usuario, nombre_archivo, nombre_archivo, resumen)
     except Exception:
+        # No frenamos la respuesta si falla el guardado en historial
         pass
 
     return {"resumen": resumen, "pdf": nombre_archivo}
@@ -400,10 +365,12 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
 async def ver_historial():
     return JSONResponse(obtener_historial())
 
+# 🔁 Alias de vista para el botón de la barra lateral
 @app.get("/historia")
 async def alias_historia():
     return RedirectResponse("/?goto=historial", status_code=307)
 
+# 🔁 Alias para “nuevo análisis”
 @app.get("/analisis")
 @app.get("/analisis/nuevo")
 @app.get("/report")
@@ -432,8 +399,10 @@ async def usuario_actual(request: Request):
     rol = request.session.get("rol", "usuario")
 
     row = obtener_usuario_por_email(email) if email else None
+    # (id, nombre, email, password, rol, ...)
     nombre = (row[1] if row else None) or request.session.get("nombre") or (email or "Desconocido")
 
+    # Buscar avatar existente
     avatar_url = ""
     if email:
         prefix = _email_safe(email)
@@ -443,7 +412,12 @@ async def usuario_actual(request: Request):
                 avatar_url = f"/{p.replace(os.sep, '/')}"
                 break
 
-    return {"usuario": email or "Desconocido", "rol": rol, "nombre": nombre, "avatar_url": avatar_url}
+    return {
+        "usuario": email or "Desconocido",
+        "rol": rol,
+        "nombre": nombre,
+        "avatar_url": avatar_url  # '' si no hay
+    }
 
 # ===== Subir/actualizar avatar =====
 @app.post("/perfil/avatar")
@@ -457,6 +431,7 @@ async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
     if ext not in AVATAR_ALLOWED_EXT:
         return JSONResponse({"error": f"Formato no permitido: {ext}"}, status_code=400)
 
+    # Límite de tamaño
     data = await avatar.read()
     size_mb = len(data) / (1024 * 1024)
     if size_mb > AVATAR_MAX_MB:
@@ -465,11 +440,14 @@ async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
     prefix = _email_safe(email)
     dst = os.path.join(AVATAR_DIR, prefix + ext)
 
+    # Borrar otros formatos previos
     for e in (".webp", ".png", ".jpg", ".jpeg"):
         p = os.path.join(AVATAR_DIR, prefix + e)
         if os.path.isfile(p) and p != dst:
-            try: os.remove(p)
-            except: pass
+            try:
+                os.remove(p)
+            except:
+                pass
 
     with open(dst, "wb") as f:
         f.write(data)
@@ -496,6 +474,7 @@ async def vista_incidencias(request: Request):
         if len(t) < 7:
             continue
         fecha_legible = datetime.strptime(t[6], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M")
+        # Adjuntos
         carpeta_adjuntos = os.path.join("static", "adjuntos_incidencias")
         prefix = f"{t[1]}_{t[6].replace(':','').replace('-','').replace(' ','')[:14]}"
         adjuntos = []
@@ -504,12 +483,19 @@ async def vista_incidencias(request: Request):
                 if file.startswith(prefix):
                     adjuntos.append(file)
         tickets.append({
-            "id": t[0], "usuario": t[1], "titulo": t[2], "descripcion": t[3],
-            "tipo": t[4], "estado": t[5], "fecha": t[6],
-            "fecha_legible": fecha_legible, "adjuntos": adjuntos
+            "id": t[0],
+            "usuario": t[1],
+            "titulo": t[2],
+            "descripcion": t[3],
+            "tipo": t[4],
+            "estado": t[5],
+            "fecha": t[6],
+            "fecha_legible": fecha_legible,
+            "adjuntos": adjuntos
         })
     return templates.TemplateResponse("incidencias.html", {
-        "request": request, "tickets": tickets,
+        "request": request,
+        "tickets": tickets,
         "usuario_actual": {"nombre": usuario, "rol": rol}
     })
 
@@ -559,7 +545,9 @@ async def cambiar_password_form(request: Request):
     if not request.session.get("usuario"):
         return RedirectResponse("/login")
     return templates.TemplateResponse("cambiar_password.html", {
-        "request": request, "mensaje": "", "error": ""
+        "request": request,
+        "mensaje": "",
+        "error": ""
     })
 
 @app.post("/cambiar-password", response_class=HTMLResponse)
@@ -573,19 +561,25 @@ async def cambiar_password_submit(request: Request,
     datos = obtener_usuario_por_email(usuario)
     if not datos or datos[3] != old_password:
         return templates.TemplateResponse("cambiar_password.html", {
-            "request": request, "mensaje": "", "error": "La contraseña actual es incorrecta."
+            "request": request,
+            "mensaje": "",
+            "error": "La contraseña actual es incorrecta."
         })
     if new_password != confirm_password:
         return templates.TemplateResponse("cambiar_password.html", {
-            "request": request, "mensaje": "", "error": "La nueva contraseña no coincide en ambos campos."
+            "request": request,
+            "mensaje": "",
+            "error": "La nueva contraseña no coincide en ambos campos."
         })
     actor_user_id, ip = _actor_info(request)
     actualizar_password(usuario, new_password, actor_user_id=actor_user_id, ip=ip)
     return templates.TemplateResponse("cambiar_password.html", {
-        "request": request, "mensaje": "Contraseña cambiada correctamente.", "error": ""
+        "request": request,
+        "mensaje": "Contraseña cambiada correctamente.",
+        "error": ""
     })
 
-# ================== Admin ==================
+# ================== Admin (todas las rutas protegidas) ==================
 @app.get("/admin", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def vista_admin(request: Request):
     return templates.TemplateResponse("admin.html", {"request": request})
@@ -601,7 +595,7 @@ async def crear_usuario_api(request: Request):
         nombre = data.get("nombre")
         email = data.get("email")
         rol = data.get("rol")
-        if not nombre or not email or not rol:
+        if not nombre o  not email or not rol:  # noqa: E712 (evita error linter si no usás)
             return JSONResponse({"error": "Faltan campos: nombre, email, rol"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
         agregar_usuario(nombre, email, "1234", rol, actor_user_id=actor_user_id, ip=ip)
@@ -652,7 +646,7 @@ async def eliminar_usuario(request: Request):
         if not email:
             return JSONResponse({"error": "Falta email"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
-        ok = borrar_usuario(email, actor_user_id=actor_user_id, ip=ip, soft=False)
+        ok = borrar_usuario(email, actor_user_id=actor_user_id, ip=ip, soft=False)  # borrado duro
         if not ok:
             return JSONResponse({"error": "Usuario no encontrado"}, status_code=404)
         return JSONResponse({"mensaje": "Usuario eliminado definitivamente."})
@@ -667,30 +661,26 @@ async def chat_openai(request: Request):
     mensaje = data.get("mensaje", "")
     usuario_actual = request.session.get("usuario", "Desconocido")
 
-    try:
-        historial = obtener_historial_completo()
-    except Exception:
-        historial = []
-
+    historial = obtener_historial_completo()
     ultimo_analisis_usuario = next(
-        (h for h in historial if h.get("usuario") == usuario_actual and h.get("resumen")),
+        (h for h in historial if h["usuario"] == usuario_actual and h["resumen"]),
         None
     )
 
     if ultimo_analisis_usuario:
         ultimo_resumen = f"""
 📌 Último análisis del usuario actual:
-- Fecha: {ultimo_analisis_usuario.get('fecha')}
-- Archivo: {ultimo_analisis_usuario.get('nombre_archivo')}
+- Fecha: {ultimo_analisis_usuario['fecha']}
+- Archivo: {ultimo_analisis_usuario['nombre_archivo']}
 - Resumen:
-{ultimo_analisis_usuario.get('resumen')}
+{ultimo_analisis_usuario['resumen']}
 """
     else:
         ultimo_resumen = "(El usuario aún no tiene análisis registrados.)"
 
     contexto_general = "\n".join([
-        f"- [{h.get('fecha')}] {h.get('usuario')} analizó '{h.get('nombre_archivo')}' y obtuvo:\n{h.get('resumen')}\n"
-        for h in historial if h.get("resumen")
+        f"- [{h['fecha']}] {h['usuario']} analizó '{h['nombre_archivo']}' y obtuvo:\n{h['resumen']}\n"
+        for h in historial if h['resumen']
     ])
 
     contexto = f"{ultimo_resumen}\n\n📚 Historial completo:\n{contexto_general}"
@@ -698,7 +688,7 @@ async def chat_openai(request: Request):
     respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
     return JSONResponse({"respuesta": respuesta})
 
-# ================== API puente (drawer) ==============
+# ================== API puente para el drawer (formato reply) ==============
 @app.post("/api/chat-openai")
 async def api_chat_openai(request: Request, payload: dict = Body(...)):
     mensaje = (payload or {}).get("message", "").strip()
@@ -730,7 +720,7 @@ async def api_chat_openai(request: Request, payload: dict = Body(...)):
 
     contexto_general = "\n".join([
         f"- [{h.get('fecha')}] {h.get('usuario')} analizó '{h.get('nombre_archivo')}' y obtuvo:\n{h.get('resumen')}\n"
-        for h in historial if h.get('resumen')
+        for h in historial if h.get("resumen")
     ])
 
     contexto = f"{ultimo_resumen}\n\n📚 Historial completo:\n{contexto_general}"
@@ -738,7 +728,7 @@ async def api_chat_openai(request: Request, payload: dict = Body(...)):
     respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
     return JSONResponse({"reply": respuesta})
 
-# ===== Mini vista embebida para el widget del topbar/FAB =====
+# ===== Mini vista embebida para el widget del topbar/FAB (Enter envía) =====
 @app.get("/chat_openai_embed", response_class=HTMLResponse)
 async def chat_openai_embed(request: Request):
     if not request.session.get("usuario"):
@@ -747,7 +737,9 @@ async def chat_openai_embed(request: Request):
     <!doctype html><html><head>
     <meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
-    <style>#t{ resize:none; min-height:42px; max-height:150px; }</style>
+    <style>
+      #t{ resize:none; min-height:42px; max-height:150px; }
+    </style>
     </head><body class="p-2" style="background:transparent">
       <div id="log" class="mb-2" style="height:410px; overflow:auto; background:#f6f8fb; border-radius:12px; padding:8px;"></div>
       <form id="f" class="d-flex gap-2">
@@ -755,23 +747,61 @@ async def chat_openai_embed(request: Request):
         <button id="send" type="button" class="btn btn-primary">Enviar</button>
       </form>
       <script>
-        const log=document.getElementById('log'); const ta=document.getElementById('t'); const btn=document.getElementById('send');
+        const log  = document.getElementById('log');
+        const ta   = document.getElementById('t');
+        const btn  = document.getElementById('send');
+
         function esc(s){ return (s||'').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
-        function add(b){ const p=document.createElement('div'); p.innerHTML=b; log.appendChild(p); log.scrollTop=log.scrollHeight; }
+        function add(b){
+          const p=document.createElement('div');
+          p.innerHTML=b;
+          log.appendChild(p);
+          log.scrollTop=log.scrollHeight;
+        }
+
+        // Auto-altura del textarea (UX)
         function autosize(){ ta.style.height='auto'; ta.style.height = Math.min(ta.scrollHeight, 150) + 'px'; }
         ta.addEventListener('input', autosize); autosize();
-        let busy=false;
+
+        let busy = false;
         async function send(){
-          if(busy) return; const v=ta.value.trim(); if(!v) return; busy=true; btn.disabled=true;
-          add('<div><b>Tú:</b> '+esc(v)+'</div>'); ta.value=''; autosize();
+          if(busy) return;
+          const v = ta.value.trim();
+          if(!v) return;
+          busy = true;
+          btn.disabled = true;
+          add('<div><b>Tú:</b> '+esc(v)+'</div>');
+          ta.value=''; autosize();
           try{
-            const r=await fetch('/chat-openai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mensaje:v})});
-            const j=await r.json().catch(()=>({})); add('<div class="mt-1"><b>IA:</b> '+(j.respuesta||'')+'</div>');
-          }catch(_){ add('<div class="text-danger mt-1"><b>Error:</b> No se pudo enviar.</div>'); }
-          finally{ busy=false; btn.disabled=false; ta.focus(); }
+            const r = await fetch('/chat-openai', {
+              method:'POST',
+              headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({mensaje:v})
+            });
+            const j = await r.json().catch(()=>({}));
+            add('<div class="mt-1"><b>IA:</b> '+(j.respuesta||'')+'</div>');
+          }catch(_){
+            add('<div class="text-danger mt-1"><b>Error:</b> No se pudo enviar.</div>');
+          }finally{
+            busy = false;
+            btn.disabled = false;
+            ta.focus();
+          }
         }
-        ta.addEventListener('keydown',(e)=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); }});
-        btn.addEventListener('click',(e)=>{ e.preventDefault(); send(); });
+
+        // Enter = enviar | Shift+Enter = salto de línea
+        ta.addEventListener('keydown', (e)=>{
+          if(e.key === 'Enter' && !e.shiftKey){
+            e.preventDefault();  // evita salto de línea
+            send();              // envía directamente
+          }
+        });
+
+        // Botón enviar
+        btn.addEventListener('click', (e)=>{
+          e.preventDefault();
+          send();
+        });
       </script>
     </body></html>
     """
@@ -787,6 +817,7 @@ async def chat_view(request: Request):
 # ================== Chat interno (API) ==================
 @app.get("/api/usuarios")
 async def api_buscar_usuarios(request: Request, term: str = "", limit: int = 8):
+    """Autocompletar de usuarios por nombre/email."""
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
     term = (term or "").strip()
@@ -803,22 +834,27 @@ async def api_buscar_usuarios(request: Request, term: str = "", limit: int = 8):
 async def chat_enviar(request: Request):
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
+
     data = await request.json()
     para = data.get("para")
     texto = data.get("texto", "").strip()
     if not para or not texto:
         return JSONResponse({"error": "Faltan campos: para, texto"}, status_code=400)
+
     de = request.session.get("usuario")
     actor_user_id, ip = _actor_info(request)
+
     try:
-        msg_id = enviar_mensaje(de_email=de, para_email=para, texto=texto, actor_user_id=actor_user_id, ip=ip)
+        msg_id = enviar_mensaje(de_email=de, para_email=para, texto=texto,
+                                actor_user_id=actor_user_id, ip=ip)
+        # 🔔 Push en tiempo real para el receptor
         await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=texto)
         return JSONResponse({"ok": True, "id": msg_id})
     except Exception as e:
         print("❌ Error chat_enviar:", repr(e))
         return JSONResponse({"error": "No se pudo enviar el mensaje"}, status_code=500)
 
-# ---- Enviar mensaje con múltiples archivos ----
+# ---- NUEVO: enviar mensaje con múltiples archivos -------------------------
 @app.post("/chat/enviar-archivos")
 async def chat_enviar_archivos(
     request: Request,
@@ -826,10 +862,12 @@ async def chat_enviar_archivos(
     texto: str = Form(default=""),
     archivos: List[UploadFile] = File(default=[])
 ):
+    """Envía un mensaje con 0..N adjuntos. Guarda cada archivo y registra metadatos."""
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
 
     de = request.session.get("usuario")
+
     files = [a for a in archivos if a and a.filename]
     if len(files) > CHAT_MAX_FILES:
         return JSONResponse({"error": f"Máximo {CHAT_MAX_FILES} archivos por mensaje"}, status_code=400)
@@ -856,8 +894,10 @@ async def chat_enviar_archivos(
         written = await _save_upload_stream(archivo, path)
         total_bytes += written
         if (total_bytes / (1024 * 1024)) > CHAT_MAX_TOTAL_MB:
-            try: os.remove(path)
-            except: pass
+            try:
+                os.remove(path)
+            except:
+                pass
             return JSONResponse({"error": f"Tamaño total supera {CHAT_MAX_TOTAL_MB} MB"}, status_code=400)
 
         try:
@@ -870,12 +910,13 @@ async def chat_enviar_archivos(
             )
         except Exception as e:
             print("❌ Error guardar_adjunto:", repr(e))
-            # continúa
+            # Continuamos; se podría informar un warning al front.
 
+    # 🔔 Push en tiempo real para el receptor
     await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=(texto or "[Adjuntos]"))
     return JSONResponse({"ok": True, "id": msg_id})
 
-# ---- Compat: 1 archivo ----
+# ---- Compat: enviar mensaje con 1 archivo (reusa la lógica nueva) ---------
 @app.post("/chat/enviar-archivo")
 async def chat_enviar_archivo(
     request: Request,
@@ -883,12 +924,13 @@ async def chat_enviar_archivo(
     texto: str = Form(default=""),
     archivo: UploadFile = File(...)
 ):
+    """Compat: 1 archivo. Internamente llama a /chat/enviar-archivos."""
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
     archivos = [archivo] if archivo and archivo.filename else []
     return await chat_enviar_archivos(request, para=para, texto=texto, archivos=archivos)
 
-# ---- Descargar adjunto por nombre ----
+# ---- Servir adjunto por nombre --------------------------------------------
 @app.get("/chat/adjunto/{filename}")
 async def chat_adjunto(filename: str):
     path = os.path.join(CHAT_ATTACH_DIR, filename)
@@ -896,14 +938,13 @@ async def chat_adjunto(filename: str):
         return JSONResponse({"error": "No encontrado"}, status_code=404)
     return FileResponse(path)
 
-# ---- Hilos, mensajes, ocultar/restaurar, leídos ----
 @app.get("/chat/hilos")
 async def chat_hilos(request: Request):
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
     yo = request.session.get("usuario")
     try:
-        hilos = obtener_hilos_para(yo)
+        hilos = obtener_hilos_para(yo)  # ya filtra ocultos y reaparece si hay mensajes nuevos
         return JSONResponse({"hilos": hilos})
     except Exception as e:
         print("❌ Error chat_hilos:", repr(e))
@@ -923,55 +964,20 @@ async def chat_mensajes(request: Request, con: str, limit: int = 100):
         print("❌ Error chat_mensajes:", repr(e))
         return JSONResponse({"error": "No se pudieron obtener los mensajes"}, status_code=500)
 
-@app.post("/chat/ocultar-hilo")
-async def chat_ocultar_hilo(request: Request):
-    if not request.session.get("usuario"):
-        return JSONResponse({"error": "No autenticado"}, status_code=401)
-    data = await request.json()
-    con = (data or {}).get("con")
-    if not con:
-        return JSONResponse({"error": "Falta 'con' (email del contacto)"}, status_code=400)
-    yo = request.session.get("usuario")
-    actor_user_id, ip = _actor_info(request)
-    try:
-        ocultar_hilo(yo, con, actor_user_id=actor_user_id, ip=ip)
-        return {"ok": True}
-    except Exception as e:
-        print("❌ Error ocultar_hilo:", repr(e))
-        return JSONResponse({"error": "No se pudo ocultar el hilo"}, status_code=500)
-
-@app.post("/chat/restaurar-hilo")
-async def chat_restaurar_hilo(request: Request):
-    if not request.session.get("usuario"):
-        return JSONResponse({"error": "No autenticado"}, status_code=401)
-    data = await request.json()
-    con = (data or {}).get("con")
-    if not con:
-        return JSONResponse({"error": "Falta 'con' (email del contacto)"}, status_code=400)
-    yo = request.session.get("usuario")
-    actor_user_id, ip = _actor_info(request)
-    try:
-        restaurar_hilo(yo, con, actor_user_id=actor_user_id, ip=ip)
-        return {"ok": True}
-    except Exception as e:
-        print("❌ Error restaurar_hilo:", repr(e))
-        return JSONResponse({"error": "No se pudo restaurar el hilo"}, status_code=500)
-
 @app.post("/chat/marcar-leidos")
 async def chat_marcar_leidos(request: Request):
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
     data = await request.json()
-    con = (data or {}).get("con")
-    if not con:
-        return JSONResponse({"error": "Falta 'con' (email del contacto)"}, status_code=400)
+    de = data.get("de")
     yo = request.session.get("usuario")
-    actor_user_id, ip = _actor_info(request)
+    if not de:
+        return JSONResponse({"error": "Falta 'de' (email del contacto)"}, status_code=400)
     try:
-        marcar_mensajes_leidos(yo, con, actor_user_id=actor_user_id, ip=ip)
-        return {"ok": True}
+        marcar_mensajes_leidos(de_email=de, para_email=yo)
+        return JSONResponse({"ok": True})
     except Exception as e:
-        print("❌ Error marcar_leidos:", repr(e))
+        print("❌ Error chat_marcar_leidos:", repr(e))
         return JSONResponse({"error": "No se pudo marcar como leídos"}, status_code=500)
 
 @app.get("/chat/no-leidos")
@@ -980,91 +986,492 @@ async def chat_no_leidos(request: Request):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
     yo = request.session.get("usuario")
     try:
-        n = contar_no_leidos(yo)
-        return {"no_leidos": n}
+        total = contar_no_leidos(yo)
+        return JSONResponse({"no_leidos": total})
     except Exception as e:
-        print("❌ Error no_leidos:", repr(e))
-        return JSONResponse({"error": "No se pudo obtener el contador"}, status_code=500)
+        print("❌ Error chat_no_leidos:", repr(e))
+        return JSONResponse({"error": "No se pudo obtener el conteo"}, status_code=500)
 
-# ================== Auditoría: listar y eliminar ==================
-@app.get("/auditoria")
-async def auditoria_list(
-    request: Request,
-    accion: Optional[str] = Query(default=None),
-    desde: Optional[str] = Query(default=None),   # YYYY-MM-DD
-    hasta: Optional[str] = Query(default=None),   # YYYY-MM-DD
-    term: Optional[str]  = Query(default=None),
-    limit: int = Query(default=200, ge=1, le=5000),
-):
+# ---- Hilos: ocultar / restaurar / abrir ----------------------------------
+@app.post("/chat/ocultar")
+async def chat_ocultar(request: Request):
+    """‘Eliminar chat’: oculta el hilo para el usuario actual (no borra mensajes)."""
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
-
-    # Si tu DB tiene función obtener_auditoria, úsala (fallback ORM si no filtra)
+    data = await request.json()
+    con = (data or {}).get("con")
+    if not con:
+        return JSONResponse({"error": "Falta 'con' (email del contacto)"}, status_code=400)
+    yo = request.session.get("usuario")
+    actor_user_id, ip = _actor_info(request)
     try:
-        rows = obtener_auditoria(limit=limit)  # puede traer sin filtrar
+        ocultar_hilo(owner_email=yo, otro_email=con, actor_user_id=actor_user_id, ip=ip)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        print("❌ Error chat_ocultar:", repr(e))
+        return JSONResponse({"error": "No se pudo ocultar el hilo"}, status_code=500)
+
+@app.post("/chat/restaurar")
+async def chat_restaurar(request: Request):
+    """Revierte el ocultamiento del hilo (vuelve a aparecer en el sidebar)."""
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+    data = await request.json()
+    con = (data or {}).get("con")
+    if not con:
+        return JSONResponse({"error": "Falta 'con' (email del contacto)"}, status_code=400)
+    yo = request.session.get("usuario")
+    actor_user_id, ip = _actor_info(request)
+    try:
+        restaurar_hilo(owner_email=yo, otro_email=con, actor_user_id=actor_user_id, ip=ip)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        print("❌ Error chat_restaurar:", repr(e))
+        return JSONResponse({"error": "No se pudo restaurar el hilo"}, status_code=500)
+
+@app.post("/chat/abrir")
+async def chat_abrir(request: Request):
+    """
+    Atajo para el buscador ‘@’: restaura (si estaba oculto) y no devuelve mensajes.
+    Úsalo antes de llamar a /chat/mensajes.
+    """
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+    data = await request.json()
+    con = (data or {}).get("con")
+    if not con:
+        return JSONResponse({"error": "Falta 'con' (email del contacto)"}, status_code=400)
+    yo = request.session.get("usuario")
+    actor_user_id, ip = _actor_info(request)
+    try:
+        restaurar_hilo(owner_email=yo, otro_email=con, actor_user_id=actor_user_id, ip=ip)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        print("❌ Error chat_abrir:", repr(e))
+        return JSONResponse({"error": "No se pudo abrir el hilo"}, status_code=500)
+
+# ================== Auditoría (vista) ==================
+@app.get("/auditoria", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+async def ver_auditoria(request: Request):
+    logs = obtener_auditoria()
+    return templates.TemplateResponse("auditoria.html", {
+        "request": request,
+        "logs": logs
+    })
+
+# ================== Auditoría (eliminar registro individual) ==================
+@app.post("/auditoria/eliminar", dependencies=[Depends(require_admin)])
+async def auditoria_eliminar(request: Request):
+    """
+    Elimina un registro de auditoría por ID.
+    Espera JSON: { "id": 123 }
+    Devuelve: { "ok": true }
+    """
+    try:
+        data = await request.json()
     except Exception:
-        rows = []
+        return JSONResponse({"error": "JSON inválido"}, status_code=400)
 
-    # Si necesitás filtrar con ORM por performance:
     try:
-        db = SessionLocal()
-        q = db.query(AuditLog).order_by(AuditLog.id.desc())
-        filtros = {"accion": accion, "desde": desde, "hasta": hasta, "term": term}
-        q = _build_audit_filters(q, filtros)
-        logs = q.limit(limit).all()
-        out = []
-        for a in logs:
-            out.append({
-                "id": a.id,
-                "fecha": a.fecha,
-                "usuario": a.usuario,
-                "nombre": a.nombre,
-                "accion": a.accion,
-                "entidad": a.entidad,
-                "entidad_id": a.entidad_id,
-                "ip": a.ip,
-                "before": a.before,
-                "after": a.after
-            })
-        return {"items": out}
-    except Exception as e:
-        print("❌ Error auditoria_list ORM:", repr(e))
-        # Fallback: devolver rows crudos si existen
-        return {"items": rows[:limit]}
-    finally:
-        try:
-            db.close()
-        except Exception:
-            pass
+        log_id = int((data or {}).get("id"))
+    except Exception:
+        return JSONResponse({"error": "Falta o es inválido el campo 'id' (int)"}, status_code=400)
 
-@app.post("/auditoria/eliminar")
-async def auditoria_eliminar(
-    request: Request,
-    filtros: dict = Body(default={})
-):
-    """
-    Elimina en base a filtros (acción/fecha/term). Usa ORM para DELETE.
-    Ejemplo body:
-    {
-      "accion": "login",
-      "desde": "2025-08-01",
-      "hasta": "2025-08-13",
-      "term": "usuario@example.com"
-    }
-    """
-    if request.session.get("rol") != "admin":
-        return JSONResponse({"error": "Solo admins"}, status_code=403)
-    try:
-        db = SessionLocal()
-        q = db.query(AuditLog)
-        q = _build_audit_filters(q, filtros)
-        count = q.count()
-        q.delete(synchronize_session=False)
+    with SessionLocal() as db:
+        obj = db.query(AuditLog).filter(AuditLog.id == log_id).first()
+        if not obj:
+            return JSONResponse({"error": "Registro no encontrado"}, status_code=404)
+        db.delete(obj)
         db.commit()
-        return {"eliminados": count}
-    except Exception as e:
-        print("❌ Error auditoria_eliminar:", repr(e))
-        return JSONResponse({"error": "No se pudo eliminar la auditoría con esos filtros"}, status_code=500)
-    finally:
-        try: db.close()
-        except: pass
+
+    try:
+        email = request.session.get("usuario", "admin")
+        await emit_alert(email, "Auditoría eliminada", f"Registro #{log_id} eliminado")
+    except Exception:
+        pass
+
+    return {"ok": True}
+
+# ================== Auditoría (eliminación masiva) ==================
+@app.post("/auditoria/eliminar-masivo", dependencies=[Depends(require_admin)])
+async def auditoria_eliminar_masivo(request: Request):
+    """
+    Elimina registros de auditoría por IDs o por filtros.
+    Body JSON:
+      - ids: [int, ...]        (opcional)
+      - filtros: { accion?, desde?, hasta?, term? }   (opcional)
+    Si se envían ids, se priorizan; si no hay ids, se usan filtros.
+    Respuesta: { ok: true, count: <int> }
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON inválido"}, status_code=400)
+
+    ids = data.get("ids") or []
+    filtros = data.get("filtros") or {}
+
+    deleted = 0
+    with SessionLocal() as db:
+        q = db.query(AuditLog)
+        if ids:
+            try:
+                ids_int = [int(i) for i in ids]
+            except Exception:
+                return JSONResponse({"error": "ids inválidos"}, status_code=400)
+            q = q.filter(AuditLog.id.in_(ids_int))
+        else:
+            q = _build_audit_filters(q, filtros)
+
+        to_delete = q.all()
+        deleted = len(to_delete)
+        if deleted == 0:
+            return {"ok": True, "count": 0}
+
+        for obj in to_delete:
+            db.delete(obj)
+        db.commit()
+
+    try:
+        email = request.session.get("usuario", "admin")
+        await emit_alert(email, "Auditoría (masivo)", f"{deleted} registro(s) eliminados")
+    except Exception:
+        pass
+
+    return {"ok": True, "count": deleted}
+
+# ================== Auditoría (purga por antigüedad/fecha) ==================
+@app.post("/auditoria/purgar", dependencies=[Depends(require_admin)])
+async def auditoria_purgar(request: Request):
+    """
+    Purga rápida por antigüedad o fecha:
+    Body JSON:
+      - days: int     (borra todo lo anterior a hoy - days)
+      - before: "YYYY-MM-DD"  (borra todo lo anterior a esa fecha 23:59:59)
+    Uno de los dos es requerido.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON inválido"}, status_code=400)
+
+    days = data.get("days")
+    before = (data.get("before") or "").strip()
+
+    if days is None and not before:
+        return JSONResponse({"error": "Debe enviar 'days' o 'before' (YYYY-MM-DD)"}, status_code=400)
+
+    if before:
+        limite = f"{before} 23:59:59"
+    else:
+        from datetime import timedelta
+        dt = datetime.utcnow() - timedelta(days=int(days))
+        limite = dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    with SessionLocal() as db:
+        q = db.query(AuditLog).filter(AuditLog.fecha <= limite)
+        to_delete = q.all()
+        count = len(to_delete)
+        if count == 0:
+            return {"ok": True, "count": 0}
+
+        for obj in to_delete:
+            db.delete(obj)
+        db.commit()
+
+    try:
+        email = request.session.get("usuario", "admin")
+        await emit_alert(email, "Auditoría (purga)", f"{count} registro(s) eliminados")
+    except Exception:
+        pass
+
+    return {"ok": True, "count": count}
+
+# =====================================================================
+# ========================== CALENDARIO ===============================
+# =====================================================================
+
+CAL_DB = "calendar.sqlite3"
+
+def cal_conn():
+    conn = sqlite3.connect(CAL_DB)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_calendar_db():
+    with cal_conn() as c:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS eventos(
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT,
+                start TEXT NOT NULL,
+                end TEXT,
+                all_day INTEGER NOT NULL DEFAULT 0,
+                color TEXT,
+                created_by TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS notificaciones(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user TEXT NOT NULL,
+                titulo TEXT NOT NULL,
+                cuerpo TEXT,
+                created_at TEXT NOT NULL,
+                leida INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+init_calendar_db()
+
+def _now_iso():
+    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def _event_row_to_dict(r: sqlite3.Row):
+    return {
+        "id": r["id"],
+        "title": r["title"],
+        "start": r["start"],
+        "end": r["end"],
+        "allDay": bool(r["all_day"]),
+        "description": r["description"] or "",
+        "color": r["color"] or "#0ea5e9",
+    }
+
+def _notify(user: str, titulo: str, cuerpo: str = ""):
+    """
+    Síncrono (compat) — guarda en BD.
+    Para push en vivo, usar notify_async().
+    """
+    with cal_conn() as c:
+        c.execute(
+            "INSERT INTO notificaciones(user, titulo, cuerpo, created_at, leida) VALUES(?,?,?,?,0)",
+            (user or "Desconocido", titulo, cuerpo, _now_iso())
+        )
+
+async def notify_async(user: str, titulo: str, cuerpo: str = ""):
+    """
+    Inserta la notificación en BD y además emite un evento en tiempo real.
+    """
+    _notify(user, titulo, cuerpo)
+    await emit_alert(user, titulo, cuerpo)
+
+@app.get("/calendario", response_class=HTMLResponse)
+async def calendario_view(request: Request):
+    if not request.session.get("usuario"):
+        return RedirectResponse("/login")
+    return templates.TemplateResponse("calendario.html", {"request": request})
+
+@app.get("/calendario/eventos")
+async def cal_list():
+    with cal_conn() as c:
+        cur = c.execute("SELECT * FROM eventos ORDER BY start ASC")
+        rows = [ _event_row_to_dict(r) for r in cur.fetchall() ]
+    return rows
+
+# Alias para la Home (index) que espera {events:[...]}
+@app.get("/api/calendar/events")
+async def cal_list_alias():
+    items = await cal_list()
+    return {"events": items}
+
+@app.post("/calendario/eventos")
+async def cal_create(request: Request):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error":"No autenticado"}, status_code=401)
+    data = await request.json()
+    title = (data.get("title") or "").strip()
+    start = data.get("start")
+    end   = data.get("end")
+    all_day = 1 if data.get("AllDay") or data.get("allDay") else 0
+    desc  = (data.get("description") or "").strip()
+    color = (data.get("color") or "#0ea5e9").strip()
+    if not title or not start:
+        return JSONResponse({"error":"Faltan campos: title, start"}, status_code=400)
+
+    evt_id = uuid.uuid4().hex
+    now = _now_iso()
+    created_by = request.session.get("usuario","Desconocido")
+    with cal_conn() as c:
+        c.execute("""
+            INSERT INTO eventos(id,title,description,start,end,all_day,color,created_by,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?)
+        """, (evt_id,title,desc,start,end,all_day,color,created_by,now,now))
+    await notify_async(created_by, "Evento creado", f"{title} • {start}{(' → '+end) if end else ''}")
+    return {
+        "id": evt_id, "title": title, "description": desc, "start": start, "end": end,
+        "allDay": bool(all_day), "color": color
+    }
+
+@app.patch("/calendario/eventos/{evt_id}")
+async def cal_update(evt_id: str, request: Request):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error":"No autenticado"}, status_code=401)
+    data = await request.json()
+
+    def to_iso(v):
+        if v is None:
+            return None
+        return v if isinstance(v, str) else str(v)
+
+    title = data.get("title")
+    desc  = data.get("description")
+    color = data.get("color")
+    start = to_iso(data.get("start"))
+    end   = to_iso(data.get("end"))
+    all_day = data.get("AllDay") if "AllDay" in data else data.get("allDay")
+
+    sets, vals = [], []
+    if title is not None: sets.append("title=?"); vals.append(title)
+    if desc  is not None: sets.append("description=?"); vals.append(desc)
+    if color is not None: sets.append("color=?"); vals.append(color)
+    if start is not None: sets.append("start=?"); vals.append(start)
+    if end   is not None: sets.append("end=?");   vals.append(end)
+    if all_day is not None: sets.append("all_day=?"); vals.append(1 if all_day else 0)
+    sets.append("updated_at=?"); vals.append(_now_iso())
+    vals.append(evt_id)
+
+    if len(sets) == 1:
+        return JSONResponse({"error":"Nada para actualizar"}, status_code=400)
+
+    with cal_conn() as c:
+        cur = c.execute(f"UPDATE eventos SET {', '.join(sets)} WHERE id=?", vals)
+        if cur.rowcount == 0:
+            return JSONResponse({"error":"Evento no encontrado"}, status_code=404)
+
+    await notify_async(request.session.get("usuario","Desconocido"), "Evento actualizado", f"ID: {evt_id}")
+    return {"ok": True}
+
+@app.delete("/calendario/eventos/{evt_id}")
+async def cal_delete(evt_id: str, request: Request):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error":"No autenticado"}, status_code=401)
+    with cal_conn() as c:
+        cur = c.execute("DELETE FROM eventos WHERE id=?", (evt_id,))
+        if cur.rowcount == 0:
+            return JSONResponse({"error":"Evento no encontrado"}, status_code=404)
+    await notify_async(request.session.get("usuario","Desconocido"), "Evento eliminado", f"ID: {evt_id}")
+    return {"ok": True}
+
+# ================== Notificaciones mínimas usadas por calendario.html ======
+@app.get("/notificaciones")
+async def list_notifs(request: Request, limit: int = 20):
+    user = request.session.get("usuario", "Desconocido")
+    with cal_conn() as c:
+        total_unread = c.execute(
+            "SELECT COUNT(1) FROM notificaciones WHERE user=? AND leida=0", (user,)
+        ).fetchone()[0]
+        cur = c.execute(
+            "SELECT id, titulo, cuerpo, created_at, leida FROM notificaciones WHERE user=? ORDER BY id DESC LIMIT ?",
+            (user, limit)
+        )
+        items = []
+        for r in cur.fetchall():
+            items.append({
+                "id": r["id"],
+                "titulo": r["titulo"],
+                "cuerpo": r["cuerpo"],
+                "fecha_legible": r["created_at"],
+                "leida": bool(r["leida"])
+            })
+    return {"total_unread": total_unread, "items": items}
+
+@app.post("/notificaciones/marcar-leidas")
+async def mark_read(request: Request):
+    user = request.session.get("usuario", "Desconocido")
+    with cal_conn() as c:
+        c.execute("UPDATE notificaciones SET leida=1 WHERE user=?", (user,))
+    return {"ok": True}
+
+# =====================================================================
+# ========================== PRESENCIA / ONLINE =======================
+# =====================================================================
+
+def init_presence_db():
+    with cal_conn() as c:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS presence(
+                user TEXT PRIMARY KEY,
+                nombre TEXT,
+                last_seen TEXT NOT NULL,
+                ip TEXT,
+                ua TEXT
+            )
+        """)
+
+# Llamamos a la init de presencia después de la del calendario
+init_presence_db()
+
+# ========================== Endpoints presencia ======================
+
+@app.post("/presence/ping")
+async def presence_ping(request: Request):
+    """
+    El front llama a este endpoint cada ~30s para marcar al usuario como activo.
+    """
+    email = request.session.get("usuario")
+    if not email:
+        return JSONResponse({"ok": False, "error": "No autenticado"}, status_code=401)
+
+    # Intentamos sacar nombre desde la BD de usuarios
+    row = obtener_usuario_por_email(email)
+    nombre = row[1] if row else email
+
+    ip = request.client.host if request.client else None
+    ua = request.headers.get("user-agent", "")
+    now = _now_iso()  # UTC con 'Z'
+
+    with cal_conn() as c:
+        c.execute("""
+            INSERT INTO presence(user, nombre, last_seen, ip, ua)
+            VALUES(?,?,?,?,?)
+            ON CONFLICT(user) DO UPDATE SET
+              nombre=excluded.nombre,
+              last_seen=excluded.last_seen,
+              ip=excluded.ip,
+              ua=excluded.ua
+        """, (email, nombre, now, ip, ua))
+    return {"ok": True}
+
+
+@app.get("/presence/online")
+async def presence_online(minutes: int = 5):
+    """
+    Devuelve usuarios con last_seen dentro de los últimos N minutos (default 5).
+    """
+    threshold_ts = datetime.utcnow().timestamp() - (minutes * 60)
+
+    items = []
+    with cal_conn() as c:
+        cur = c.execute("SELECT user, nombre, last_seen, ip, ua FROM presence ORDER BY last_seen DESC")
+        for r in cur.fetchall():
+            try:
+                dt = datetime.strptime(r["last_seen"], "%Y-%m-%dT%H:%M:%SZ")
+                ts = dt.timestamp()
+            except Exception:
+                ts = 0
+            if ts >= threshold_ts:
+                items.append({
+                    "email": r["user"],
+                    "nombre": r["nombre"] or r["user"],
+                    "last_seen": r["last_seen"],
+                    "ip": r["ip"] or "",
+                    "ua": r["ua"] or ""
+                })
+    return {"items": items}
+
+
+@app.get("/usuarios-activos", response_class=HTMLResponse)
+async def usuarios_activos(request: Request):
+    """
+    Vista HTML con el listado (usa templates/usuarios_activos.html).
+    """
+    if not request.session.get("usuario"):
+        return RedirectResponse("/login")
+    data = await presence_online(minutes=5)  # reutilizamos el JSON
+    return templates.TemplateResponse("usuarios_activos.html", {
+        "request": request,
+        "items": data.get("items", [])
+    })

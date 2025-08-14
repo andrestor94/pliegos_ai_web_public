@@ -1,4 +1,3 @@
-# utils.py
 import fitz  # PyMuPDF
 import io
 import os
@@ -15,12 +14,7 @@ load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def extraer_texto_de_pdf(file) -> str:
-    """Lee un PDF (file-like con .file) y devuelve el texto concatenado."""
     texto_completo = ""
-    try:
-        file.file.seek(0)
-    except Exception:
-        pass
     with fitz.open(stream=file.file.read(), filetype="pdf") as doc:
         for pagina in doc:
             texto_completo += pagina.get_text()
@@ -28,7 +22,7 @@ def extraer_texto_de_pdf(file) -> str:
 
 
 # ============================================================
-# ANALIZADOR (C.R.A.F.T.) — compatible con gpt-5 y chat.completions
+# NUEVO ANALIZADOR (usa tu C.R.A.F.T. mejorado + GPT-5)
 # ============================================================
 
 # Modelo (puedes override con OPENAI_MODEL_ANALISIS=gpt-5)
@@ -132,63 +126,21 @@ def _particionar(texto: str, max_chars: int) -> list[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
 
-# ============== Compatibilidad con GPT-5 (Responses) / clásicos (Chat) ==============
-
-def _requires_responses(model_name: str) -> bool:
-    m = (model_name or "").lower()
-    return m.startswith("gpt-5") or m.startswith("gpt-4.1") or m.startswith("o4")
-
-def _chat_call(messages, model, temperature=0.2, max_tokens=2000) -> str:
-    resp = client.chat.completions.create(
+def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_tokens=MAX_TOKENS_SALIDA):
+    return client.chat.completions.create(
         model=model,
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens
     )
-    return resp.choices[0].message.content.strip()
-
-def _responses_call(messages, model, max_tokens: int | None = None) -> str:
-    # NO enviar 'temperature' (gpt-5 lo rechaza). 'max_output_tokens' es opcional según SDK.
-    if not hasattr(client, "responses") or not hasattr(client.responses, "create"):
-        raise RuntimeError(
-            "Este modelo requiere la Responses API. Actualizá 'openai' a >= 1.40.0 y redeploy."
-        )
-    payload = {
-        "model": model,
-        "input": [{"role": m["role"], "content": m["content"]} for m in messages],
-    }
-    if max_tokens:
-        payload["max_output_tokens"] = max_tokens
-    resp = client.responses.create(**payload)
-
-    # Unificar texto (distintas versiones de SDK)
-    if hasattr(resp, "output_text") and resp.output_text:
-        return resp.output_text.strip()
-
-    chunks = []
-    for o in getattr(resp, "output", []) or []:
-        for b in getattr(o, "content", []) or []:
-            if getattr(b, "type", "") == "output_text":
-                chunks.append(getattr(b, "text", ""))
-    if chunks:
-        return "".join(chunks).strip()
-
-    if hasattr(resp, "text") and resp.text:
-        return resp.text.strip()
-
-    return str(resp).strip()
-
-def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_tokens=MAX_TOKENS_SALIDA) -> str:
-    """Llama a OpenAI usando Responses si el modelo lo requiere; si no, Chat Completions."""
-    if _requires_responses(model):
-        return _responses_call(messages, model, max_tokens=max_tokens)
-    return _chat_call(messages, model, temperature=temperature, max_tokens=max_tokens)
 
 
 def analizar_con_openai(texto: str) -> str:
     """
-    Analiza el contenido completo y devuelve un único informe en texto,
-    listo para renderizar a PDF.
+    Analiza el contenido completo y devuelve **un único informe** en texto,
+    listo para renderizar a PDF. Usa el prompt C.R.A.F.T. mejorado y gpt-5.
+    - Si el texto total es corto: una sola pasada (síntesis final).
+    - Si es largo: notas intermedias por chunk + síntesis final única.
     """
     if not texto or not texto.strip():
         return "No se recibió contenido para analizar."
@@ -197,11 +149,11 @@ def analizar_con_openai(texto: str) -> str:
     if len(texto) <= MAX_SINGLE_PASS_CHARS:
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
-            {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve UNICAMENTE el informe final (texto), sin preámbulos."}
+            {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve ÚNICAMENTE el informe final (texto), sin preámbulos."}
         ]
         try:
-            contenido = _llamada_openai(messages)
-            return contenido.strip()
+            resp = _llamada_openai(messages)
+            return resp.choices[0].message.content.strip()
         except Exception as e:
             return f"⚠️ Error al generar el análisis: {e}"
 
@@ -216,8 +168,8 @@ def analizar_con_openai(texto: str) -> str:
             {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n=== FRAGMENTO {i}/{len(partes)} ===\n{parte}"}
         ]
         try:
-            r_texto = _llamada_openai(msg, max_tokens=2000)
-            notas.append(r_texto.strip())
+            r = _llamada_openai(msg, max_tokens=2000)
+            notas.append(r.choices[0].message.content.strip())
         except Exception as e:
             notas.append(f"[ERROR] No se pudieron generar notas de la parte {i}: {e}")
 
@@ -231,50 +183,21 @@ def analizar_con_openai(texto: str) -> str:
 === NOTAS INTERMEDIAS INTEGRADAS (DEDUPE Y TRAZABILIDAD) ===
 {notas_integradas}
 
-👉 Usa UNICAMENTE estas notas para elaborar el informe final unico (sin repetir encabezados por fragmento, sin meta-comentarios).
-👉 Devuelve SOLO el informe final en texto."""}
+👉 Usa ÚNICAMENTE estas notas para elaborar el **informe final único** (sin repetir encabezados por fragmento, sin meta-comentarios). 
+👉 Devuelve SOLO el informe final en texto."""
+        }
     ]
 
     try:
-        informe = _llamada_openai(messages_final, max_tokens=MAX_TOKENS_SALIDA)
-        return informe.strip()
+        resp_final = _llamada_openai(messages_final)
+        return resp_final.choices[0].message.content.strip()
     except Exception as e:
+        # Si falla la síntesis, al menos devolvemos las notas
         return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias:\n{notas_integradas}"
 
 
 # ============================================================
-# NUEVO: integrar múltiples anexos (necesario para main.py)
-# ============================================================
-def analizar_anexos(files: list) -> str:
-    """
-    Recibe una lista de UploadFile y produce un único contenido etiquetado por anexo,
-    luego llama a analizar_con_openai.
-    """
-    if not files:
-        return "No se recibieron anexos para analizar."
-
-    bloques = []
-    for idx, f in enumerate(files, 1):
-        # Intentar extraer como PDF
-        try:
-            texto = extraer_texto_de_pdf(f)
-        except Exception:
-            # Fallback: intentar leer texto plano
-            try:
-                f.file.seek(0)
-                texto = f.file.read().decode("utf-8", errors="ignore")
-            except Exception:
-                texto = ""
-
-        nombre = getattr(f, "filename", f"anexo_{idx}.pdf")
-        bloques.append(f"=== ANEXO {idx:02d}: {nombre} ===\n{texto}\n")
-
-    contenido_unico = "\n".join(bloques)
-    return analizar_con_openai(contenido_unico)
-
-
-# ============================================================
-# Chat IA — ahora usando GPT-5 (con Responses si corresponde)
+# (NO TOCAR) — Chat IA
 # ============================================================
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
     descripcion_interfaz = f"""
@@ -309,20 +232,22 @@ El usuario actual es: {usuario}
 """
 
     try:
-        messages = [
-            {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
-            {"role": "user", "content": prompt}
-        ]
-        chat_model = "gpt-5"
-        if _requires_responses(chat_model):
-            return _responses_call(messages, chat_model, max_tokens=1200)
-        return _chat_call(messages, chat_model, temperature=0.3, max_tokens=1200)
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=1200
+        )
+        return response.choices[0].message.content.strip()
     except Exception as e:
         return f"⚠️ Error al generar respuesta: {e}"
 
 
 # ============================================================
-# Generación de PDF (igual que tu versión estable)
+# (SIN CAMBIOS) — Generación de PDF
 # ============================================================
 def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     output_dir = os.path.join("generated_pdfs")
@@ -347,7 +272,7 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     c.setFont("Helvetica", 10)
     fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
     c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_actual}")
-    resumen = (resumen or "").replace("**", "")
+    resumen = resumen.replace("**", "")
     c.setFont("Helvetica", 11)
     margen_izquierdo = 20 * mm
     margen_superior = A4[1] - 54 * mm
@@ -389,7 +314,7 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
 
 
 def dividir_texto(texto, canvas_obj, max_width):
-    palabras = (texto or "").split(" ")
+    palabras = texto.split(" ")
     lineas = []
     linea_actual = ""
 
