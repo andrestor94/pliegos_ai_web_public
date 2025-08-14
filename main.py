@@ -14,11 +14,10 @@ from datetime import datetime
 from sqlalchemy import or_, and_
 
 from utils import (
-    extraer_texto_de_pdf,     # compat
-    analizar_con_openai,      # compat
+    extraer_texto_de_pdf,
+    analizar_con_openai,
     generar_pdf_con_plantilla,
-    responder_chat_openai,
-    analizar_anexos           # << NUEVO: analizador multi-anexo
+    responder_chat_openai
 )
 
 from database import (
@@ -199,9 +198,6 @@ CHAT_ALLOWED_EXT = {
 CHAT_MAX_FILES = 10
 CHAT_MAX_TOTAL_MB = 50
 
-# Extensiones permitidas para ANÁLISIS (alineado a utils.analizar_anexos)
-ANALYSIS_ALLOWED_EXT = {".pdf", ".txt", ".csv", ".docx", ".pptx", ".xlsx"}
-
 # ================== Avatares (perfil) ==================
 AVATAR_DIR = os.path.join("static", "avatars")
 os.makedirs(AVATAR_DIR, exist_ok=True)
@@ -324,65 +320,17 @@ async def logout_get(request: Request):
 # ================== Análisis ==================
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
-    """
-    Unifica TODOS los anexos recibidos en un solo análisis y devuelve:
-      - resumen (texto)
-      - nombre del PDF generado
-    Acepta: PDF, TXT, CSV, DOCX, PPTX, XLSX (best-effort).
-    """
     usuario = request.session.get("usuario", "Anónimo")
+    texto_total = ""
+    for archivo in archivos:
+        texto = extraer_texto_de_pdf(archivo)
+        texto_total += texto + "\n\n"
+    resumen = analizar_con_openai(texto_total)
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    nombre_archivo = f"resumen_{timestamp}.pdf"
+    generar_pdf_con_plantilla(resumen, nombre_archivo)
 
-    if not archivos:
-        return JSONResponse({"error": "Subí al menos un archivo"}, status_code=400)
-
-    # Validación de extensiones (ahora multi-formato)
-    invalidos = [
-        a.filename for a in archivos
-        if a and a.filename and os.path.splitext(a.filename)[1].lower() not in ANALYSIS_ALLOWED_EXT
-    ]
-    if invalidos:
-        return JSONResponse({
-            "error": "Formato no permitido para análisis",
-            "detalles": {"no_permitidos": invalidos, "permitidos": sorted(list(ANALYSIS_ALLOWED_EXT))}
-        }, status_code=400)
-
-    # 1) Analizar todos los anexos con el nuevo util
-    try:
-        # avisar al usuario (opcional, no frena)
-        try:
-            await emit_alert(usuario, "Análisis iniciado", f"{len([a for a in archivos if a and a.filename])} archivo(s) recibido(s)")
-        except Exception:
-            pass
-
-        resumen = await run_in_threadpool(analizar_anexos, archivos)
-
-        if not isinstance(resumen, str) or not resumen.strip():
-            resumen = "No se pudo generar un resumen. Intente con archivos más legibles."
-    except Exception as e:
-        # Generamos PDF con el error para mantener UX consistente
-        resumen = f"⚠️ Fallo en el análisis: {e}"
-
-    # 2) Generar PDF (también en thread para no bloquear el loop)
-    nombre_archivo = f"resumen_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf"
-    try:
-        await run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo)
-    except Exception as e:
-        # Devolvemos el resumen aunque falle el PDF
-        return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
-
-    # 3) Persistir en historial (no bloqueante)
-    try:
-        timestamp = nombre_archivo.replace("resumen_", "").replace(".pdf", "")
-        guardar_en_historial(timestamp, usuario, nombre_archivo, nombre_archivo, resumen)
-    except Exception:
-        pass
-
-    # 4) Notificación de fin (no bloqueante)
-    try:
-        await emit_alert(usuario, "Análisis finalizado", "Tu resumen está listo", extra={"pdf": nombre_archivo})
-    except Exception:
-        pass
-
+    guardar_en_historial(timestamp, usuario, nombre_archivo, nombre_archivo, resumen)
     return {"resumen": resumen, "pdf": nombre_archivo}
 
 # ================== Historial ==================
@@ -620,7 +568,7 @@ async def crear_usuario_api(request: Request):
         nombre = data.get("nombre")
         email = data.get("email")
         rol = data.get("rol")
-        if not nombre or not email or not rol:  # noqa: E712
+        if not nombre or not email or not rol:
             return JSONResponse({"error": "Faltan campos: nombre, email, rol"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
         agregar_usuario(nombre, email, "1234", rol, actor_user_id=actor_user_id, ip=ip)
@@ -1310,7 +1258,7 @@ async def cal_create(request: Request):
     title = (data.get("title") or "").strip()
     start = data.get("start")
     end   = data.get("end")
-    all_day = 1 if data.get("AllDay") or data.get("allDay") else 0
+    all_day = 1 if data.get("allDay") else 0
     desc  = (data.get("description") or "").strip()
     color = (data.get("color") or "#0ea5e9").strip()
     if not title or not start:

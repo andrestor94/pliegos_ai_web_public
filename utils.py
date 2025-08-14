@@ -162,30 +162,67 @@ def _particionar(texto: str, max_chars: int) -> list[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
 # ============================================================
-# Helper: llamada OpenAI con reintento si 'temperature' o 'max_tokens' no son soportados
+# Helper: llamada OpenAI con reintentos/fallbacks
 # ============================================================
 def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_tokens=MAX_TOKENS_SALIDA):
+    """
+    Intenta en este orden:
+      1) max_completion_tokens + (opcional) temperature
+      2) (si falla por temperature) repetir sin temperature
+      3) (si falla por tokens) usar max_tokens (legacy)
+    """
+    # Base kwargs
     kwargs = {"model": model, "messages": messages}
+
     if max_tokens is not None:
-        kwargs["max_tokens"] = int(max_tokens)
+        kwargs["max_completion_tokens"] = int(max_tokens)
     if temperature is not None:
         kwargs["temperature"] = float(temperature)
 
+    # Try 1: preferido (max_completion_tokens)
     try:
         return client.chat.completions.create(**kwargs)
-    except Exception as e:
-        msg = str(e)
-        # Algunos modelos (p.ej. ciertas variantes de gpt-5) no aceptan temperature distinto de 1
-        if "Unsupported value" in msg and "temperature" in msg:
-            kwargs.pop("temperature", None)
-            return client.chat.completions.create(**kwargs)
-        # Algunos SDKs pueden cambiar la clave de tokens
-        if ("unrecognized request argument" in msg or "Invalid" in msg) and "max_tokens" in msg:
-            mt = kwargs.pop("max_tokens", None)
-            if mt is not None:
-                kwargs["max_completion_tokens"] = mt
-            kwargs.pop("temperature", None)
-            return client.chat.completions.create(**kwargs)
+    except Exception as e1:
+        msg1 = (str(e1) or "").lower()
+
+        # Try 2: quitar temperature si es no soportado
+        if "temperature" in kwargs and ("unsupported parameter" in msg1 or "unrecognized request argument" in msg1 or "invalid" in msg1):
+            try_kwargs = dict(kwargs)
+            try_kwargs.pop("temperature", None)
+            try:
+                return client.chat.completions.create(**try_kwargs)
+            except Exception as e2:
+                msg2 = (str(e2) or "").lower()
+                # Try 3: alternar a max_tokens si el modelo no banca max_completion_tokens
+                if ("unsupported" in msg2 or "unrecognized" in msg2) and "max_completion_tokens" in msg2:
+                    try_kwargs.pop("max_completion_tokens", None)
+                    try_kwargs["max_tokens"] = int(max_tokens) if max_tokens is not None else None
+                    if try_kwargs.get("max_tokens") is None:
+                        try_kwargs.pop("max_tokens", None)
+                    return client.chat.completions.create(**try_kwargs)
+                raise
+
+        # Si el problema fue directamente con max_completion_tokens, probamos legacy max_tokens
+        if ("unsupported" in msg1 or "unrecognized" in msg1 or "not supported" in msg1) and "max_tokens" in msg1:
+            # Este caso se daría si ya venía con max_tokens, pero por las dudas cubrimos ambos sentidos
+            pass
+        if ("unsupported" in msg1 or "unrecognized" in msg1 or "invalid" in msg1) and "max_completion_tokens" in msg1:
+            try_kwargs = dict(kwargs)
+            try_kwargs.pop("max_completion_tokens", None)
+            try_kwargs["max_tokens"] = int(max_tokens) if max_tokens is not None else None
+            if try_kwargs.get("max_tokens") is None:
+                try_kwargs.pop("max_tokens", None)
+            # quitar temperature por si acaso
+            try_kwargs.pop("temperature", None)
+            return client.chat.completions.create(**try_kwargs)
+
+        # Último intento: quitar temperature y volver a intentar tal cual
+        if "temperature" in kwargs:
+            try_kwargs = dict(kwargs)
+            try_kwargs.pop("temperature", None)
+            return client.chat.completions.create(**try_kwargs)
+
+        # Si nada funcionó, relanzamos
         raise
 
 # ============================================================
@@ -326,7 +363,6 @@ El usuario actual es: {usuario}
 """
 
     try:
-        # Evitamos temperature aquí para máxima compatibilidad con gpt-5
         response = _llamada_openai(
             messages=[
                 {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
