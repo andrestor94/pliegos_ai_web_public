@@ -1,7 +1,7 @@
-# utils.py
 import fitz  # PyMuPDF
 import io
 import os
+import re
 from datetime import datetime
 from openai import OpenAI
 from reportlab.lib.pagesizes import A4
@@ -11,103 +11,73 @@ from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import HexColor
 from dotenv import load_dotenv
 
-# Nuevos imports (performance)
-import asyncio
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-from typing import List
-
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ======================= TOGGLES DE RENDIMIENTO =======================
-# 1 = usar Responses API; 0 = usar chat.completions (más estable si Responses está lento)
-USE_RESPONSES = int(os.getenv("USE_RESPONSES", "1"))
-
-# Modelos
-MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
-# Por pedido: priorizamos GPT-5 también en notas y chat; se puede override por .env si querés.
-MODEL_NOTAS = os.getenv("OPENAI_MODEL_NOTAS", "gpt-5")               # rápido/preciso para notas
-MODEL_SINTESIS = os.getenv("OPENAI_MODEL_SINTESIS", MODEL_ANALISIS)  # fuerte para el informe final
-MODEL_CHAT = os.getenv("OPENAI_MODEL_CHAT", "gpt-5")
-# Fallbacks por si el principal falla o devuelve vacío
-FALLBACK_MODELS = [m.strip() for m in os.getenv(
-    "OPENAI_MODEL_FALLBACKS",
-    "gpt-5-mini,gpt-4o,gpt-4o-mini"
-).split(",") if m.strip()]
-
-# Concurrencia y timeouts
-OPENAI_CONCURRENCY = int(os.getenv("OPENAI_CONCURRENCY", "6"))     # hilos para notas
-OPENAI_CALL_TIMEOUT = int(os.getenv("OPENAI_CALL_TIMEOUT", "45"))  # seg por llamada de modelo
-OPENAI_RETRIES = int(os.getenv("OPENAI_RETRIES", "0"))             # reintentos por modelo
-
-# Contexto y chunking
-MAX_SINGLE_PASS_CHARS = int(os.getenv("MAX_SINGLE_PASS_CHARS", "45000"))
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "12000"))
-MAX_COMPLETION_TOKENS = int(os.getenv("MAX_COMPLETION_TOKENS", "6000"))  # mapeado a max_output_tokens (↑ para informes cortos)
-CTX_TOKENS = int(os.getenv("OPENAI_CONTEXT_TOKENS", "128000"))  # tope aprox. contexto
-
-# ======================= PDF -> TEXTO =======================
 def extraer_texto_de_pdf(file) -> str:
-    """
-    Lee un UploadFile (FastAPI) y devuelve texto plano.
-    Si el PDF es escaneado sin OCR, devolverá poco o nada.
-    """
-    try:
-        data = file.file.read()
-        file.file.seek(0)
-        texto_completo = ""
-        with fitz.open(stream=data, filetype="pdf") as doc:
-            for pagina in doc:
-                texto_completo += pagina.get_text() or ""
-        # Limpieza mínima
-        texto_completo = "".join(ch for ch in texto_completo if ch >= " " or ch in "\n\r\t")
-        return texto_completo.strip()
-    except Exception as e:
-        return f"[ERROR_EXTRAER_PDF] {e}"
+    texto_completo = ""
+    with fitz.open(stream=file.file.read(), filetype="pdf") as doc:
+        for pagina in doc:
+            texto_completo += pagina.get_text()
+    return texto_completo
 
-def extraer_texto_de_pdf_bytes(data: bytes) -> str:
-    """
-    Igual que extraer_texto_de_pdf pero recibe bytes. Útil para extracción concurrente.
-    """
-    try:
-        texto_completo = ""
-        with fitz.open(stream=data, filetype="pdf") as doc:
-            for pagina in doc:
-                texto_completo += pagina.get_text() or ""
-        texto_completo = "".join(ch for ch in texto_completo if ch >= " " or ch in "\n\r\t")
-        return texto_completo.strip()
-    except Exception as e:
-        return f"[ERROR_EXTRAER_PDF] {e}"
 
 # ============================================================
-# C.R.A.F.T. — Prompts
+# ANALIZADOR (C.R.A.F.T. + GPT-5) con integración multi-anexo
 # ============================================================
+
+MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
+
+# Heurísticas de particionado
+MAX_SINGLE_PASS_CHARS = 55000   # subimos umbral para forzar síntesis única
+CHUNK_SIZE = 16000              # menos cortes → mejor contexto
+TEMPERATURE_ANALISIS = 0.2
+MAX_TOKENS_SALIDA = 4000
+
+# Guía de sinónimos/normalización para evitar "no especificado" falsos
+SINONIMOS_CANONICOS = r"""
+[Guía de mapeo semántico]
+- "Fecha de publicación" ≈ "fecha del llamado", "fecha de difusión del llamado", "fecha de convocatoria".
+- "Número de proceso" ≈ "Expediente", "N° de procedimiento", "EX-...", "IF-...".
+- "Presupuesto referencial" ≈ "presupuesto oficial", "monto estimado", "crédito disponible".
+- "Presentación de ofertas" ≈ "acto de presentación", "límite de recepción".
+- "Apertura" ≈ "acto de apertura de ofertas".
+- "Mantenimiento de oferta" ≈ "validez de la oferta".
+- "Garantía de cumplimiento" ≈ "garantía contractual".
+- "Planilla de cotización" ≈ "formulario de oferta", "cuadro comparativo", "planilla de precios".
+- "Tipo de cambio BNA" ≈ "Banco Nación vendedor del día anterior".
+Usa esta guía: si un campo aparece con sinónimos/variantes, NO lo marques como "no especificado".
+"""
+
+# -------- Prompt maestro (síntesis final única) --------
 CRAFT_PROMPT_MAESTRO = r"""
-# C.R.A.F.T. — Prompt maestro para leer, analizar y generar un **informe quirúrgico** de pliegos (con múltiples anexos)
+# C.R.A.F.T. — Informe quirúrgico de pliegos (múltiples anexos)
 
 ## C — Contexto
-Estás trabajando con **pliegos de licitación** (a menudo sanitarios) con **varios anexos**. La info es crítica: fechas, montos, artículos legales, decretos/resoluciones, modalidad, garantías, etc. Debes **leer todo**, **organizar**, **indexar** y producir un **informe técnico-jurídico completo**, claro y trazable.
+Trabajas con **pliegos** con **varios anexos**. La info es crítica (fechas, montos, normativa, garantías, etc.). Debes **leer TODO** e integrar en **un único informe** con **trazabilidad**.
 
 **Reglas clave**
-- **Trazabilidad total**: cada dato crítico con **fuente** `(Anexo X[, p. Y])`. Si el material provisto no trae paginación ni IDs, usa un marcador claro: `(Fuente: documento provisto)` o `(Anexo: no especificado)`.
-- **Cero invenciones**: si un dato no aparece o es ambiguo, indicarlo y, si corresponde, proponer **consulta**.
-- **Consistencia y cobertura total**: detectar incongruencias y cubrir oferta, evaluación, adjudicación, perfeccionamiento, ejecución.
-- **Normativa**: citar (ley/decreto/resolución + artículo) con **fuente**.
+- **Trazabilidad total**: cada dato crítico con **fuente** `(Anexo X[, p. Y])`. Si no hay paginación/ID, usar `(Fuente: documento provisto)`.
+- **Cero invenciones**; si algo falta/ambigua, indícalo y sugiere consulta.
+- **Cobertura total** (oferta, evaluación, adjudicación, perfeccionamiento, ejecución).
+- **Normativa** citada por tipo/numero/artículo con fuente.
+- **No repetir** contenido: deduplicar y fusionar datos si aparecen en varios anexos.
+- **Prohibido** incluir frases tipo: "parte 1 de 7", "informe basado en parte x/y", "revise el resto".
 
 ## R — Rol
-Actúas como equipo experto (Derecho Administrativo, Analista de Licitaciones Sanitarias, Redactor técnico-jurídico). Escritura técnica, sobria y precisa.
+Equipo experto (Derecho Administrativo, Analista de Licitaciones Sanitarias, Redactor técnico-jurídico). Estilo técnico, sobrio y preciso.
 
-## A — Acción (resumen)
-1) Indexar y normalizar (fechas DD/MM/AAAA, horas HH:MM, precios con 2 decimales).
-2) Extraer **todos** los campos críticos (checklist).
-3) Verificación cruzada: faltantes, ambigüedades, **inconsistencias** (dominios email, horarios, montos, etc.).
-4) Análisis jurídico-operativo (modalidades, garantías, plazos, criterios, preferencias, etc.), citando normativa y fuentes.
-5) **Construir un único informe** (sin repetir secciones), con **tablas** donde corresponda y **citas** en cada dato crítico.
-6) Elaborar **consultas al comitente** para vacíos o ambigüedades.
+## A — Acción
+1) Indexar y normalizar (fechas DD/MM/AAAA, horas HH:MM, precios 2 decimales).
+2) Extraer todos los campos (checklist).
+3) Verificación cruzada: faltantes, **inconsistencias** (dominios email, horarios, montos).
+4) Análisis jurídico-operativo citando normativa y fuentes.
+5) **Un único informe integrado** (sin encabezados repetidos).
+6) Consultas al comitente para vacíos/ambigüedades.
 
-## F — Formato (salida esperada, en texto)
+## F — Formato (salida en texto)
 ### 1) Resumen Ejecutivo (≤200 palabras)
-Objeto, organismo, proceso/modalidad, fechas clave, riesgos mayores, acciones inmediatas.
+Objeto, organismo, proceso/modalidad, fechas clave, riesgos, acciones inmediatas.
 
 ### 2) Informe Extenso con Trazabilidad
 2.1 Identificación del llamado  
@@ -116,210 +86,122 @@ Objeto, organismo, proceso/modalidad, fechas clave, riesgos mayores, acciones in
 2.4 Alcance y plazo contractual  
 2.5 Tipología / modalidad (con normativa y artículos citados)  
 2.6 Mantenimiento de oferta y prórroga  
-2.7 Garantías (umbral por UC, %, plazos, formas de constitución)  
-2.8 Presentación de ofertas (soporte, firmas, neto/letras, origen/envases, parcial por renglón, documentación obligatoria)  
-2.9 Apertura, evaluación y adjudicación  
-2.10 Subsanación  
-2.11 Perfeccionamiento y modificaciones  
-2.12 Entrega, lugar y plazos  
+2.7 Garantías (umbral UC, %, plazos, formas)  
+2.8 Presentación de ofertas (soporte, firmas, neto/letras, origen/envases, parcial por renglón, docs obligatorias: catálogos, LD 13.074, ARBA A-404, CBU BAPRO, AFIP/ARBA/CM, Registro, pago pliego, preferencias art. 22)  
+2.9 Apertura, evaluación y adjudicación (tipo de cambio BNA, comisión, criterio, única oferta, facultades, preferencias)  
+2.10 Subsanación (qué sí/no)  
+2.11 Perfeccionamiento y modificaciones (plazos, topes, notificaciones y garantías)  
+2.12 Entrega, lugar y plazos (dirección/horarios; inmediato/≤10 días O.C.; logística)  
 2.13 Planilla de cotización y renglones  
 2.14 Muestras  
 2.15 Cláusulas adicionales  
 2.16 Matriz de Cumplimiento (tabla)  
 2.17 Mapa de Anexos (tabla)  
-2.18 Semáforo de Riesgos (alto/medio/bajo)  
-2.19 Checklist operativo para cotizar  
+2.18 Semáforo de Riesgos  
+2.19 Checklist operativo  
 2.20 Ambigüedades / Inconsistencias y Consultas Sugeridas  
 2.21 Anexos del Informe (índice de trazabilidad; glosario/normativa)
 
-### 3) Estándares de calidad
-- **Citas** al lado de cada dato crítico `(Anexo X[, p. Y])`. Si no hay paginación/ID en el insumo, indicarlo.
-- **No repetir** contenido: deduplicar y usar referencias internas.
-- Si hay discordancia unitario vs total, **explicar la regla aplicable** con cita.
+### 3) Calidad
+- Citas junto a cada dato crítico.
+- **No marcar "Información no especificada"** si el dato aparece con sinónimos/variantes (ver **Guía**).
+- Si hay discordancia unitario vs total, explicar la regla (con cita).
 
-## T — Público objetivo
-Áreas de Compras/Contrataciones, Farmacia/Abastecimiento, Asesoría Legal y Dirección; proveedores del rubro. Español (AR), precisión jurídica y operatividad.
-
-## Checklist de campos a extraer (mínimo)
-Identificación; Calendario; Contactos/Portales; Alcance/Plazo; Modalidad/Normativa; Mantenimiento de oferta; Garantías; Presentación de ofertas; Apertura/Evaluación/Adjudicación; Subsanación; Perfeccionamiento/Modificaciones; Entrega; Planilla/Renglones; Muestras; Cláusulas adicionales; **Normativa citada**.
-
-## Nota
-- Devuelve **solo el informe final en texto**, perfectamente organizado. **No incluyas JSON**.
-- No incluyas “parte 1/2/3” ni encabezados repetidos por fragmento, ni meta-comentarios.
+## Guía de sinónimos/normalización
+{SINONIMOS_CANONICOS}
 """
 
+# -------- Prompt para "Notas intermedias" por chunk --------
 CRAFT_PROMPT_NOTAS = r"""
-Genera **NOTAS INTERMEDIAS CRAFT** ultra concisas para síntesis posterior, a partir del fragmento dado.
+Genera **NOTAS INTERMEDIAS CRAFT** ultra concisas para síntesis posterior, a partir del fragmento.
 Reglas:
-- Sin prosa larga ni secciones completas.
-- Usa bullets con etiqueta del tema y la **cita** entre paréntesis.
-- Si no hay paginación/ID disponible, usa `(Fuente: documento provisto)`.
+- SOLO bullets (sin encabezados, sin "parte x/y", sin conclusiones).
+- Etiqueta del tema + **cita** entre paréntesis. Si no hay paginación/ID, usa `(Fuente: documento provisto)`.
+- Aplica la **Guía de sinónimos/normalización**: si aparece con nombre alternativo, consérvalo.
 
 Ejemplos:
 - [IDENTIFICACION] Organismo: ... (Anexo ?, p. ?)
 - [CALENDARIO] Presentación: DD/MM/AAAA HH:MM — Lugar: ... (Fuente: documento provisto)
-- [GARANTIAS] Mantenimiento 5%; Cumplimiento ≥10% ≤7 días hábiles (Anexo ?, p. ?)
+- [GARANTIAS] Mant. 5%; Cumpl. ≥10% ≤7 días hábiles (Anexo ?, p. ?)
 - [NORMATIVA] Decreto 59/19, art. X (Anexo ?, p. ?)
-- [INCONSISTENCIA] Emails ...gba.gov.ar vs ...pba.gov.ar (Fuente: documento provisto)
-- [MUESTRAS] Renglones 23 y 24 (Anexo ?, p. ?)
+- [INCONSISTENCIA] dominios ...gba.gov.ar vs ...pba.gov.ar (Fuente: documento provisto)
+- [MUESTRAS] renglones 23 y 24 (Anexo ?, p. ?)
 
-No inventes. Si falta, anota: [FALTA] campo X — no consta.
-Devuelve **solo bullets** (sin encabezados ni conclusiones).
+Si falta, anota: [FALTA] campo X — no consta.
 """
 
-# ======================= HELPERS =======================
-def _particionar(texto: str, max_chars: int) -> List[str]:
+def _particionar(texto: str, max_chars: int) -> list[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
-def _sanitize(s: str) -> str:
-    if not s:
-        return ""
-    s = "".join(ch for ch in s if ch >= " " or ch in "\n\r\t")
-    return s.strip()
+def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_tokens=MAX_TOKENS_SALIDA):
+    return client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens
+    )
 
-def _approx_tokens(s: str) -> int:
-    # heurística ~4 chars/token
-    return max(1, len(s) // 4)
+_META_PATTERNS = [
+    re.compile(r"(?i)\bparte\s+\d+\s+de\s+\d+"),
+    re.compile(r"(?i)informe\s+basado\s+en\s+la\s+parte"),
+    re.compile(r"(?i)revise\s+las\s+partes\s+restantes"),
+    re.compile(r"(?i)información\s+puede\s+estar\s+incompleta")
+]
 
-# ======================= LLAMADAS A OPENAI (conmutables) =======================
-def _responses_call_sync(input_payload: list[dict], model: str) -> str:
-    try:
-        resp = client.responses.create(
-            model=model,
-            input=input_payload,
-            max_output_tokens=MAX_COMPLETION_TOKENS,
-        )
-        content = getattr(resp, "output_text", "") or ""
-        return _sanitize(content)
-    except Exception as e:
-        print(f"[ANALISIS] exception RESP model={model}: {repr(e)}")
-        return f"__ERROR__::{e}"
+def _limpiar_meta(texto: str) -> str:
+    lineas = []
+    for ln in texto.splitlines():
+        if any(p.search(ln) for p in _META_PATTERNS):
+            continue
+        lineas.append(ln)
+    # Compactar múltiples líneas vacías consecutivas
+    limpio = re.sub(r"\n{3,}", "\n\n", "\n".join(lineas)).strip()
+    return limpio
 
-def _chat_call_sync(messages: list[dict], model: str) -> str:
-    try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_completion_tokens=MAX_COMPLETION_TOKENS
-        )
-        content = getattr(resp.choices[0].message, "content", "") or ""
-        return _sanitize(content)
-    except Exception as e:
-        print(f"[ANALISIS] exception CHAT model={model}: {repr(e)}")
-        return f"__ERROR__::{e}"
-
-def _call_with_timeout(func, *args, timeout: int = OPENAI_CALL_TIMEOUT) -> str:
-    """
-    Ejecuta func(*args) en un executor de 1 hilo con timeout.
-    Evita bloqueos si el SDK queda 'colgado'.
-    """
-    with ThreadPoolExecutor(max_workers=1) as ex:
-        fut = ex.submit(func, *args)
-        try:
-            return fut.result(timeout=timeout)
-        except FuturesTimeoutError:
-            print("[ANALISIS] TIMEOUT en llamada OpenAI")
-            return "__ERROR__::TIMEOUT"
-
-def _call_openai(messages: list[dict], model: str) -> str:
-    """
-    Enruta según USE_RESPONSES con timeout y reintentos.
-    """
-    # Normalizamos payload
-    if USE_RESPONSES:
-        input_payload = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in messages]
-        caller = _responses_call_sync
-        args = (input_payload, model)
-    else:
-        caller = _chat_call_sync
-        args = (messages, model)
-
-    # Retries
-    for attempt in range(OPENAI_RETRIES + 1):
-        out = _call_with_timeout(caller, *args, timeout=OPENAI_CALL_TIMEOUT)
-        if out and not out.startswith("__ERROR__::"):
-            return out
-        print(f"[OPENAI] intento={attempt} model={model} -> {out[:120] if out else 'vacío'}")
-    return ""
-
-def _try_models(messages: list[dict], prefer_model: str | None = None) -> str:
-    """
-    Intenta con prefer_model/MODEL_ANALISIS y luego fallbacks.
-    """
-    base = [prefer_model] if prefer_model else [MODEL_ANALISIS]
-    models = [m for m in base if m] + [m for m in FALLBACK_MODELS if m and m not in base]
-    for m in models:
-        out = _call_openai(messages, m)
-        if out:
-            return out
-    return ""
-
-# ======================= ANALIZADOR =======================
 def analizar_con_openai(texto: str) -> str:
     """
-    Devuelve un **informe único** en texto (sincrónico).
-    Optimizado: conmutador de endpoint, timeouts, notas paralelas con modelo rápido, plan B.
+    Analiza el contenido completo y devuelve **un único informe** en texto listo para PDF.
+    - Si es corto y no hay múltiples anexos: 1 pasada.
+    - Si es largo o con anexos: notas intermedias + síntesis final única.
     """
-    texto = _sanitize(texto)
-    if not texto:
+    if not texto or not texto.strip():
         return "No se recibió contenido para analizar."
 
-    # ---------- Caso 1: una sola pasada (rápido) ----------
-    if len(texto) <= MAX_SINGLE_PASS_CHARS and (_approx_tokens(texto) + 3000) < CTX_TOKENS:
-        print(f"[ANALISIS] single-pass len={len(texto)}")
+    # Detectar si parece haber múltiples anexos (marcadores comunes)
+    separadores = ["===ANEXO===", "=== ANEXO ===", "### ANEXO", "## ANEXO", "\nAnexo "]
+    varios_anexos = any(sep.lower() in texto.lower() for sep in separadores)
+
+    # Pasada única SOLO si es corto y no hay indicios de multi-anexo
+    if len(texto) <= MAX_SINGLE_PASS_CHARS and not varios_anexos:
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
             {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve ÚNICAMENTE el informe final (texto), sin preámbulos."}
         ]
-        out = _try_models(messages, prefer_model=MODEL_SINTESIS)
-        if not out:
-            print("[ANALISIS] single-pass vacío → aviso")
-            return ("No se pudo generar un resumen automático. Verificá que los PDFs "
-                    "tengan texto seleccionable (no imágenes escaneadas) y que el contenido sea legible.")
-        return out
+        try:
+            resp = _llamada_openai(messages)
+            return _limpiar_meta(resp.choices[0].message.content.strip())
+        except Exception as e:
+            return f"⚠️ Error al generar el análisis: {e}"
 
-    # ---------- Caso 2: particionado + notas paralelas ----------
+    # Dos etapas (notas → síntesis)
     partes = _particionar(texto, CHUNK_SIZE)
-    print(f"[ANALISIS] multipart partes={len(partes)} chunk={CHUNK_SIZE}")
+    notas = []
 
-    def _nota_fn(idx: int, contenido: str) -> str:
+    # Etapa A: notas intermedias
+    for i, parte in enumerate(partes, 1):
         msg = [
             {"role": "system", "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
-            {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n=== FRAGMENTO {idx+1}/{len(partes)} ===\n{contenido}"}
+            {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n## Guía de sinónimos/normalización\n{SINONIMOS_CANONICOS}\n\n=== FRAGMENTO {i}/{len(partes)} ===\n{parte}"}
         ]
-        out = _try_models(msg, prefer_model=MODEL_NOTAS)
-        return out or f"[FALTA] No se pudieron generar notas de la parte {idx+1} — (Fuente: documento provisto)"
-
-    notas: List[str] = [""] * len(partes)
-    with ThreadPoolExecutor(max_workers=max(1, OPENAI_CONCURRENCY)) as pool:
-        futs = {pool.submit(_nota_fn, i, p): i for i, p in enumerate(partes)}
-        for fut in futs:
-            i = futs[fut]
-            try:
-                notas[i] = fut.result()
-            except Exception as e:
-                notas[i] = f"[FALTA] Error en parte {i+1}: {e}"
-
-    # ¿Demasiadas notas vacías? → Plan B (chunks más chicos)
-    faltantes = sum(1 for n in notas if (not n) or n.startswith("[FALTA]"))
-    if faltantes > max(2, len(partes) // 3):
-        print("[ANALISIS] demasiadas notas vacías → plan B (re-chunk)")
-        small_chunk = max(3000, CHUNK_SIZE // 2)
-        partes2 = _particionar(texto, small_chunk)
-        notas_b: List[str] = [""] * len(partes2)
-        with ThreadPoolExecutor(max_workers=max(1, OPENAI_CONCURRENCY)) as pool:
-            futs = {pool.submit(_nota_fn, i, p): i for i, p in enumerate(partes2)}
-            for fut in futs:
-                i = futs[fut]
-                try:
-                    notas_b[i] = fut.result()
-                except Exception as e:
-                    notas_b[i] = f"[FALTA] Error en parte {i+1}: {e}"
-        notas = notas_b
+        try:
+            r = _llamada_openai(msg, max_tokens=2000)
+            notas.append(r.choices[0].message.content.strip())
+        except Exception as e:
+            notas.append(f"[ERROR] No se pudieron generar notas de la parte {i}: {e}")
 
     notas_integradas = "\n".join(notas)
 
-    # ---------- Síntesis final única (modelo fuerte) ----------
+    # Etapa B: síntesis final única y deduplicada
     messages_final = [
         {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
         {"role": "user", "content": f"""{CRAFT_PROMPT_MAESTRO}
@@ -327,17 +209,54 @@ def analizar_con_openai(texto: str) -> str:
 === NOTAS INTERMEDIAS INTEGRADAS (DEDUPE Y TRAZABILIDAD) ===
 {notas_integradas}
 
-👉 Usa ÚNICAMENTE estas notas para elaborar el **informe final único** (sin repetir encabezados por fragmento, sin meta-comentarios).
-👉 Devuelve SOLO el informe final en texto."""}
+👉 Integra TODO en un **solo informe**; deduplica; cita una vez por dato con todas las fuentes.
+👉 **Prohibido** incluir frases del tipo "parte X de Y" o meta-comentarios sobre fragmentos.
+👉 Devuelve SOLO el informe final en texto.
+"""}
     ]
-    out_final = _try_models(messages_final, prefer_model=MODEL_SINTESIS)
-    if not out_final:
-        return ("No se pudo generar un resumen automático. Verificá que los PDFs "
-                "tengan texto seleccionable (no imágenes escaneadas) y que el contenido sea legible.")
-    return out_final
+
+    try:
+        resp_final = _llamada_openai(messages_final)
+        return _limpiar_meta(resp_final.choices[0].message.content.strip())
+    except Exception as e:
+        # Fallback: al menos devolver las notas (limpias de meta)
+        return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias:\n{_limpiar_meta(notas_integradas)}"
+
+
+# ============================
+# NUEVO: integración multi-anexo
+# ============================
+def analizar_anexos(files: list) -> str:
+    """
+    Recibe una lista de UploadFile (Starlette/FastAPI), combina TODOS los anexos
+    en un único texto con marcadores de anexo y ejecuta el análisis integrado.
+    """
+    if not files:
+        return "No se recibieron anexos para analizar."
+
+    bloques = []
+    for idx, f in enumerate(files, 1):
+        try:
+            # Importante: hay que reposicionar el puntero para cada lectura
+            f.file.seek(0)
+            texto = extraer_texto_de_pdf(f)
+        except Exception:
+            # si no es PDF, intentar leer bytes y decodificar a texto simple
+            f.file.seek(0)
+            try:
+                texto = f.file.read().decode("utf-8", errors="ignore")
+            except Exception:
+                texto = ""
+
+        nombre = getattr(f, "filename", f"anexo_{idx}.pdf")
+        bloques.append(f"=== ANEXO {idx:02d}: {nombre} ===\n{texto}\n")
+
+    contenido_unico = "\n".join(bloques)
+    return analizar_con_openai(contenido_unico)
+
 
 # ============================================================
-# Chat IA (switch Responses / Chat + timeout)
+# (NO TOCAR) — Chat IA
 # ============================================================
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
     descripcion_interfaz = f"""
@@ -355,6 +274,7 @@ Tu función principal es asistir al usuario en el entendimiento y lectura de los
 
 El usuario actual es: {usuario}
 """
+
     if not contexto:
         contexto = "(No hay historial disponible actualmente.)"
 
@@ -370,18 +290,23 @@ El usuario actual es: {usuario}
 📌 Respondé de manera natural, directa y profesional. No repitas lo que hace la plataforma. Respondé exactamente lo que se te pregunta.
 """
 
-    messages = [
-        {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
-        {"role": "user", "content": prompt},
-    ]
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=1200
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"⚠️ Error al generar respuesta: {e}"
 
-    out = _try_models(messages, prefer_model=MODEL_CHAT)
-    if not out:
-        return "Estoy tardando más de lo normal en responder. Intentá nuevamente en unos segundos o reformulá la consulta de forma más concreta."
-    return out.strip()
 
 # ============================================================
-# Generación de PDF — (sin tocar plantilla)
+# (SIN CAMBIOS) — Generación de PDF
 # ============================================================
 def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     output_dir = os.path.join("generated_pdfs")
@@ -406,10 +331,7 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     c.setFont("Helvetica", 10)
     fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
     c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_actual}")
-
-    # Limpieza mínima: quitar ** y espacios raros
-    resumen = (resumen or "").replace("**", "").strip()
-
+    resumen = resumen.replace("**", "")
     c.setFont("Helvetica", 11)
     margen_izquierdo = 20 * mm
     margen_superior = A4[1] - 54 * mm
@@ -417,7 +339,7 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     alto_linea = 14
     y = margen_superior
 
-    for parrafo in (resumen.split("\n") if resumen else ["(sin contenido)"]):
+    for parrafo in resumen.split("\n"):
         if not parrafo.strip():
             y -= alto_linea
             continue
@@ -449,17 +371,21 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
 
     return output_path
 
+
 def dividir_texto(texto, canvas_obj, max_width):
-    palabras = (texto or "").split(" ")
-    lineas, linea_actual = [], ""
+    palabras = texto.split(" ")
+    lineas = []
+    linea_actual = ""
+
     for palabra in palabras:
-        test = (linea_actual + " " + palabra).strip() if linea_actual else palabra
-        if canvas_obj.stringWidth(test, canvas_obj._fontname, canvas_obj._fontsize) <= max_width:
-            linea_actual = test
+        test_line = linea_actual + " " + palabra if linea_actual else palabra
+        if canvas_obj.stringWidth(test_line, canvas_obj._fontname, canvas_obj._fontsize) <= max_width:
+            linea_actual = test_line
         else:
-            if linea_actual:
-                lineas.append(linea_actual)
+            lineas.append(linea_actual)
             linea_actual = palabra
+
     if linea_actual:
         lineas.append(linea_actual)
+
     return lineas
