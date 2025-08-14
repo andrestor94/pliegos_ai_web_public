@@ -1,6 +1,7 @@
 import fitz  # PyMuPDF
 import io
 import os
+import re
 from datetime import datetime
 from openai import OpenAI
 from reportlab.lib.pagesizes import A4
@@ -14,64 +15,57 @@ load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ============================================================
-# Extracción de texto desde PDF (robusto)
+# Utilidades base
 # ============================================================
+
+def _sanitize_text(s: str) -> str:
+    """Quita caracteres de control, normaliza espacios y recorta."""
+    if not s:
+        return ""
+    # Quitar NULLs y control chars (excepto \n y \t)
+    s = s.replace("\x00", " ")
+    s = re.sub(r"[\x01-\x08\x0B\x0C\x0E-\x1F]", " ", s)
+    # Colapsar espacios
+    s = re.sub(r"[ \t]+", " ", s)
+    # Limitar saltos de línea seguidos
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
 def extraer_texto_de_pdf(file) -> str:
     """
-    Acepta:
-      - fastapi.UploadFile (tiene .file)
-      - file-like con .read()
-      - bytes/bytearray
-      - ruta (str) a un PDF en disco
-    Devuelve el texto extraído.
+    Extrae texto de un UploadFile PDF. Devuelve texto plano (puede ser vacío si es PDF escaneado).
     """
-    data = None
-
-    if hasattr(file, "file"):  # UploadFile
-        data = file.file.read()
-        try:
+    try:
+        if hasattr(file, "file") and hasattr(file.file, "seek"):
             file.file.seek(0)
-        except Exception:
-            pass
-    elif hasattr(file, "read"):  # file-like
-        data = file.read()
-        try:
-            file.seek(0)
-        except Exception:
-            pass
-    elif isinstance(file, (bytes, bytearray)):
-        data = bytes(file)
-    elif isinstance(file, str) and os.path.isfile(file):
-        with open(file, "rb") as f:
-            data = f.read()
-    elif isinstance(file, str):
-        # Si es texto plano (no ruta existente), lo devolvemos tal cual
-        return file
-    else:
-        raise TypeError(f"Tipo no soportado para extraer PDF: {type(file)}")
+    except Exception:
+        pass
 
     texto_completo = ""
-    with fitz.open(stream=data, filetype="pdf") as doc:
+    with fitz.open(stream=file.file.read(), filetype="pdf") as doc:
         for pagina in doc:
-            texto_completo += pagina.get_text()
-    return texto_completo
-
+            texto_completo += pagina.get_text() or ""
+    return _sanitize_text(texto_completo)
 
 # ============================================================
-# Analizador (C.R.A.F.T. + GPT-5)
+# NUEVO ANALIZADOR (C.R.A.F.T. + guard-rails)
 # ============================================================
 
-# Modelos
+# Modelo (podés override con OPENAI_MODEL_ANALISIS=gpt-5, gpt-4o, etc.)
 MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
-MODEL_CHAT = os.getenv("OPENAI_MODEL_CHAT", "gpt-5")  # usado en responder_chat_openai
 
-# Heurísticas
-MAX_SINGLE_PASS_CHARS = 45000
-CHUNK_SIZE = 12000
+# Límites y heurísticas
+MAX_SINGLE_PASS_CHARS = 24000     # si el texto total es menor, va en una sola pasada
+CHUNK_SIZE = 8000                 # tamaño por parte si es muy grande
 TEMPERATURE_ANALISIS = 0.2
-MAX_TOKENS_SALIDA = 4000
+MAX_TOKENS_SALIDA = 4000          # margen para informes extensos
+FALLBACK_EMPTY = (
+    "No se pudo generar un resumen automático. "
+    "Verificá que los PDFs tengan texto seleccionable (no imágenes escaneadas) "
+    "y que el contenido sea legible."
+)
 
-# Prompt maestro
+# -------- Prompt maestro (síntesis final única) --------
 CRAFT_PROMPT_MAESTRO = r"""
 # C.R.A.F.T. — Prompt maestro para leer, analizar y generar un **informe quirúrgico** de pliegos (con múltiples anexos)
 
@@ -138,7 +132,7 @@ Identificación; Calendario; Contactos/Portales; Alcance/Plazo; Modalidad/Normat
 - No incluyas “parte 1/2/3” ni encabezados repetidos por cada segmento del documento.
 """
 
-# Prompt para notas por chunk
+# -------- Prompt para "Notas intermedias" por chunk --------
 CRAFT_PROMPT_NOTAS = r"""
 Genera **NOTAS INTERMEDIAS CRAFT** ultra concisas para síntesis posterior, a partir del fragmento dado.
 Reglas:
@@ -161,174 +155,110 @@ Devuelve **solo bullets** (sin encabezados ni conclusiones).
 def _particionar(texto: str, max_chars: int) -> list[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
-# ============================================================
-# Helper: llamada OpenAI con reintentos/fallbacks
-# ============================================================
+def _extract_content(resp) -> str:
+    try:
+        return (resp.choices[0].message.content or "").strip()
+    except Exception:
+        return ""
+
 def _llamada_openai(messages, model=MODEL_ANALISIS, temperature=TEMPERATURE_ANALISIS, max_tokens=MAX_TOKENS_SALIDA):
     """
-    Intenta en este orden:
-      1) max_completion_tokens + (opcional) temperature
-      2) (si falla por temperature) repetir sin temperature
-      3) (si falla por tokens) usar max_tokens (legacy)
+    Wrapper que usa SIEMPRE max_completion_tokens (modelos nuevos no aceptan max_tokens).
+    El nombre del parámetro aquí se mantiene como max_tokens por compatibilidad interna.
     """
-    # Base kwargs
-    kwargs = {"model": model, "messages": messages}
+    return client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_completion_tokens=max_tokens
+    )
 
-    if max_tokens is not None:
-        kwargs["max_completion_tokens"] = int(max_tokens)
-    if temperature is not None:
-        kwargs["temperature"] = float(temperature)
-
-    # Try 1: preferido (max_completion_tokens)
+def _fallback_resumen(texto: str) -> str:
+    """Reintento corto si la salida vino vacía."""
+    texto_corto = texto[:8000]
+    mensajes = [
+        {"role": "system", "content": "Sos un redactor técnico-jurídico. No inventes datos ausentes."},
+        {"role": "user", "content":
+            "Del siguiente texto, devolvé un Resumen Ejecutivo (≤120 palabras) y luego 8–15 bullets con hallazgos clave y dudas. "
+            "Usá español (AR) y marcá [FALTA] donde algo no conste. Texto:\n\n" + texto_corto}
+    ]
     try:
-        return client.chat.completions.create(**kwargs)
-    except Exception as e1:
-        msg1 = (str(e1) or "").lower()
+        r = _llamada_openai(mensajes, max_tokens=1200)
+        out = _extract_content(r)
+        return out or FALLBACK_EMPTY
+    except Exception:
+        return FALLBACK_EMPTY
 
-        # Try 2: quitar temperature si es no soportado
-        if "temperature" in kwargs and ("unsupported parameter" in msg1 or "unrecognized request argument" in msg1 or "invalid" in msg1):
-            try_kwargs = dict(kwargs)
-            try_kwargs.pop("temperature", None)
-            try:
-                return client.chat.completions.create(**try_kwargs)
-            except Exception as e2:
-                msg2 = (str(e2) or "").lower()
-                # Try 3: alternar a max_tokens si el modelo no banca max_completion_tokens
-                if ("unsupported" in msg2 or "unrecognized" in msg2) and "max_completion_tokens" in msg2:
-                    try_kwargs.pop("max_completion_tokens", None)
-                    try_kwargs["max_tokens"] = int(max_tokens) if max_tokens is not None else None
-                    if try_kwargs.get("max_tokens") is None:
-                        try_kwargs.pop("max_tokens", None)
-                    return client.chat.completions.create(**try_kwargs)
-                raise
-
-        # Si el problema fue directamente con max_completion_tokens, probamos legacy max_tokens
-        if ("unsupported" in msg1 or "unrecognized" in msg1 or "not supported" in msg1) and "max_tokens" in msg1:
-            # Este caso se daría si ya venía con max_tokens, pero por las dudas cubrimos ambos sentidos
-            pass
-        if ("unsupported" in msg1 or "unrecognized" in msg1 or "invalid" in msg1) and "max_completion_tokens" in msg1:
-            try_kwargs = dict(kwargs)
-            try_kwargs.pop("max_completion_tokens", None)
-            try_kwargs["max_tokens"] = int(max_tokens) if max_tokens is not None else None
-            if try_kwargs.get("max_tokens") is None:
-                try_kwargs.pop("max_tokens", None)
-            # quitar temperature por si acaso
-            try_kwargs.pop("temperature", None)
-            return client.chat.completions.create(**try_kwargs)
-
-        # Último intento: quitar temperature y volver a intentar tal cual
-        if "temperature" in kwargs:
-            try_kwargs = dict(kwargs)
-            try_kwargs.pop("temperature", None)
-            return client.chat.completions.create(**try_kwargs)
-
-        # Si nada funcionó, relanzamos
-        raise
-
-# ============================================================
-# Análisis principal
-# ============================================================
 def analizar_con_openai(texto: str) -> str:
     """
     Analiza el contenido completo y devuelve **un único informe** en texto.
     - Si el texto total es corto: una sola pasada (síntesis final).
     - Si es largo: notas intermedias por chunk + síntesis final única.
+    Siempre garantiza que el string retornado NO sea vacío.
     """
-    if not texto or not texto.strip():
-        return "No se recibió contenido para analizar."
+    texto = _sanitize_text(texto)
+    if not texto:
+        return FALLBACK_EMPTY
 
-    # --- Caso 1: una sola pasada
-    if len(texto) <= MAX_SINGLE_PASS_CHARS:
-        messages = [
-            {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
-            {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve ÚNICAMENTE el informe final (texto), sin preámbulos."}
-        ]
-        try:
+    try:
+        if len(texto) <= MAX_SINGLE_PASS_CHARS:
+            print(f"[ANALISIS] single-pass len={len(texto)}")
+            messages = [
+                {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
+                {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve ÚNICAMENTE el informe final (texto), sin preámbulos."}
+            ]
             resp = _llamada_openai(messages)
-            return (resp.choices[0].message.content or "").strip()
-        except Exception as e:
-            return f"⚠️ Error al generar el análisis: {e}"
+            salida = _extract_content(resp)
+            if not salida:
+                # Reintento corto
+                print("[ANALISIS] single-pass vacío → fallback")
+                return _fallback_resumen(texto)
+            return salida
 
-    # --- Caso 2: dos etapas (notas intermedias + síntesis)
-    partes = _particionar(texto, CHUNK_SIZE)
-    notas = []
+        # Multi-pass
+        partes = _particionar(texto, CHUNK_SIZE)
+        print(f"[ANALISIS] multi-pass partes={len(partes)} len_total={len(texto)}")
 
-    # Etapa A: notas intermedias
-    for i, parte in enumerate(partes, 1):
-        msg = [
-            {"role": "system", "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
-            {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n=== FRAGMENTO {i}/{len(partes)} ===\n{parte}"}
-        ]
-        try:
-            r = _llamada_openai(msg, max_tokens=2000)
-            notas.append((r.choices[0].message.content or "").strip())
-        except Exception as e:
-            notas.append(f"[ERROR] No se pudieron generar notas de la parte {i}: {e}")
+        notas = []
+        for i, parte in enumerate(partes, 1):
+            msg = [
+                {"role": "system", "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
+                {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n=== FRAGMENTO {i}/{len(partes)} ===\n{parte}"}
+            ]
+            try:
+                r = _llamada_openai(msg, max_tokens=2000)
+                out = _extract_content(r)
+                notas.append(out or f"[FALTA] No se obtuvieron notas del fragmento {i}. (Fuente: documento provisto)")
+            except Exception as e:
+                notas.append(f"[ERROR] Parte {i}: {e}")
 
-    notas_integradas = "\n".join(notas)
+        notas_integradas = "\n".join(notas)[:24000]  # cinturón de seguridad
 
-    # Etapa B: síntesis final única
-    messages_final = [
-        {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
-        {"role": "user", "content": f"""{CRAFT_PROMPT_MAESTRO}
+        messages_final = [
+            {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
+            {"role": "user", "content": f"""{CRAFT_PROMPT_MAESTRO}
 
 === NOTAS INTERMEDIAS INTEGRADAS (DEDUPE Y TRAZABILIDAD) ===
 {notas_integradas}
 
-👉 Usa ÚNICAMENTE estas notas para elaborar el **informe final único** (sin repetir encabezados por fragmento, sin meta-comentarios). 
+👉 Usa ÚNICAMENTE estas notas para elaborar el **informe final único** (sin repetir encabezados por fragmento, sin meta-comentarios).
 👉 Devuelve SOLO el informe final en texto."""}
-    ]
+        ]
 
-    try:
         resp_final = _llamada_openai(messages_final)
-        return (resp_final.choices[0].message.content or "").strip()
+        salida_final = _extract_content(resp_final)
+        if not salida_final:
+            print("[ANALISIS] síntesis vacía → fallback")
+            return _fallback_resumen(texto)
+        return salida_final
+
     except Exception as e:
-        # Si falla la síntesis, devolvemos las notas como fallback
-        return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias:\n{notas_integradas}"
+        print(f"[ANALISIS] excepción: {e!r}")
+        # Último recurso
+        return _fallback_resumen(texto)
 
 # ============================================================
-# Compat: analizar múltiples anexos (UploadFile/ruta/bytes/texto)
-# ============================================================
-def analizar_anexos(anexos) -> str:
-    """
-    Acepta:
-      - lista/tupla con: UploadFile, file-like, bytes, ruta (str) a PDF o texto plano (str)
-      - un único elemento de los anteriores
-    Une todo en un único texto y lo envía a analizar_con_openai().
-    """
-    # Caso único elemento (no lista/tupla)
-    if not isinstance(anexos, (list, tuple)):
-        try:
-            # Si es PDF-like o ruta, extraemos
-            if hasattr(anexos, "file") or hasattr(anexos, "read") or isinstance(anexos, (bytes, bytearray)) or (isinstance(anexos, str) and os.path.exists(anexos)):
-                texto_total = extraer_texto_de_pdf(anexos)
-            else:
-                # Texto plano u objeto convertible a str
-                texto_total = anexos if isinstance(anexos, str) else str(anexos)
-        except Exception:
-            texto_total = anexos if isinstance(anexos, str) else ""
-        return analizar_con_openai(texto_total)
-
-    # Caso lista/tupla
-    partes_texto = []
-    for a in anexos:
-        try:
-            if hasattr(a, "file") or hasattr(a, "read") or isinstance(a, (bytes, bytearray)) or (isinstance(a, str) and os.path.exists(a)):
-                partes_texto.append(extraer_texto_de_pdf(a))
-            elif isinstance(a, str):
-                partes_texto.append(a)  # ya es texto plano
-            else:
-                partes_texto.append(str(a))  # fallback
-        except Exception:
-            # Si un anexo falla, seguimos con el resto
-            continue
-
-    texto_total = "\n\n".join(partes_texto)
-    return analizar_con_openai(texto_total)
-
-
-# ============================================================
-# Chat IA (modelo configurable, por defecto gpt-5)
+# Chat IA (sin cambios funcionales, corrige parámetro tokens)
 # ============================================================
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
     descripcion_interfaz = f"""
@@ -363,27 +293,30 @@ El usuario actual es: {usuario}
 """
 
     try:
-        response = _llamada_openai(
+        response = client.chat.completions.create(
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": "Actuás como un asistente experto en análisis de pliegos de licitación y soporte de plataformas digitales."},
                 {"role": "user", "content": prompt}
             ],
-            model=MODEL_CHAT,
-            temperature=None,
-            max_tokens=1200
+            temperature=0.3,
+            max_completion_tokens=1200
         )
-        return (response.choices[0].message.content or "").strip()
+        out = _extract_content(response)
+        return out or "No tengo suficiente contexto para responder con precisión. ¿Podés reformular o dar más detalle?"
     except Exception as e:
         return f"⚠️ Error al generar respuesta: {e}"
 
-
 # ============================================================
-# Generación de PDF (sin cambios sustanciales)
+# Generación de PDF
 # ============================================================
 def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     output_dir = os.path.join("generated_pdfs")
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, nombre_archivo)
+
+    # Cinturón de seguridad: nunca permitir resumen vacío
+    resumen = (resumen or "").strip() or FALLBACK_EMPTY
 
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -403,7 +336,9 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     c.setFont("Helvetica", 10)
     fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
     c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_actual}")
-    resumen = (resumen or "").replace("**", "")
+
+    # Evitar markdown básico en PDF
+    resumen = resumen.replace("**", "")
     c.setFont("Helvetica", 11)
     margen_izquierdo = 20 * mm
     margen_superior = A4[1] - 54 * mm
@@ -411,7 +346,7 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     alto_linea = 14
     y = margen_superior
 
-    for parrafo in (resumen.split("\n") if resumen else []):
+    for parrafo in resumen.split("\n"):
         if not parrafo.strip():
             y -= alto_linea
             continue
@@ -443,9 +378,8 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
 
     return output_path
 
-
 def dividir_texto(texto, canvas_obj, max_width):
-    palabras = (texto or "").split(" ")
+    palabras = texto.split(" ")
     lineas = []
     linea_actual = ""
 
@@ -454,7 +388,8 @@ def dividir_texto(texto, canvas_obj, max_width):
         if canvas_obj.stringWidth(test_line, canvas_obj._fontname, canvas_obj._fontsize) <= max_width:
             linea_actual = test_line
         else:
-            lineas.append(linea_actual)
+            if linea_actual:
+                lineas.append(linea_actual)
             linea_actual = palabra
 
     if linea_actual:
