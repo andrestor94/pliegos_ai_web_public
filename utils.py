@@ -149,12 +149,15 @@ def _chat_call(messages, model, temperature=0.2, max_tokens=2000) -> str:
 
 def _responses_call(messages, model, max_tokens: int | None = None) -> str:
     # NO enviar 'temperature' (gpt-5 lo rechaza). 'max_output_tokens' es opcional según SDK.
+    if not hasattr(client, "responses") or not hasattr(client.responses, "create"):
+        raise RuntimeError(
+            "Este modelo requiere la Responses API. Actualizá 'openai' a >= 1.40.0 y redeploy."
+        )
     payload = {
         "model": model,
         "input": [{"role": m["role"], "content": m["content"]} for m in messages],
     }
     if max_tokens:
-        # si el SDK soporta este parámetro, lo usamos; si no, lo ignoramos
         payload["max_output_tokens"] = max_tokens
     resp = client.responses.create(**payload)
 
@@ -202,7 +205,7 @@ def analizar_con_openai(texto: str) -> str:
             contenido = _llamada_openai(messages)
             return contenido.strip()
         except Exception as e:
-            return f⚠️ Error al generar el análisis: {e}"
+            return f"⚠️ Error al generar el análisis: {e}"
 
     # Caso 2: dos etapas (notas intermedias + síntesis)
     partes = _particionar(texto, CHUNK_SIZE)
