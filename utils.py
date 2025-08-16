@@ -42,13 +42,14 @@ MAX_SINGLE_PASS_CHARS_MULTI = int(os.getenv("MAX_SINGLE_PASS_CHARS_MULTI", str(M
 
 CHUNK_SIZE_BASE = int(os.getenv("CHUNK_SIZE", "24000"))
 TARGET_PARTS = int(os.getenv("TARGET_PARTS", "2"))
-MAX_COMPLETION_TOKENS_SALIDA = int(os.getenv("MAX_COMPLETION_TOKENS_SALIDA", "3500"))
+# Defaults elevados para minimizar truncamientos
+MAX_COMPLETION_TOKENS_SALIDA = int(os.getenv("MAX_COMPLETION_TOKENS_SALIDA", "8000"))
 TEMPERATURE_ANALISIS = os.getenv("TEMPERATURE_ANALISIS", "").strip()
 ANALISIS_MODO = os.getenv("ANALISIS_MODO", "").lower().strip()  # "fast" opcional
 
 # Concurrencia
 ANALISIS_CONCURRENCY = int(os.getenv("ANALISIS_CONCURRENCY", "3"))
-NOTAS_MAX_TOKENS = int(os.getenv("NOTAS_MAX_TOKENS", "1400"))
+NOTAS_MAX_TOKENS = int(os.getenv("NOTAS_MAX_TOKENS", "2000"))
 
 # OCR
 VISION_MAX_PAGES = int(os.getenv("VISION_MAX_PAGES", "8"))
@@ -421,6 +422,96 @@ def _normalize_citas_salida(texto: str, varios_anexos: bool) -> str:
         return "(Fuente: documento provisto)"
     return _CITA_ANEXO_RE.sub(repl, texto)
 
+# ===== Secciones obligatorias y helpers (relleno de faltantes) =====
+SECCIONES_OBLIGATORIAS = [
+    ("2.1", "Identificación del llamado"),
+    ("2.2", "Calendario y lugares"),
+    ("2.3", "Contactos y portales"),
+    ("2.4", "Alcance y plazo contractual"),
+    ("2.5", "Tipología / modalidad"),
+    ("2.6", "Mantenimiento de oferta y prórroga"),
+    ("2.7", "Garantías"),
+    ("2.8", "Presentación de ofertas"),
+    ("2.9", "Apertura, evaluación y adjudicación"),
+    ("2.10", "Subsanación"),
+    ("2.11", "Perfeccionamiento y modificaciones"),
+    ("2.12", "Entrega, lugares y plazos"),
+    ("2.13", "Planilla de cotización y renglones"),
+    ("2.14", "Muestras"),
+    ("2.15", "Normativa aplicable"),
+    ("2.16", "Catálogo de artículos citados"),
+]
+
+_SECCION_KEY_RE = re.compile(r"(?m)^\s*(2\.(?:1|2|3|4|5|6|7|8|9|1[0-6]))\s+([^\n]+)")
+
+def _secciones_presentes(texto: str) -> dict:
+    presentes = {}
+    for m in _SECCION_KEY_RE.finditer(texto or ""):
+        key = m.group(1).strip()
+        titulo = (m.group(2) or "").strip()
+        presentes[key] = titulo
+    return presentes
+
+def _prompt_seccion_focalizada(key: str, titulo: str, varios_anexos: bool, hints: str) -> str:
+    if varios_anexos:
+        regla_citas = (
+            "Usa citas (Anexo X, p. N). Si no hay paginación, usa (Anexo X). "
+            "No inventes páginas/anexos. "
+        )
+    else:
+        regla_citas = (
+            "Usa citas (p. N) del documento único. Si no hay paginación, usa (Fuente: documento provisto). "
+        )
+
+    refuerzo = ""
+    if key == "2.13":
+        refuerzo = (
+            "Enumera TODOS los renglones sin agrupar ni recortar; por renglón incluye: número, "
+            "descripción, cantidad, unidad de medida, y las **especificaciones técnicas** literales relevantes. "
+            "Si hay planilla de cotización, refleja la información completa. "
+        )
+    elif key == "2.16":
+        refuerzo = (
+            "Incluye cada Art. N citado y agrega una síntesis literal de 1–2 líneas por artículo, una línea por artículo. "
+        )
+    elif key == "2.3":
+        refuerzo = "Incluye absolutamente TODOS los emails y URLs encontrados. "
+    elif key == "2.8":
+        refuerzo = "Incluye costo/valor del pliego y mecanismo de adquisición/pago si constan. "
+    elif key == "2.15":
+        refuerzo = "Lista todas las leyes/decretos/resoluciones/disposiciones con número y año. "
+
+    return (
+        f"(Generación focalizada de sección) Redacta únicamente la sección {key} {titulo}.\n"
+        f"Cero invenciones. {regla_citas}"
+        f"{refuerzo}"
+        "Mantén estilo de listas claras y una sola cita por dato.\n"
+        f"{'=== HALLAZGOS AUTOMÁTICOS ===\n' + hints if hints else ''}\n"
+        "Devuelve solo el texto final de la sección, sin encabezados extra, sin preámbulos."
+    )
+
+def _generar_seccion_faltante(key: str, titulo: str, texto_fuente: str, varios_anexos: bool, hints: str) -> str:
+    msg = [
+        {"role": "system", "content": "Redactor técnico-jurídico; cero invenciones; usa citas literales."},
+        {"role": "user", "content": f"{_prompt_seccion_focalizada(key, titulo, varios_anexos, hints)}\n\n=== CONTENIDO COMPLETO ===\n{texto_fuente}"}
+    ]
+    try:
+        r = _llamada_openai(msg, model=_pick_model("sintesis"))
+        sec = (r.choices[0].message.content or "").strip()
+        return preparar_texto_para_pdf(_limpiar_meta(_normalize_citas_salida(sec, varios_anexos)))
+    except Exception:
+        return ""
+
+def _rellenar_secciones_faltantes(reporte: str, texto_fuente: str, varios_anexos: bool, hints: str) -> str:
+    presentes = _secciones_presentes(reporte)
+    piezas = [reporte.rstrip(), ""]
+    for key, titulo in SECCIONES_OBLIGATORIAS:
+        if key not in presentes:
+            sec_text = _generar_seccion_faltante(key, titulo, texto_fuente, varios_anexos, hints)
+            if sec_text:
+                piezas.append(f"{key} {titulo}\n{sec_text}\n")
+    return re.sub(r"\n{3,}", "\n\n", "\n\n".join([p for p in piezas if p])).strip()
+
 # ==================== Normalización para PDF (sin '#') ====================
 _HDR_RE = re.compile(r"^\s{0,3}(#{1,6})\s*(.+)$")
 _BULLET_RE = re.compile(r"^\s*[-*•]\s+")
@@ -528,7 +619,6 @@ def _extraer_articulos_con_snippets(texto: str) -> List[Tuple[str, str, int]]:
         contenido = (m.group(2) or "").strip()
         snippet = contenido[:200].replace("\n", " ").strip()
         res.append((rotulo, snippet, p))
-    # fallback si no detectó bloques, intenta por líneas sueltas
     if not res:
         for m in _ART_HEAD_RE.finditer(texto):
             start = m.start()
@@ -553,7 +643,6 @@ def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[str, str, in
         encabezado = f"Renglón {m.group(1)}"
         tail_start = m.end()
         tail = texto[tail_start: tail_start + 600]
-        # cortar en próxima aparición de Renglón para evitar mezclar
         prox = _RENGLON_RE.search(tail)
         if prox:
             tail = tail[:prox.start()]
@@ -593,12 +682,10 @@ def _max_out_for_text(texto: str) -> int:
     r_count = _count(r"(?im)^\s*rengl[oó]n\s*\d+", texto)
     a_count = _count(r"(?im)^\s*art(?:[íi]culo|\.?)\s*\d+", texto)
     base = MAX_COMPLETION_TOKENS_SALIDA
-    # Boost cuando hay mucho catálogo
     if r_count >= 20 or a_count >= 20:
         base = max(base, 6500)
     elif r_count >= 8 or a_count >= 8:
         base = max(base, 5000)
-    # Ajuste por tamaño general + modo fast
     if ANALISIS_MODO == "fast":
         if base_chars < 15000:
             base = max(base, 2800)
@@ -617,7 +704,6 @@ def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexo
 
     en_informe_ren, en_informe_art = _conteo_en_informe(informe)
 
-    # Dispara ampliación si falta la sección o si el conteo es claramente menor al detectado
     debe_ampliar = (
         (total_ren and (en_informe_ren < max(1, total_ren - 1))) or
         (total_art and (en_informe_art < max(1, total_art - 1))) or
@@ -656,11 +742,9 @@ Requisitos:
         )
         out = (resp.choices[0].message.content or "").strip()
         out = _normalize_citas_salida(_limpiar_meta(out), varios_anexos)
-        # por si el modelo mete rótulos indeseados
         out = re.sub(r"(?im)^\s*informe\s+original\s*$", "", out)
         return out
     except Exception:
-        # fallback: si falla la fusión, anexar la evidencia al final para que no se pierda
         return informe.rstrip() + "\n\nANEXO — Evidencia literal (ampliación 2.13/2.16):\n" + evidencia
 
 def _buscar_candidatos(texto: str, pats: List[str], idx_pag: List[Tuple[int,int]], limit: int) -> List[str]:
@@ -834,7 +918,6 @@ NO imprimas los rótulos de bloques como 'Informe Original' o similares.
         )
         corregido = (resp.choices[0].message.content or "").strip()
         corregido = _normalize_citas_salida(_limpiar_meta(corregido), varios_anexos)
-        # filtro extra por si el modelo imprimiera algún rótulo
         corregido = re.sub(r"(?im)^\s*informe\s+original\s*$", "", corregido)
         return corregido
     except Exception:
@@ -861,7 +944,7 @@ def analizar_con_openai(texto: str) -> str:
     if (not varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS) or \
        (varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS_MULTI and not force_two_stage):
         t0 = _t()
-        max_out = _max_out_for_text(texto)  # <<< booster dinámico
+        max_out = _max_out_for_text(texto)
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
             {"role": "user", "content": f"{prompt_maestro}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
@@ -871,7 +954,9 @@ def analizar_con_openai(texto: str) -> str:
             bruto = resp.choices[0].message.content.strip()
             bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
             bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
-            bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)  # <<< NUEVO
+            # Completar secciones ausentes y luego ampliar 2.13/2.16
+            bruto = _rellenar_secciones_faltantes(bruto, texto, varios_anexos, hints)
+            bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
             out = preparar_texto_para_pdf(bruto)
             _log_tiempo("analizar_single_pass" + ("_multi" if varios_anexos else ""), t0)
             return out
@@ -885,7 +970,7 @@ def analizar_con_openai(texto: str) -> str:
     # Seguridad: si por tamaño quedó 1 parte, reintenta single-pass
     if len(partes) == 1:
         t0 = _t()
-        max_out = _max_out_for_text(texto)  # <<< booster dinámico
+        max_out = _max_out_for_text(texto)
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
             {"role": "user", "content": f"{prompt_maestro}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
@@ -895,7 +980,8 @@ def analizar_con_openai(texto: str) -> str:
             bruto = resp.choices[0].message.content.strip()
             bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
             bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
-            bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)  # <<< NUEVO
+            bruto = _rellenar_secciones_faltantes(bruto, texto, varios_anexos, hints)
+            bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
             out = preparar_texto_para_pdf(bruto)
             _log_tiempo("analizar_single_pass_len1", t0)
             return out
@@ -908,7 +994,7 @@ def analizar_con_openai(texto: str) -> str:
 
     # B) Síntesis final
     t0_sint = _t()
-    max_out = _max_out_for_text(texto)  # <<< booster dinámico
+    max_out = _max_out_for_text(texto)
     messages_final = [
         {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
         {"role": "user", "content": f"""{prompt_maestro}
@@ -928,7 +1014,8 @@ def analizar_con_openai(texto: str) -> str:
         bruto = (resp_final.choices[0].message.content or "").strip()
         bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
         bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
-        bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)  # <<< NUEVO
+        bruto = _rellenar_secciones_faltantes(bruto, texto, varios_anexos, hints)
+        bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
         out = preparar_texto_para_pdf(bruto)
         _log_tiempo("sintesis_final", t0_sint)
         return out
