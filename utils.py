@@ -296,11 +296,21 @@ _BASE_PROMPT_MAESTRO = r"""
 Reglas clave:
 - No mencionar "C.R.A.F.T." ni títulos de estas instrucciones.
 - Cada dato crítico debe terminar con su fuente entre paréntesis, según las Reglas de Citas.
-- Cero invenciones; si falta o es ambiguo: escribir "NO ESPECIFICADO" y mover la duda a "Consultas sugeridas".
+- Cero invenciones y cero “relleno”: si un dato falta o el texto es plantilla (campos “indicar…”, guiones, blancos), escribir **NO ESPECIFICADO** y mover la duda a "Consultas sugeridas".
 - Cobertura completa (oferta → ejecución), con normativa citada.
 - Deduplicar, fusionar, no repetir; un único informe integrado.
 - Prohibido meta texto tipo "parte X de Y" o "revise el resto".
 - No imprimir etiquetas internas como [PÁGINA N].
+
+Precedencia documental (si hay varios anexos):
+1) Procedimiento/fechas/lugares: Anexo I (carátula).
+2) Condiciones y régimen (mantenimiento, garantías, perfeccionamiento, cambio BNA, modificaciones): Anexo II.
+3) Requisitos por renglón (técnicos y **muestras**): Anexo III. Lo del Anexo III prevalece sobre cláusulas genéricas del Anexo II.
+4) Formatos y casilleros de oferta/precios: Anexo IV.
+
+Regla obligatoria de MUESTRAS:
+- Solo declarar “se requieren muestras” si **al menos un renglón** del Anexo III marca “Muestra: S” o existe instrucción expresa con lugar/fecha **completados**. 
+- Si todos los renglones muestran “Muestra: N” o la instrucción está en plantilla (“indicar…”, casilleros vacíos), declarar: “No se requieren muestras, salvo requerimiento expreso del organismo”.
 
 Formato de salida:
 1) RESUMEN EJECUTIVO (≤200 palabras)
@@ -318,7 +328,7 @@ Formato de salida:
    2.11 Perfeccionamiento y modificaciones
    2.12 Entrega, lugares y plazos
    2.13 Planilla de cotización y renglones
-   2.14 Muestras
+   2.14 Muestras (aplicar la regla anterior)
    2.15 Cláusulas adicionales
    2.16 Matriz de Cumplimiento (tabla: requisito | encontrado (sí/no) | fuente | notas)
    2.17 Mapa de Anexos (tabla)
@@ -356,12 +366,16 @@ Genera NOTAS INTERMEDIAS en bullets, ultra concisas, con cita al final de cada b
 - SOLO bullets (sin encabezados, sin "parte x/y", sin conclusiones).
 - Etiqueta tema + cita en paréntesis.
 - Si NO hay paginación: (Fuente: documento provisto).
-- Usa la Guía de sinónimos y conserva la terminología encontrada.
+- Usá la Guía de sinónimos y conservá la terminología encontrada.
+- Si el texto es PLANTILLA (campos “indicar…”, guiones, casilleros en blanco), marcá **[NO ESPECIFICADO]**.
+- Para **MUESTRAS**: si Anexo III muestra “Muestra: N” en un renglón, anotá “muestra NO requerida en renglón X”; solo “S” si así figura o hay instrucción expresa con lugar/fecha completados.
+
 Ejemplos:
 - [IDENTIFICACION] Organismo: ... (p. 1)
 - [CALENDARIO] Presentación: DD/MM/AAAA HH:MM — Lugar: ... (p. 2)
 - [GARANTIAS] Mant. 5%; Cumpl. ≥10% ≤7 días hábiles (p. 4)
-- [FALTA] campo X — NO ESPECIFICADO. (Fuente: documento provisto)
+- [MUESTRAS] Renglones 10–15: “Muestra: N” (Anexo III, p. ?)
+- [FALTA] campo X — [NO ESPECIFICADO]. (Fuente: documento provisto)
 """
 
 _META_PATTERNS = [
@@ -681,7 +695,7 @@ def _render_pdf_bytes(resumen: str) -> bytes:
     azul = HexColor("#044369")
     c.setFillColor(azul)
     c.setFont("Helvetica-Bold", 16)
-    c.drawCentredString(A4[0] / 2, A4[1] - 30 * mm, "Resumen Analítico de Licitación")
+    c.drawCentredString(A4[0] / 2, A4[1] - 30 * mm, "Resumen Analítico De Licitación")
     c.setFont("Helvetica", 10)
     c.drawCentredString(A4[0] / 2, A4[1] - 36 * mm, "Inteligencia Comercial")
     c.setFillColor("black")
