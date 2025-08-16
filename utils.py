@@ -31,11 +31,11 @@ OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "90"))
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
 
 # ========================= Modelos / Heurísticas =========================
-MODEL_ANALISIS   = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-4o-mini")
-VISION_MODEL     = os.getenv("OPENAI_MODEL_VISION", "gpt-4o-mini")
-MODEL_NOTAS      = os.getenv("OPENAI_MODEL_NOTAS", MODEL_ANALISIS)
-MODEL_SINTESIS   = os.getenv("OPENAI_MODEL_SINTESIS", MODEL_ANALISIS)
-FAST_FORCE_MODEL = os.getenv("FAST_FORCE_MODEL", "").strip()
+MODEL_ANALISIS  = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-4o-mini")
+VISION_MODEL    = os.getenv("OPENAI_MODEL_VISION", "gpt-4o-mini")
+MODEL_NOTAS     = os.getenv("OPENAI_MODEL_NOTAS", MODEL_ANALISIS)
+MODEL_SINTESIS  = os.getenv("OPENAI_MODEL_SINTESIS", MODEL_ANALISIS)
+FAST_FORCE_MODEL = os.getenv("FAST_FORCE_MODEL", "").strip()  # opcional para fast
 
 MAX_SINGLE_PASS_CHARS = int(os.getenv("MAX_SINGLE_PASS_CHARS", "120000"))
 MAX_SINGLE_PASS_CHARS_MULTI = int(os.getenv("MAX_SINGLE_PASS_CHARS_MULTI", str(MAX_SINGLE_PASS_CHARS)))
@@ -61,12 +61,9 @@ PAGINAR_TEXTO_NATIVO = int(os.getenv("PAGINAR_TEXTO_NATIVO", "1"))
 
 # Calidad/recall
 MULTI_FORCE_TWO_STAGE_MIN_CHARS = int(os.getenv("MULTI_FORCE_TWO_STAGE_MIN_CHARS", "45000"))
-
 ENABLE_REGEX_HINTS = int(os.getenv("ENABLE_REGEX_HINTS", "1"))
-HINTS_MAX_CHARS = int(os.getenv("HINTS_MAX_CHARS", "16000"))
-HINTS_PER_FIELD = int(os.getenv("HINTS_PER_FIELD", "10"))
-
-# ACTIVADO por defecto para completar faltantes con evidencia literal
+HINTS_MAX_CHARS = int(os.getenv("HINTS_MAX_CHARS", "12000"))
+HINTS_PER_FIELD = int(os.getenv("HINTS_PER_FIELD", "8"))
 ENABLE_SECOND_PASS_COMPLETION = int(os.getenv("ENABLE_SECOND_PASS_COMPLETION", "1"))
 
 # ========================= Timers PERF =========================
@@ -287,10 +284,6 @@ def _limpieza_basica_preanalisis(s: str) -> str:
     s = re.sub(r"\n[-_]{3,}\n", "\n", s)
     s = re.sub(r"[ \t]+\n", "\n", s)
     s = re.sub(r"\n{3,}", "\n\n", s)
-    # limpiar encabezados “Informe Completo” / “Informe Original”
-    s = re.sub(r"(?im)^\s*informe\s+completo\s*$", "", s)
-    s = re.sub(r"(?im)^\s*={2,}\s*informe\s+original\s*={2,}\s*$", "", s)
-    s = re.sub(r"(?im)^\s*informe\s+original\s*$", "", s)
     return s.strip()
 
 # ==================== Prompts y limpieza ====================
@@ -308,6 +301,7 @@ SINONIMOS_CANONICOS = r"""
 Usa esta guía: si un campo aparece con sinónimos/variantes, NO lo marques como "no especificado".
 """
 
+# <<< Secciones útiles: se mantiene 2.1 → 2.15 y se agrega 2.16 Artículos >>>
 _BASE_PROMPT_MAESTRO = r"""
 # (Instrucciones internas: NO imprimir este encabezado ni estas reglas en la salida)
 Reglas clave:
@@ -315,8 +309,9 @@ Reglas clave:
 - Cada dato crítico debe terminar con su fuente entre paréntesis, según las Reglas de Citas.
 - Cobertura completa (oferta → ejecución), con normativa citada.
 - Deduplicar, fusionar, no repetir; un único informe integrado.
-- Prohibido meta texto tipo "parte X de Y", "informe completo", "informe original", o "revise el resto".
+- Prohibido meta texto tipo "parte X de Y" o "revise el resto".
 - No imprimir etiquetas internas como [PÁGINA N].
+- No usar los títulos literales "Informe Completo" ni "Informe Original".
 
 Formato de salida:
 1) RESUMEN DE PLIEGO (≤200 palabras)
@@ -328,15 +323,15 @@ Formato de salida:
    2.5 Tipología / modalidad (citar norma/artículos)
    2.6 Mantenimiento de oferta y prórroga
    2.7 Garantías (umbral UC, %, plazos, formas)
-   2.8 Presentación de ofertas (soporte, firmas, docs obligatorias)
+   2.8 Presentación de ofertas (soporte, firmas, docs obligatorias) e incluir costo/valor del pliego y mecanismo de adquisición/pago
    2.9 Apertura, evaluación y adjudicación (tipo de cambio BNA, comisión, criterios, preferencias)
    2.10 Subsanación (qué sí/no)
    2.11 Perfeccionamiento y modificaciones
    2.12 Entrega, lugares y plazos
-   2.13 Renglones y especificaciones técnicas (TODOS, sin recortes; cada renglón enumerado)
-   2.14 Planilla de cotización (campos: cantidad, unidad, marca/modelo si consta, precio unitario, subtotal, IVA, total)
-   2.15 Artículos del pliego — Resumen por artículo (Artículo X: resumen + cita)
-   2.16 Normativa aplicable (todas las leyes/decretos/resoluciones/disposiciones citadas, con número/año y fuente)
+   2.13 Planilla de cotización y renglones (enumerar TODOS los renglones; por renglón incluir cantidades, UM, descripción y **especificaciones técnicas** relevantes)
+   2.14 Muestras
+   2.15 Normativa aplicable (todas las leyes/decretos/resoluciones/disposiciones citadas, con número/año y fuente)
+   2.16 Catálogo de artículos citados (Art. N — **síntesis literal 1–2 líneas del contenido**; una línea por artículo; con cita)
 
 Estilo:
 - Títulos con mayúsculas iniciales, listas claras, tablas simples. Sin "#".
@@ -348,7 +343,7 @@ def _prompt_maestro(varios_anexos: bool) -> str:
         regla_citas = (
             "Reglas de Citas:\n"
             "- Al final de cada línea con dato, usar (Anexo X, p. N).\n"
-            "- Para deducir p. N, usa la etiqueta [PÁGINA N] más cercana al dato dentro del texto provisto de ese ANEXO.\n"
+            "- Para deducir p. N, utiliza la etiqueta [PÁGINA N] más cercana al dato dentro del texto provisto de ese ANEXO.\n"
             "- Si NO consta paginación pero sí el anexo, usar (Anexo X).\n"
             "- Si el campo es NO ESPECIFICADO, usar (Fuente: documento provisto) (no inventar página/anexo).\n"
         )
@@ -356,17 +351,16 @@ def _prompt_maestro(varios_anexos: bool) -> str:
         regla_citas = (
             "Reglas de Citas:\n"
             "- Documento único: al final de cada línea con dato, usar (p. N).\n"
-            "- Para deducir p. N, usa la etiqueta [PÁGINA N] más cercana al dato dentro del texto provisto.\n"
+            "- Para deducir p. N, utiliza la etiqueta [PÁGINA N] más cercana al dato dentro del texto provisto.\n"
             "- Prohibido escribir 'Anexo I' u otros anexos en las citas.\n"
             "- Si el campo es NO ESPECIFICADO, usar (Fuente: documento provisto) (no inventar página).\n"
         )
     extras = (
         "\nCriterios anti-omisión:\n"
         "- En 'Contactos y portales': incluir absolutamente todos los e-mails/dominos/URLs detectados.\n"
-        "- En 'Renglones y especificaciones técnicas': no resumir ni agrupar; listar cada renglón/ítem completo.\n"
-        "- En 'Planilla de cotización': incluir todos los campos que aparezcan.\n"
-        "- En 'Artículos': listar todos los artículos detectados (Artículo/Art. + número/orden) con un resumen fiel.\n"
+        "- En 'Planilla de cotización y renglones': enumerar todos los renglones y sumar especificaciones técnicas por renglón.\n"
         "- En 'Normativa aplicable': listar todas las normas mencionadas (Ley/Decreto/Resolución/Disposición, número y año).\n"
+        "- En 'Catálogo de artículos citados': incluir cada artículo que figure, con síntesis literal 1–2 líneas.\n"
     )
     return f"{_BASE_PROMPT_MAESTRO}\n{regla_citas}{extras}\nGuía de sinónimos:\n{SINONIMOS_CANONICOS}"
 
@@ -381,20 +375,22 @@ Ejemplos:
 - [CALENDARIO] Presentación: DD/MM/AAAA HH:MM — Lugar: ... (p. 2)
 - [GARANTIAS] Mant. 5%; Cumpl. ≥10% ≤7 días hábiles (p. 4)
 - [CONTACTO] Email ... / Portal ... (p. 2)
-- [RENGLONES] Renglón X — ... (p. N)
-- [PLANILLA] Cantidad ... / Precio unitario ... / Total ... (p. N)
-- [ARTICULO] Artículo X — ... (p. N)
+- [COSTO PLIEGO] Valor $... — medio de pago: ... (p. N)
+- [PRESUPUESTO] Monto: $... (p. N)
+- [PLANILLA/RENGLONES] Renglón X: ... (p. N)
+- [ESPEC TECNICAS] Renglón X: requisito ... (p. N)
 - [NORMATIVA] Ley/Decreto/Resolución ... (p. N)
+- [ARTICULO] Art. 17 — síntesis ... (p. N)
 - [FALTA] campo X — NO ESPECIFICADO. (Fuente: documento provisto)
 """
 
+# Filtrado de metafrases y títulos no deseados
 _META_PATTERNS = [
     re.compile(r"(?i)\bparte\s+\d+\s+de\s+\d+"),
     re.compile(r"(?i)informe\s+basado\s+en\s+la\s+parte"),
     re.compile(r"(?i)revise\s+las\s+partes\s+restantes"),
     re.compile(r"(?i)información\s+puede\s+estar\s+incompleta"),
     re.compile(r"(?i)^\s*informe\s+completo\s*$"),
-    re.compile(r"(?i)^\s*=+\s*informe\s+original\s*=+\s*$"),
     re.compile(r"(?i)^\s*informe\s+original\s*$"),
 ]
 
@@ -442,7 +438,10 @@ def preparar_texto_para_pdf(markdown_text: str) -> str:
         ln = raw_ln.rstrip()
         if _CODE_FENCE_RE.match(ln):
             continue
-        if re.match(r"(?i)^\s*(informe\s+completo|informe\s+original)\s*$", ln):
+        # filtra títulos indeseados
+        if re.match(r"(?i)^\s*informe\s+completo\s*$", ln):
+            continue
+        if re.match(r"(?i)^\s*informe\s+original\s*$", ln):
             continue
         m = _HDR_RE.match(ln)
         if m:
@@ -458,7 +457,7 @@ def preparar_texto_para_pdf(markdown_text: str) -> str:
         ln = _BOLD_ITALIC_RE.sub(lambda mm: mm.group(2), ln)
         out_lines.append(ln)
         if ln.strip().endswith(":"):
-            out_lines.append("")
+            out_lines.append("")  # espacio extra tras línea-título
     texto = "\n".join(out_lines)
     texto = re.sub(r"\n{3,}", "\n\n", texto).strip()
     return texto
@@ -475,7 +474,7 @@ def _pagina_de_indice(indices: List[Tuple[int,int]], pos: int) -> int:
         else: break
     return last
 
-# Campos detectables (ampliado con artículos, planilla y costo de pliego)
+# Campos detectables (ampliados)
 DETECTABLE_FIELDS: Dict[str, Dict] = {
     "mant_oferta": {"label":"Mantenimiento de oferta", "pats":[r"mantenim[ií]ento de la oferta", r"validez de la oferta"]},
     "gar_mant":    {"label":"Garantía de mantenimiento", "pats":[r"garant[ií]a.*manten", r"\b5 ?%"]},
@@ -484,41 +483,194 @@ DETECTABLE_FIELDS: Dict[str, Dict] = {
     "tipo_cambio": {"label":"Tipo de cambio BNA", "pats":[r"Banco\s+Naci[oó]n", r"tipo de cambio"]},
     "comision":    {"label":"Comisión de (Pre)?Adjudicación", "pats":[r"Comisi[oó]n.*(pre)?adjudicaci[oó]n"]},
     "muestras":    {"label":"Muestras", "pats":[r"\bmuestras?\b"]},
-    "planilla":    {"label":"Planilla de cotización", "pats":[r"planilla.*cotizaci[oó]n", r"(precio unitario|subtotal|iva|total|cantidad|unidad)"]},
-    "renglones":   {"label":"Renglones / Ítems", "pats":[r"\bRengl[oó]n\s*\d+", r"\b[IÍ]tem\s*\d+", r"^\s*\d{1,4}\s*[).\-]\s+", r"especificaci[oó]n t[eé]cnica"],},
+    "planilla":    {"label":"Planilla de cotización y renglones", "pats":[r"planilla.*cotizaci[oó]n", r"renglones?"]},
     "modalidad":   {"label":"Modalidad / art. 17", "pats":[r"Orden de compra cerrada", r"art[ií]culo\s*17"]},
     "plazo_contr": {"label":"Plazo contractual", "pats":[r"por el t[eé]rmino\s+de\s+\d+", r"\b185\s*d[ií]as"]},
     "prorroga":    {"label":"Prórroga", "pats":[r"pr[oó]rroga\s+de\s+hasta\s+el\s+100%"]},
-    "presupuesto": {"label":"Presupuesto", "pats":[r"presupuesto\s+(estimado|oficial|referencial)", r"monto\s+(estimado|referencial|oficial)"]},
-    "costo_pliego":{"label":"Costo de pliego", "pats":[r"(costo|valor|precio)\s+del?\s+pliego", r"\bpliego:\s*\$?\s*\d"]},
+    "presupuesto": {"label":"Presupuesto estimado", "pats":[r"presupuesto (estimado|oficial|referencial)", r"\$\s?\d{1,3}(\.\d{3})*(,\d{2})?"]},
     "expediente":  {"label":"Expediente", "pats":[r"\bEX-\d{4}-[A-Z0-9-]+"]},
     "fechas":      {"label":"Fechas y horas", "pats":[r"\b\d{2}/\d{2}/\d{4}\b", r"\b\d{1,2}:\d{2}\s*(hs|h)"]},
     "contacto":    {"label":"Contactos y portales", "pats":[r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", r"https?://[^\s)]+|www\.[^\s)]+"]},
+    "costo_pliego":{"label":"Costo/valor del pliego", "pats":[r"(costo|valor)\s+del\s+pliego", r"adquisici[oó]n\s+del\s+pliego", r"\$\s?\d{1,3}(\.\d{3})*(,\d{2})?"]},
     "subsanacion": {"label":"Subsanación", "pats":[r"subsanaci[oó]n"]},
     "perf_modif":  {"label":"Perfeccionamiento/Modificaciones", "pats":[r"perfeccionamiento", r"modificaci[oó]n"]},
     "preferencias":{"label":"Preferencias", "pats":[r"preferencias"]},
     "criterios":   {"label":"Criterios de evaluación", "pats":[r"criterios?\s+de\s+evaluaci[oó]n"]},
+    "renglones":   {"label":"Renglones y especificaciones", "pats":[r"Rengl[oó]n\s*\d+", r"Especificaciones?\s+t[ée]cnicas?"]},
+    "articulos":   {"label":"Artículos citados", "pats":[r"\bArt(?:[íi]culo|\.)\s*\d+[A-Za-z]?\b"]},
     "normativa":   {"label":"Normativa aplicable", "pats":[
                         r"\bLey(?:\s*N[°º])?\s*\d{1,5}(?:\.\d{1,3})*(?:/\d{2,4})?",
                         r"\bDecreto(?:\s*N[°º])?\s*\d{1,5}(?:/\d{2,4})?",
                         r"\bResoluci[oó]n(?:\s*(?:Ministerial|Conjunta))?\s*(?:N[°º]\s*)?\d{1,6}(?:/\d{2,4})?",
                         r"\bDisposici[oó]n\s*(?:N[°º]\s*)?\d{1,6}(?:/\d{2,4})?"
                     ]},
-    "articulos":   {"label":"Artículos del pliego", "pats":[
-                        r"\bArt[ií]culo\s+(Primero|Segundo|Tercero|Cuarto|Quinto|Sexto|S[eé]ptimo|Octavo|Noveno|D[eé]cimo)\b",
-                        r"\bArt[ií]culo\s+\d+[.:]",
-                        r"\bArt\.\s*\d+[.:]"
-                    ]},
 }
+
+# ====== NUEVO: utilidades para conteo y evidencia exhaustiva ======
+def _count(pattern: str, text: str) -> int:
+    return len(re.findall(pattern, text, flags=re.I))
+
+_ART_HEAD_RE = re.compile(r"(?im)^\s*(art(?:[íi]culo|\.?)\s*\d+[a-zº°]?)\s*[-–—:]?\s*(.*)$")
+_ART_BLOCK_RE = re.compile(
+    r"(?ims)^\s*(art(?:[íi]culo|\.?)\s*\d+[a-zº°]?)\s*[-–—:]?\s*(.+?)(?=^\s*art(?:[íi]culo|\.?)\s*\d+[a-zº°]?|\Z)"
+)
+
+def _extraer_articulos_con_snippets(texto: str) -> List[Tuple[str, str, int]]:
+    """
+    Devuelve lista de (rótulo_articulo, snippet_200c, pagina_aprox)
+    """
+    idx = _index_paginas(texto)
+    res = []
+    for m in _ART_BLOCK_RE.finditer(texto):
+        start = m.start()
+        p = _pagina_de_indice(idx, start)
+        rotulo = m.group(1).strip()
+        contenido = (m.group(2) or "").strip()
+        snippet = contenido[:200].replace("\n", " ").strip()
+        res.append((rotulo, snippet, p))
+    # fallback si no detectó bloques, intenta por líneas sueltas
+    if not res:
+        for m in _ART_HEAD_RE.finditer(texto):
+            start = m.start()
+            p = _pagina_de_indice(idx, start)
+            rotulo = m.group(1).strip()
+            snippet = (m.group(2) or "").strip()[:200].replace("\n", " ")
+            res.append((rotulo, snippet, p))
+    return res
+
+_RENGLON_RE = re.compile(r"(?im)^\s*rengl[oó]n\s*(\d+)\s*[-–—:]?\s*(.*)$")
+
+def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[str, str, int]]:
+    """
+    Devuelve lista de (renglón_id, snippet_260c, pagina_aprox)
+    Toma la línea de encabezado del renglón y un poco de contexto inmediato.
+    """
+    idx = _index_paginas(texto)
+    res = []
+    for m in _RENGLON_RE.finditer(texto):
+        start = m.start()
+        p = _pagina_de_indice(idx, start)
+        encabezado = f"Renglón {m.group(1)}"
+        tail_start = m.end()
+        tail = texto[tail_start: tail_start + 600]
+        # cortar en próxima aparición de Renglón para evitar mezclar
+        prox = _RENGLON_RE.search(tail)
+        if prox:
+            tail = tail[:prox.start()]
+        snippet = (m.group(2) + " " + tail).strip()
+        snippet = re.sub(r"\s+", " ", snippet)[:260]
+        res.append((encabezado, snippet, p))
+    return res
+
+def _construir_evidencia_ampliacion(texto: str) -> Tuple[str, int, int]:
+    """
+    Arma bloques de evidencia literal (con páginas) para renglones/planilla y artículos.
+    Devuelve (bloque_evidencia, cant_renglones, cant_articulos).
+    """
+    renglones = _extraer_renglones_y_especificaciones(texto)
+    articulos = _extraer_articulos_con_snippets(texto)
+
+    ev_parts = []
+    if renglones:
+        ev_parts.append("### EVIDENCIA Renglones / Planilla (literal)\n" + "\n".join(
+            [f"- {rid}: {sn} (p. {p})" for (rid, sn, p) in renglones]
+        ))
+    if articulos:
+        ev_parts.append("### EVIDENCIA Artículos (literal)\n" + "\n".join(
+            [f"- {rot}: {sn} (p. {p})" for (rot, sn, p) in articulos]
+        ))
+
+    return ("\n\n".join(ev_parts) if ev_parts else ""), len(renglones), len(articulos)
+
+def _conteo_en_informe(informe: str) -> Tuple[int, int]:
+    return _count(r"(?im)\brengl[oó]n\s*\d+", informe), _count(r"(?im)\bart(?:[íi]culo|\.?)\s*\d+", informe)
+
+def _max_out_for_text(texto: str) -> int:
+    """
+    Ajusta el tope de salida según volumen y cantidad de renglones/artículos detectados.
+    """
+    base_chars = len(texto or "")
+    r_count = _count(r"(?im)^\s*rengl[oó]n\s*\d+", texto)
+    a_count = _count(r"(?im)^\s*art(?:[íi]culo|\.?)\s*\d+", texto)
+    base = MAX_COMPLETION_TOKENS_SALIDA
+    # Boost cuando hay mucho catálogo
+    if r_count >= 20 or a_count >= 20:
+        base = max(base, 6500)
+    elif r_count >= 8 or a_count >= 8:
+        base = max(base, 5000)
+    # Ajuste por tamaño general + modo fast
+    if ANALISIS_MODO == "fast":
+        if base_chars < 15000:
+            base = max(base, 2800)
+        elif base_chars < 40000:
+            base = max(base, 3500)
+    return int(base)
+
+def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
+    """
+    Reemplaza/expande 2.13 (Planilla/Renglones) y 2.16 (Artículos) si el informe quedó corto.
+    Usa evidencia literal detectada por regex para obligar a un listado exhaustivo.
+    """
+    evidencia, total_ren, total_art = _construir_evidencia_ampliacion(texto_fuente)
+    if not evidencia:
+        return informe
+
+    en_informe_ren, en_informe_art = _conteo_en_informe(informe)
+
+    # Dispara ampliación si falta la sección o si el conteo es claramente menor al detectado
+    debe_ampliar = (
+        (total_ren and (en_informe_ren < max(1, total_ren - 1))) or
+        (total_art and (en_informe_art < max(1, total_art - 1))) or
+        (not re.search(r"(?im)^2\.13\s+Planilla", informe)) or
+        (not re.search(r"(?im)^2\.16\s+Cat[aá]logo de art", informe))
+    )
+    if not debe_ampliar:
+        return informe
+
+    prompt = f"""
+(Reforzador de cobertura) Sustituye y/o expande SOLO las secciones:
+- 2.13 Planilla de cotización y renglones
+- 2.16 Catálogo de artículos citados
+
+Requisitos:
+- 2.13: enumera TODOS los renglones detectados (una línea por renglón) con cantidades/UM/descripcion y **especificaciones técnicas** relevantes si aparecen; sin agrupar ni resumir.
+- 2.16: lista TODOS los artículos citados como "Art. N — síntesis literal 1–2 líneas".
+- Cita al final de cada línea: usa (Anexo X, p. N) o (p. N) según corresponda.
+- NO alteres ninguna otra sección del informe. Mantén exactamente el resto del texto tal cual.
+- NO imprimas encabezados tipo “Informe Original”.
+
+=== INFORME ACTUAL ===
+{informe}
+
+=== EVIDENCIA LITERAL PARA AMPLIAR ===
+{evidencia}
+"""
+    try:
+        resp = _llamada_openai(
+            [
+                {"role": "system", "content": "Redactor técnico-jurídico. Expande solo 2.13 y 2.16 con listados exhaustivos y citas."},
+                {"role": "user", "content": prompt},
+            ],
+            model=_pick_model("sintesis"),
+            max_completion_tokens=_max_out_for_text(texto_fuente)
+        )
+        out = (resp.choices[0].message.content or "").strip()
+        out = _normalize_citas_salida(_limpiar_meta(out), varios_anexos)
+        # por si el modelo mete rótulos indeseados
+        out = re.sub(r"(?im)^\s*informe\s+original\s*$", "", out)
+        return out
+    except Exception:
+        # fallback: si falla la fusión, anexar la evidencia al final para que no se pierda
+        return informe.rstrip() + "\n\nANEXO — Evidencia literal (ampliación 2.13/2.16):\n" + evidencia
 
 def _buscar_candidatos(texto: str, pats: List[str], idx_pag: List[Tuple[int,int]], limit: int) -> List[str]:
     hits = []
     for pat in pats:
-        for m in re.finditer(pat, texto, flags=re.I|re.M):
+        for m in re.finditer(pat, texto, flags=re.I):
             pos = m.start()
             p = _pagina_de_indice(idx_pag, pos)
-            start = max(0, pos - 200)
-            end = min(len(texto), pos + 260)
+            start = max(0, pos - 160)
+            end = min(len(texto), pos + 240)
             snippet = texto[start:end].replace("\n", " ").strip()
             hits.append(f"- p. {p}: {snippet}")
             if len(hits) >= limit:
@@ -531,13 +683,7 @@ def _build_regex_hints(texto: str, limit_per_field: int = None, max_chars: int =
     if max_chars is None: max_chars = HINTS_MAX_CHARS
     idx_pag = _index_paginas(texto)
     secciones = []
-    order = ["contacto","presupuesto","costo_pliego","fechas","expediente",
-             "renglones","planilla","articulos","mant_oferta","gar_mant","gar_cumpl",
-             "plazo_ent","tipo_cambio","comision","modalidad","plazo_contr","prorroga",
-             "muestras","subsanacion","perf_modif","preferencias","criterios","normativa"]
-    for key in order:
-        meta = DETECTABLE_FIELDS.get(key); 
-        if not meta: continue
+    for key, meta in DETECTABLE_FIELDS.items():
         hits = _buscar_candidatos(texto, meta["pats"], idx_pag, limit_per_field)
         if hits:
             secciones.append(f"[{meta['label']}]\n" + "\n".join(hits))
@@ -557,6 +703,10 @@ def _max_tokens_salida_adaptivo(longitud_chars: int) -> int:
     return base
 
 def _pick_model(stage_default: str) -> str:
+    """
+    stage_default: 'analisis' | 'notas' | 'sintesis'
+    Aplica FAST_FORCE_MODEL si corresponde.
+    """
     if ANALISIS_MODO == "fast" and FAST_FORCE_MODEL:
         return FAST_FORCE_MODEL
     if stage_default == "notas":
@@ -634,8 +784,16 @@ def _generar_notas_concurrente(partes: List[str]) -> List[str]:
     _log_tiempo(f"notas_intermedias_{len(partes)}_partes_concurrente", t0)
     return resultados
 
-# ==================== Segundo pase (opcional) ====================
+# ==================== Segundo pase (opcional y focalizado) ====================
 _NOESP_RE = re.compile(r"(?i)\bNO ESPECIFICADO\b")
+def _posibles_paginas_para(clave: str, texto: str) -> List[int]:
+    idx = _index_paginas(texto)
+    pags = set()
+    for pat in DETECTABLE_FIELDS.get(clave, {}).get("pats", []):
+        for m in re.finditer(pat, texto, flags=re.I):
+            pos = m.start()
+            pags.add(_pagina_de_indice(idx, pos))
+    return sorted(pags)
 
 def _segundo_pase_si_falta(original_report: str, texto_fuente: str, varios_anexos: bool) -> str:
     if not ENABLE_SECOND_PASS_COMPLETION:
@@ -643,14 +801,12 @@ def _segundo_pase_si_falta(original_report: str, texto_fuente: str, varios_anexo
     if not _NOESP_RE.search(original_report):
         return original_report
 
-    idx_pag = _index_paginas(texto_fuente)
     evidencia = []
     for clave, meta in DETECTABLE_FIELDS.items():
         label = meta["label"]
-        # Buscar líneas con el label seguido de NO ESPECIFICADO
         if re.search(rf"{re.escape(label)}.*NO ESPECIFICADO", original_report, flags=re.I) or \
            re.search(rf"{re.escape(label)}\s*:\s*NO ESPECIFICADO", original_report, flags=re.I):
-            hits = _buscar_candidatos(texto_fuente, meta["pats"], idx_pag, 12)
+            hits = _buscar_candidatos(texto_fuente, meta["pats"], _index_paginas(texto_fuente), 10)
             if hits:
                 evidencia.append(f"### {label}\n" + "\n".join(hits))
     if not evidencia:
@@ -660,9 +816,10 @@ def _segundo_pase_si_falta(original_report: str, texto_fuente: str, varios_anexo
 (Revisión focalizada) Completa ÚNICAMENTE los campos marcados como "NO ESPECIFICADO" en el informe,
 usando SOLO la evidencia literal que te paso abajo. Mantén exactamente la estructura y secciones del
 informe original, sin agregar nuevas secciones. Donde la evidencia sea ambigua, deja "NO ESPECIFICADO".
-No imprimas ni repitas marcadores como "INFORME ORIGINAL". Respeta las reglas de citas del informe.
+Respeta las reglas de citas del informe original (usa (Anexo X, p. N) o (p. N) según corresponda).
+NO imprimas los rótulos de bloques como 'Informe Original' o similares.
 
-=== CONTENIDO DEL INFORME ===
+=== CONTENIDO A CORREGIR (NO IMPRIMIR ESTE TÍTULO) ===
 {original_report}
 
 === EVIDENCIA LITERAL (snippets con páginas) ===
@@ -670,13 +827,15 @@ No imprimas ni repitas marcadores como "INFORME ORIGINAL". Respeta las reglas de
 """
     try:
         resp = _llamada_openai(
-            [{"role": "system", "content": "Actúa como redactor técnico-jurídico, cero invenciones; corrige campos faltantes con citas y sin meta-texto."},
+            [{"role": "system", "content": "Actúa como redactor técnico-jurídico, cero invenciones; corrige campos faltantes con citas."},
              {"role": "user", "content": prompt_corr}],
             model=_pick_model("sintesis"),
             max_completion_tokens=MAX_COMPLETION_TOKENS_SALIDA
         )
         corregido = (resp.choices[0].message.content or "").strip()
         corregido = _normalize_citas_salida(_limpiar_meta(corregido), varios_anexos)
+        # filtro extra por si el modelo imprimiera algún rótulo
+        corregido = re.sub(r"(?im)^\s*informe\s+original\s*$", "", corregido)
         return corregido
     except Exception:
         return original_report
@@ -686,25 +845,25 @@ def analizar_con_openai(texto: str) -> str:
     if not texto or not texto.strip():
         return "No se recibió contenido para analizar."
 
-    texto = _limpieza_basica_preanalisis(texto)
     texto_len = len(texto)
     n_anexos = _contar_anexos(texto)
     varios_anexos = n_anexos >= 2
     prompt_maestro = _prompt_maestro(varios_anexos)
 
-    # Hints regex (opcionales, capados por tamaño). Incluye artículos/renglones/planilla/contacto/presupuesto/costo pliego.
+    # Hints regex (opcionales, capados por tamaño)
     hints = _build_regex_hints(texto) if ENABLE_REGEX_HINTS else ""
-    hints_block = f"\n\n=== HALLAZGOS AUTOMÁTICOS (snippets literales; NO resumir renglones; listar todos los artículos detectados) ===\n{hints}\n" if hints else ""
+    hints_block = f"\n\n=== HALLAZGOS AUTOMÁTICOS (snippets literales para verificación, NO resumir renglones) ===\n{hints}\n" if hints else ""
 
+    # ¿forzar dos etapas en multi-anexo grande?
     force_two_stage = (varios_anexos and texto_len >= MULTI_FORCE_TWO_STAGE_MIN_CHARS)
 
     # === Single-pass cuando aplica ===
     if (not varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS) or \
        (varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS_MULTI and not force_two_stage):
         t0 = _t()
-        max_out = _max_tokens_salida_adaptivo(texto_len)
+        max_out = _max_out_for_text(texto)  # <<< booster dinámico
         messages = [
-            {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico. Prohibido imprimir 'Informe Completo' o 'Informe Original'."},
+            {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
             {"role": "user", "content": f"{prompt_maestro}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
         ]
         try:
@@ -712,6 +871,7 @@ def analizar_con_openai(texto: str) -> str:
             bruto = resp.choices[0].message.content.strip()
             bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
             bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
+            bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)  # <<< NUEVO
             out = preparar_texto_para_pdf(bruto)
             _log_tiempo("analizar_single_pass" + ("_multi" if varios_anexos else ""), t0)
             return out
@@ -725,9 +885,9 @@ def analizar_con_openai(texto: str) -> str:
     # Seguridad: si por tamaño quedó 1 parte, reintenta single-pass
     if len(partes) == 1:
         t0 = _t()
-        max_out = _max_tokens_salida_adaptivo(texto_len)
+        max_out = _max_out_for_text(texto)  # <<< booster dinámico
         messages = [
-            {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico. Prohibido imprimir 'Informe Completo' o 'Informe Original'."},
+            {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
             {"role": "user", "content": f"{prompt_maestro}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
         ]
         try:
@@ -735,6 +895,7 @@ def analizar_con_openai(texto: str) -> str:
             bruto = resp.choices[0].message.content.strip()
             bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
             bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
+            bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)  # <<< NUEVO
             out = preparar_texto_para_pdf(bruto)
             _log_tiempo("analizar_single_pass_len1", t0)
             return out
@@ -747,9 +908,9 @@ def analizar_con_openai(texto: str) -> str:
 
     # B) Síntesis final
     t0_sint = _t()
-    max_out = _max_tokens_salida_adaptivo(texto_len)
+    max_out = _max_out_for_text(texto)  # <<< booster dinámico
     messages_final = [
-        {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico. Prohibido imprimir 'Informe Completo' o 'Informe Original'."},
+        {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
         {"role": "user", "content": f"""{prompt_maestro}
 
 === NOTAS INTERMEDIAS INTEGRADAS (DEDUPE Y TRAZABILIDAD) ===
@@ -767,6 +928,7 @@ def analizar_con_openai(texto: str) -> str:
         bruto = (resp_final.choices[0].message.content or "").strip()
         bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
         bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
+        bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)  # <<< NUEVO
         out = preparar_texto_para_pdf(bruto)
         _log_tiempo("sintesis_final", t0_sint)
         return out
@@ -870,9 +1032,10 @@ def _render_pdf_bytes(resumen: str) -> bytes:
     fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
     c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_actual}")
 
-    # Limpieza final del texto renderizable
+    # Filtros de rótulos indeseados
     resumen = (resumen or "").replace("**", "")
-    resumen = re.sub(r"(?im)^\s*(informe\s+completo|informe\s+original)\s*$", "", resumen)
+    resumen = re.sub(r"(?im)^\s*informe\s+completo\s*$", "", resumen)
+    resumen = re.sub(r"(?im)^\s*informe\s+original\s*$", "", resumen)
     resumen = preparar_texto_para_pdf(resumen)
 
     c.setFont("Helvetica", 11)
@@ -884,9 +1047,9 @@ def _render_pdf_bytes(resumen: str) -> bytes:
 
     for parrafo in resumen.split("\n"):
         if not parrafo.strip():
-            y -= alto_linea
+            y -= alto_linea  # espacio entre párrafos / títulos
             continue
-        # Heurística para títulos
+        # Heurística de títulos
         if parrafo.strip().endswith(":") or parrafo.isupper() or re.match(r"^\d+(\.\d+)*\s", parrafo):
             c.setFont("Helvetica-Bold", 12); c.setFillColor(azul)
         else:
@@ -900,7 +1063,7 @@ def _render_pdf_bytes(resumen: str) -> bytes:
                 y = margen_superior
             c.drawString(margen_izquierdo, y, linea)
             y -= alto_linea
-        # Espacio extra tras títulos
+        # espacio extra tras títulos
         if parrafo.strip().endswith(":") or parrafo.isupper() or re.match(r"^\d+(\.\d+)*\s", parrafo):
             y -= alto_linea // 2
 
