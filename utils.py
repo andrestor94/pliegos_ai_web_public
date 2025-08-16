@@ -30,43 +30,38 @@ OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "90"))
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
 
 # ========================= Modelos / Heurísticas =========================
-MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-4o-mini")
-VISION_MODEL   = os.getenv("OPENAI_MODEL_VISION", "gpt-4o-mini")
-# Modelo opcional (más capaz) solo para síntesis/2º pase si está disponible
-MODEL_SINTESIS = os.getenv("OPENAI_MODEL_SINTESIS", MODEL_ANALISIS)
+MODEL_ANALISIS  = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-4o-mini")
+VISION_MODEL    = os.getenv("OPENAI_MODEL_VISION", "gpt-4o-mini")
+MODEL_SINTESIS  = os.getenv("OPENAI_MODEL_SINTESIS", MODEL_ANALISIS)
 
-MAX_SINGLE_PASS_CHARS = int(os.getenv("MAX_SINGLE_PASS_CHARS", "120000"))
-MAX_SINGLE_PASS_CHARS_MULTI = int(os.getenv("MAX_SINGLE_PASS_CHARS_MULTI", str(MAX_SINGLE_PASS_CHARS)))
+MAX_SINGLE_PASS_CHARS        = int(os.getenv("MAX_SINGLE_PASS_CHARS", "120000"))
+MAX_SINGLE_PASS_CHARS_MULTI  = int(os.getenv("MAX_SINGLE_PASS_CHARS_MULTI", str(MAX_SINGLE_PASS_CHARS)))
 
-CHUNK_SIZE_BASE = int(os.getenv("CHUNK_SIZE", "24000"))
-TARGET_PARTS = int(os.getenv("TARGET_PARTS", "2"))
+CHUNK_SIZE_BASE              = int(os.getenv("CHUNK_SIZE", "24000"))
+TARGET_PARTS                 = int(os.getenv("TARGET_PARTS", "2"))
 MAX_COMPLETION_TOKENS_SALIDA = int(os.getenv("MAX_COMPLETION_TOKENS_SALIDA", "3500"))
-TEMPERATURE_ANALISIS = os.getenv("TEMPERATURE_ANALISIS", "").strip()
-ANALISIS_MODO = os.getenv("ANALISIS_MODO", "").lower().strip()  # "fast" opcional
+TEMPERATURE_ANALISIS         = os.getenv("TEMPERATURE_ANALISIS", "").strip()
+ANALISIS_MODO                = os.getenv("ANALISIS_MODO", "").lower().strip()  # "fast" opcional
 
 # Concurrencia
 ANALISIS_CONCURRENCY = int(os.getenv("ANALISIS_CONCURRENCY", "3"))
-NOTAS_MAX_TOKENS = int(os.getenv("NOTAS_MAX_TOKENS", "1400"))
+NOTAS_MAX_TOKENS     = int(os.getenv("NOTAS_MAX_TOKENS", "1400"))
 
 # OCR
-VISION_MAX_PAGES = int(os.getenv("VISION_MAX_PAGES", "8"))
-VISION_DPI = int(os.getenv("VISION_DPI", "150"))
-OCR_TEXT_MIN_CHARS = int(os.getenv("OCR_TEXT_MIN_CHARS", "120"))
-OCR_CONCURRENCY = int(os.getenv("OCR_CONCURRENCY", "4"))
+VISION_MAX_PAGES     = int(os.getenv("VISION_MAX_PAGES", "8"))
+VISION_DPI           = int(os.getenv("VISION_DPI", "150"))
+OCR_TEXT_MIN_CHARS   = int(os.getenv("OCR_TEXT_MIN_CHARS", "120"))
+OCR_CONCURRENCY      = int(os.getenv("OCR_CONCURRENCY", "4"))
 
 # Control de paginado en texto nativo
 PAGINAR_TEXTO_NATIVO = int(os.getenv("PAGINAR_TEXTO_NATIVO", "1"))
 
 # Calidad/recall
 MULTI_FORCE_TWO_STAGE_MIN_CHARS = int(os.getenv("MULTI_FORCE_TWO_STAGE_MIN_CHARS", "45000"))
-ENABLE_REGEX_HINTS = int(os.getenv("ENABLE_REGEX_HINTS", "1"))
-HINTS_MAX_CHARS = int(os.getenv("HINTS_MAX_CHARS", "8000"))
-HINTS_PER_FIELD = int(os.getenv("HINTS_PER_FIELD", "6"))
-ENABLE_SECOND_PASS_COMPLETION = int(os.getenv("ENABLE_SECOND_PASS_COMPLETION", "1"))
-
-# Reparaciones adicionales post-síntesis
-STRICT_MAPA_ANEXOS = int(os.getenv("STRICT_MAPA_ANEXOS", "1"))          # obliga a listar TODOS los anexos
-STRICT_SECCIONES_CLAVE = int(os.getenv("STRICT_SECCIONES_CLAVE", "1"))  # fuerza completar 2.13/2.14 si hay evidencia
+ENABLE_REGEX_HINTS              = int(os.getenv("ENABLE_REGEX_HINTS", "1"))
+HINTS_MAX_CHARS                 = int(os.getenv("HINTS_MAX_CHARS", "8000"))
+HINTS_PER_FIELD                 = int(os.getenv("HINTS_PER_FIELD", "6"))
+ENABLE_SECOND_PASS_COMPLETION   = int(os.getenv("ENABLE_SECOND_PASS_COMPLETION", "1"))
 
 # ========================= Timers PERF =========================
 def _t(): return time.perf_counter()
@@ -86,7 +81,8 @@ def _rasterizar_pagina(page, dpi=VISION_DPI) -> bytes:
 def _ocr_openai_imagen_b64(b64_png: str) -> str:
     prompt = (
         "Extraé el TEXTO literal de esta imagen escaneada de un pliego. "
-        "Conservá títulos, tablas como líneas con separadores, listas y números. No resumas ni interpretes."
+        "Conservá títulos, tablas como líneas con separadores, listas y números. "
+        "No resumas ni interpretes. Prohibido inventar ejemplos o completar valores faltantes."
     )
     try:
         resp = client.chat.completions.create(
@@ -312,9 +308,10 @@ Reglas clave:
 - Cobertura completa (oferta → ejecución), con normativa citada.
 - Deduplicar, fusionar, no repetir; un único informe integrado.
 - Prohibido meta texto tipo "parte X de Y" o "revise el resto".
+- Prohibido escribir "Ejemplo" o inventar tablas/renglones ficticios.
 - No imprimir etiquetas internas como [PÁGINA N].
 
-Formato de salida:
+Formato de salida (COBERTURA OBLIGATORIA):
 1) RESUMEN EJECUTIVO (≤200 palabras)
 2) INFORME EXTENSO CON TRAZABILIDAD
    2.1 Identificación del llamado
@@ -369,6 +366,7 @@ Genera NOTAS INTERMEDIAS en bullets, ultra concisas, con cita al final de cada b
 - Etiqueta tema + cita en paréntesis.
 - Si NO hay paginación: (Fuente: documento provisto).
 - Usa la Guía de sinónimos y conserva la terminología encontrada.
+- Prohibido escribir "Ejemplo" o inventar tablas/renglones ficticios.
 Ejemplos:
 - [IDENTIFICACION] Organismo: ... (p. 1)
 - [CALENDARIO] Presentación: DD/MM/AAAA HH:MM — Lugar: ... (p. 2)
@@ -394,13 +392,9 @@ def _limpiar_meta(texto: str) -> str:
 def _particionar(texto: str, max_chars: int) -> list[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
-_ANEXO_RE = re.compile(r"===\s*ANEXO\s+(\d+)\s*:\s*(.+?)\s*===", re.I)
+_ANEXO_RE = re.compile(r"===\s*ANEXO\s+\d+", re.I)
 def _contar_anexos(s: str) -> int:
     return len(_ANEXO_RE.findall(s or ""))
-
-def _detectar_anexos_en_texto(s: str) -> List[Tuple[int, str]]:
-    """Devuelve [(num, titulo/anexo_nombre), ...] en el orden de aparición."""
-    return [(int(n), t.strip()) for (n, t) in _ANEXO_RE.findall(s or "")]
 
 # =============== Post-procesamiento de citas para documento único ===============
 _CITA_ANEXO_RE = re.compile(r"\(Anexo\s+([IVXLCDM\d]+)(?:,\s*p\.\s*(\d+))?\)", re.I)
@@ -421,6 +415,7 @@ _TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
 _CODE_FENCE_RE = re.compile(r"^\s*```.*$")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _BOLD_ITALIC_RE = re.compile(r"(\*\*|\*|__|_)(.*?)\1")
+_SECTION_NUM_RE = re.compile(r"^\s*(\d+(?:\.\d+)+)\s+(.+)$")
 
 def _title_case(s: str) -> str:
     return " ".join(w.capitalize() if w else w for w in re.split(r"(\s+)", s))
@@ -429,13 +424,27 @@ def preparar_texto_para_pdf(markdown_text: str) -> str:
     out_lines: List[str] = []
     for raw_ln in (markdown_text or "").splitlines():
         ln = raw_ln.rstrip()
-        if _CODE_FENCE_RE.match(ln): continue
+
+        # Tratar encabezados tipo "2.13 Planilla..." como título
+        msec = _SECTION_NUM_RE.match(ln)
+        if msec:
+            num = msec.group(1)
+            txt = _title_case(msec.group(2).strip())
+            ln = f"{num} {txt}:"
+            out_lines.append(ln)
+            continue
+
+        if _CODE_FENCE_RE.match(ln): 
+            continue
         m = _HDR_RE.match(ln)
         if m:
             titulo = _title_case(m.group(2).strip(": ").strip())
-            out_lines.append(titulo); continue
-        if _TABLE_SEP_RE.match(ln): continue
-        if _BULLET_RE.match(ln): ln = _BULLET_RE.sub("• ", ln)
+            out_lines.append(titulo + ":")
+            continue
+        if _TABLE_SEP_RE.match(ln): 
+            continue
+        if _BULLET_RE.match(ln): 
+            ln = _BULLET_RE.sub("• ", ln)
         ln = _LINK_RE.sub(lambda mm: f"{mm.group(1)} ({mm.group(2)})", ln)
         ln = _BOLD_ITALIC_RE.sub(lambda mm: mm.group(2), ln)
         out_lines.append(ln)
@@ -462,9 +471,8 @@ DETECTABLE_FIELDS: Dict[str, Dict] = {
     "plazo_ent":   {"label":"Plazo de entrega", "pats":[r"plazo de entrega", r"\b\d{1,3}\s*d[ií]as"]},
     "tipo_cambio": {"label":"Tipo de cambio BNA", "pats":[r"Banco\s+Naci[oó]n", r"tipo de cambio"]},
     "comision":    {"label":"Comisi[oó]n de Pre?adjudicaci[oó]n", "pats":[r"Comisi[oó]n.*(pre)?adjudicaci[oó]n"]},
-    "muestras":    {"label":"Muestras", "pats":[r"\bmuestras?\b", r"\bcolumna\s*muestra\b"]},
-    "planilla":    {"label":"Planilla de cotización", "pats":[r"planilla.*cotizaci[oó]n", r"planilla de precios", r"formulario de oferta"]},
-    "renglones":   {"label":"Renglones / Especificaciones técnicas", "pats":[r"\brengl[oó]n(?:es)?\b", r"detalle de renglones", r"especificaciones t[eé]cnicas"]},
+    "muestras":    {"label":"Muestras", "pats":[r"\bmuestras?\b"]},
+    "planilla":    {"label":"Planilla de cotización", "pats":[r"planilla.*cotizaci[oó]n", r"renglones"]},
     "modalidad":   {"label":"Modalidad / art. 17", "pats":[r"Orden de compra cerrada", r"art[ií]culo\s*17"]},
     "plazo_contr": {"label":"Plazo contractual", "pats":[r"por el t[eé]rmino\s+de\s+\d+", r"\b185\s*d[ií]as"]},
     "prorroga":    {"label":"Prórroga", "pats":[r"pr[oó]rroga\s+de\s+hasta\s+el\s+100%"]},
@@ -506,21 +514,12 @@ def _build_regex_hints(texto: str, limit_per_field: int = None, max_chars: int =
             break
     return "\n\n".join(secciones[:])
 
-def _build_regex_hints_for_fields(texto: str, keys: List[str]) -> str:
-    if not texto: return ""
-    idx_pag = _index_paginas(texto)
-    partes = []
-    for k in keys:
-        meta = DETECTABLE_FIELDS.get(k)
-        if not meta: continue
-        hits = _buscar_candidatos(texto, meta["pats"], idx_pag, HINTS_PER_FIELD)
-        if hits:
-            partes.append(f"[{meta['label']}]\n" + "\n".join(hits))
-    return "\n\n".join(partes).strip()
-
 # ==================== Llamada a OpenAI robusta ====================
-def _max_tokens_salida_adaptivo(longitud_chars: int) -> int:
+def _max_tokens_salida_adaptivo(longitud_chars: int, varios_anexos: bool) -> int:
     base = MAX_COMPLETION_TOKENS_SALIDA
+    # Si es multi-anexo, suele requerir más espacio; subimos un poco con tope.
+    if varios_anexos:
+        base = min(6000, int(base * 1.5))
     if ANALISIS_MODO != "fast":
         return base
     if longitud_chars < 15000:
@@ -596,7 +595,85 @@ def _generar_notas_concurrente(partes: List[str]) -> List[str]:
     _log_tiempo(f"notas_intermedias_{len(partes)}_partes_concurrente", t0)
     return resultados
 
-# ==================== Segundo pase (completar faltantes) ====================
+# ==================== Cobertura obligatoria: detección/repair ====================
+SECCIONES_ESPERADAS: List[Tuple[str, str]] = [
+    ("1",   "RESUMEN EJECUTIVO"),
+    ("2.1", "Identificación del llamado"),
+    ("2.2", "Calendario y lugares"),
+    ("2.3", "Contactos y portales"),
+    ("2.4", "Alcance y plazo contractual"),
+    ("2.5", "Tipología / modalidad"),
+    ("2.6", "Mantenimiento de oferta y prórroga"),
+    ("2.7", "Garantías"),
+    ("2.8", "Presentación de ofertas"),
+    ("2.9", "Apertura, evaluación y adjudicación"),
+    ("2.10","Subsanación"),
+    ("2.11","Perfeccionamiento y modificaciones"),
+    ("2.12","Entrega, lugares y plazos"),
+    ("2.13","Planilla de cotización y renglones"),
+    ("2.14","Muestras"),
+    ("2.15","Cláusulas adicionales"),
+    ("2.16","Matriz de Cumplimiento"),
+    ("2.17","Mapa de Anexos"),
+    ("2.18","Semáforo de Riesgos"),
+    ("2.19","Checklist operativo"),
+    ("2.20","Ambigüedades/Inconsistencias y Consultas Sugeridas"),
+    ("2.21","Anexos del Informe"),
+]
+
+def _secciones_faltantes(texto: str) -> List[Tuple[str,str]]:
+    faltan = []
+    for code, title in SECCIONES_ESPERADAS:
+        pat = re.compile(rf"^\s*{re.escape(code)}\s+{re.escape(title)}\s*:?", re.I | re.M)
+        if not pat.search(texto or ""):
+            faltan.append((code, title))
+    return faltan
+
+def _completar_secciones_faltantes(informe: str, texto_fuente: str, varios_anexos: bool, hints: str) -> str:
+    faltan = _secciones_faltantes(informe)
+    if not faltan:
+        return informe
+
+    objetivos = "\n".join([f"- {c} {t}" for c, t in faltan])
+    prompt_corr = f"""
+(Completar secciones faltantes) Recibiste un INFORME PARCIAL que NO contiene todas las secciones obligatorias.
+Debes devolver el **informe completo** conservando lo existente SIN cambiarlo, y agregando **EXCLUSIVAMENTE**
+las secciones que faltan, en el lugar correcto y con el formato exacto del esquema (1; 2.1…2.21).
+Donde la documentación NO traiga el dato, escribir literalmente "NO ESPECIFICADO" y mover la duda a 2.20.
+Prohibido inventar ejemplos o tablas ficticias. Mantener las reglas de citas del informe original.
+
+Secciones faltantes a completar:
+{objetivos}
+
+=== INFORME PARCIAL ===
+{informe}
+
+=== SNIPPETS LITERALES (hints) ===
+{hints or '(sin snippets)'}
+"""
+    try:
+        resp = _llamada_openai(
+            [{"role": "system", "content": "Actúa como redactor técnico-jurídico, corrige/complete secciones faltantes sin alterar lo correcto. Cero invenciones."},
+             {"role": "user", "content": prompt_corr}],
+            model=MODEL_SINTESIS,
+            max_completion_tokens=min(7000, MAX_COMPLETION_TOKENS_SALIDA + 2000)
+        )
+        corregido = (resp.choices[0].message.content or "").strip()
+        corregido = _normalize_citas_salida(_limpiar_meta(corregido), varios_anexos)
+        return corregido
+    except Exception:
+        return informe
+
+def _agregar_skeleton_si_faltan(informe: str, varios_anexos: bool) -> str:
+    faltan = _secciones_faltantes(informe)
+    if not faltan:
+        return informe
+    extra = []
+    for code, title in faltan:
+        extra.append(f"{code} {title}:\nNO ESPECIFICADO. (Fuente: documento provisto)")
+    return (informe.rstrip() + "\n\n" + "\n\n".join(extra) + "\n").strip()
+
+# ==================== Segundo pase (completar faltantes de campos) ====================
 _NOESP_RE = re.compile(r"(?i)\bNO ESPECIFICADO\b")
 def _posibles_paginas_para(clave: str, texto: str) -> List[int]:
     idx = _index_paginas(texto)
@@ -608,13 +685,12 @@ def _posibles_paginas_para(clave: str, texto: str) -> List[int]:
     return sorted(pags)
 
 def _segundo_pase_si_falta(original_report: str, texto_fuente: str, varios_anexos: bool) -> str:
-    if not ENABLE_SECOND_PASS_COMPLETION: 
+    if not ENABLE_SECOND_PASS_COMPLETION:
         return original_report
-
     if not _NOESP_RE.search(original_report):
         return original_report
 
-    # Detectar campos con NO ESPECIFICADO y construir evidencia
+    faltantes = []
     evidencia = []
     for clave, meta in DETECTABLE_FIELDS.items():
         label = meta["label"]
@@ -622,6 +698,7 @@ def _segundo_pase_si_falta(original_report: str, texto_fuente: str, varios_anexo
            re.search(rf"{re.escape(label)}\s*:\s*NO ESPECIFICADO", original_report, flags=re.I):
             hits = _buscar_candidatos(texto_fuente, meta["pats"], _index_paginas(texto_fuente), 6)
             if hits:
+                faltantes.append(label)
                 evidencia.append(f"### {label}\n" + "\n".join(hits))
     if not evidencia:
         return original_report
@@ -631,6 +708,7 @@ def _segundo_pase_si_falta(original_report: str, texto_fuente: str, varios_anexo
 usando SOLO la evidencia literal que te paso abajo. Mantén exactamente la estructura y secciones del
 informe original, sin agregar nuevas secciones. Donde la evidencia sea ambigua, deja "NO ESPECIFICADO".
 Respeta las reglas de citas del informe original (usa (Anexo X, p. N) o (p. N) según corresponda).
+Prohibido inventar ejemplos/tablas.
 
 === INFORME ORIGINAL ===
 {original_report}
@@ -643,7 +721,7 @@ Respeta las reglas de citas del informe original (usa (Anexo X, p. N) o (p. N) s
             [{"role": "system", "content": "Actúa como redactor técnico-jurídico, cero invenciones; corrige campos faltantes con citas."},
              {"role": "user", "content": prompt_corr}],
             model=MODEL_SINTESIS,
-            max_completion_tokens=MAX_COMPLETION_TOKENS_SALIDA
+            max_completion_tokens=min(7000, MAX_COMPLETION_TOKENS_SALIDA + 1500)
         )
         corregido = (resp.choices[0].message.content or "").strip()
         corregido = _normalize_citas_salida(_limpiar_meta(corregido), varios_anexos)
@@ -651,117 +729,19 @@ Respeta las reglas de citas del informe original (usa (Anexo X, p. N) o (p. N) s
     except Exception:
         return original_report
 
-# --------- Reparaciones específicas adicionales (Mapa de Anexos / 2.13 / 2.14) ---------
-_MAPA_HEADER_RE = re.compile(r"^\s*2\.17\s+Mapa de Anexos\b", flags=re.I | re.M)
-_SECCION_213_RE = re.compile(r"^\s*2\.13\s+Planilla de cotizaci[oó]n.*?(?=^\s*2\.\d+\s+|\Z)", flags=re.I | re.S | re.M)
-_SECCION_214_RE = re.compile(r"^\s*2\.14\s+Muestras.*?(?=^\s*2\.\d+\s+|\Z)", flags=re.I | re.S | re.M)
-
-def _completar_mapa_anexos_si_falta(report: str, anexos: List[Tuple[int,str]], varios_anexos: bool) -> str:
-    if not (STRICT_MAPA_ANEXOS and varios_anexos and anexos):
-        return report
-
-    # Check si todos los "Anexo X" aparecen en el informe
-    faltan = []
-    for num, _ in anexos:
-        if not re.search(rf"\bAnexo\s+0*{num}\b", report, flags=re.I):
-            faltan.append(num)
-    if not faltan:
-        return report
-
-    # Pedir corrección del Mapa de Anexos
-    tabla_items = "\n".join([f"- Anexo {num}: {titulo}" for num, titulo in anexos])
-    prompt = f"""
-Corrige la sección **2.17 Mapa de Anexos** del informe para que enumere **exactamente** los siguientes anexos,
-con una tabla de tres columnas: Anexo | Descripción | Fuente. La fuente debe citar como (Anexo X). 
-No modifiques el resto del informe.
-
-Anexos detectados:
-{tabla_items}
-
-=== INFORME ORIGINAL ===
-{report}
-"""
-    try:
-        resp = _llamada_openai(
-            [{"role": "system", "content": "Redactor técnico-jurídico. Corrige solo la sección 2.17 sin cambiar otras secciones."},
-             {"role": "user", "content": prompt}],
-            model=MODEL_SINTESIS,
-            max_completion_tokens=min(MAX_COMPLETION_TOKENS_SALIDA, 1600)
-        )
-        return (resp.choices[0].message.content or "").strip()
-    except Exception:
-        return report
-
-def _corregir_secciones_clave(report: str, texto_fuente: str, varios_anexos: bool) -> str:
-    if not STRICT_SECCIONES_CLAVE:
-        return report
-
-    # Detectar si 2.13 o 2.14 quedaron NO ESPECIFICADO teniendo evidencia
-    necesita_213 = False
-    m213 = _SECCION_213_RE.search(report)
-    if m213 and _NOESP_RE.search(m213.group(0)):
-        necesita_213 = True
-
-    necesita_214 = False
-    m214 = _SECCION_214_RE.search(report)
-    if m214 and _NOESP_RE.search(m214.group(0)):
-        necesita_214 = True
-
-    if not (necesita_213 or necesita_214):
-        return report
-
-    keys = []
-    if necesita_213: keys += ["planilla", "renglones"]
-    if necesita_214: keys += ["muestras"]
-    evidencia = _build_regex_hints_for_fields(texto_fuente, keys)
-    if not evidencia:
-        return report
-
-    prompt = f"""
-(Reparación dirigida) Completa únicamente las secciones que se indican, usando SOLO la evidencia literal.
-- Mantén estructura numérica y títulos existentes.
-- En 2.13: incluir **Planilla de cotización** y **Renglones** (si hay evidencia). Resumí en bullets o pequeña tabla (máx. 10 ítems representativos) y cita con (Anexo X, p. N) o (p. N).
-- En 2.14: detallar si se exigen **Muestras** por renglón o en general, con cita.
-- Si alguna parte sigue sin evidencia, deja “NO ESPECIFICADO”. No agregues nuevas secciones.
-
-=== INFORME A CORREGIR ===
-{report}
-
-=== EVIDENCIA LITERAL (snippets con páginas) ===
-{evidencia}
-"""
-    try:
-        resp = _llamada_openai(
-            [{"role": "system", "content": "Redactor técnico-jurídico. Completa 2.13/2.14 con evidencia, sin inventar ni alterar otras secciones."},
-             {"role": "user", "content": prompt}],
-            model=MODEL_SINTESIS,
-            max_completion_tokens=MAX_COMPLETION_TOKENS_SALIDA
-        )
-        corregido = (resp.choices[0].message.content or "").strip()
-        return _normalize_citas_salida(_limpiar_meta(corregido), varios_anexos)
-    except Exception:
-        return report
-
 # ==================== Analizador principal ====================
 def analizar_con_openai(texto: str) -> str:
     if not texto or not texto.strip():
         return "No se recibió contenido para analizar."
 
-    texto_len = len(texto)
-    anexos_detectados = _detectar_anexos_en_texto(texto)
-    n_anexos = len(anexos_detectados)
+    texto_len   = len(texto)
+    n_anexos    = _contar_anexos(texto)
     varios_anexos = n_anexos >= 2
     prompt_maestro = _prompt_maestro(varios_anexos)
 
-    # Hints regex (opcionales, capados por tamaño)
+    # Hints regex (opcionales)
     hints = _build_regex_hints(texto) if ENABLE_REGEX_HINTS else ""
-    hints_block = f"\n\n=== HALLAZGOS AUTOMÁTICOS (para verificación cruzada; snippets literales) ===\n{hints}\n" if hints else ""
-
-    # Bloque de anexos detectados (para obligar al modelo a listarlos en 2.17)
-    anexos_block = ""
-    if varios_anexos and anexos_detectados:
-        lista = "\n".join([f"- Anexo {num}: {nombre}" for num, nombre in anexos_detectados])
-        anexos_block = f"\n\n=== ANEXOS DETECTADOS (obligatorio listarlos en 2.17) ===\n{lista}\n"
+    hints_block = f"\n\n=== HALLAZGOS AUTOMÁTICOS (snippets literales) ===\n{hints}\n" if hints else ""
 
     # ¿forzar dos etapas en multi-anexo grande?
     force_two_stage = (varios_anexos and texto_len >= MULTI_FORCE_TWO_STAGE_MIN_CHARS)
@@ -770,21 +750,24 @@ def analizar_con_openai(texto: str) -> str:
     if (not varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS) or \
        (varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS_MULTI and not force_two_stage):
         t0 = _t()
-        max_out = _max_tokens_salida_adaptivo(texto_len)
+        max_out = _max_tokens_salida_adaptivo(texto_len, varios_anexos)
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
-            {"role": "user", "content": f"{prompt_maestro}{hints_block}{anexos_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
+            {"role": "user", "content": f"{prompt_maestro}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
         ]
         try:
-            resp = _llamada_openai(messages, max_completion_tokens=max_out, model=MODEL_ANALISIS)
-            bruto = resp.choices[0].message.content.strip()
+            resp  = _llamada_openai(messages, max_completion_tokens=max_out, model=MODEL_ANALISIS)
+            bruto = (resp.choices[0].message.content or "").strip()
             bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
-            # Segundo pase general si hay NO ESPECIFICADO
+
+            # Completar secciones faltantes (estructural)
+            bruto = _completar_secciones_faltantes(bruto, texto, varios_anexos, hints)
+            # Completar campos NO ESPECIFICADO con evidencia
             bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
-            # Reparaciones específicas
-            bruto = _completar_mapa_anexos_si_falta(bruto, anexos_detectados, varios_anexos)
-            bruto = _corregir_secciones_clave(bruto, texto, varios_anexos)
-            out = preparar_texto_para_pdf(bruto)
+            # Última red: esqueleto mínimo
+            bruto = _agregar_skeleton_si_faltan(bruto, varios_anexos)
+
+            out   = preparar_texto_para_pdf(bruto)
             _log_tiempo("analizar_single_pass" + ("_multi" if varios_anexos else ""), t0)
             return out
         except Exception as e:
@@ -792,36 +775,36 @@ def analizar_con_openai(texto: str) -> str:
 
     # === Dos etapas (chunking dinámico + concurrencia) ===
     chunk_size = _compute_chunk_size(texto_len)
-    partes = _particionar(texto, chunk_size)
+    partes     = _particionar(texto, chunk_size)
 
     # Seguridad: si por tamaño quedó 1 parte, reintenta single-pass
     if len(partes) == 1:
         t0 = _t()
-        max_out = _max_tokens_salida_adaptivo(texto_len)
+        max_out = _max_tokens_salida_adaptivo(texto_len, varios_anexos)
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
-            {"role": "user", "content": f"{prompt_maestro}{hints_block}{anexos_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
+            {"role": "user", "content": f"{prompt_maestro}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
         ]
         try:
-            resp = _llamada_openai(messages, max_completion_tokens=max_out, model=MODEL_ANALISIS)
-            bruto = resp.choices[0].message.content.strip()
+            resp  = _llamada_openai(messages, max_completion_tokens=max_out, model=MODEL_ANALISIS)
+            bruto = (resp.choices[0].message.content or "").strip()
             bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
+            bruto = _completar_secciones_faltantes(bruto, texto, varios_anexos, hints)
             bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
-            bruto = _completar_mapa_anexos_si_falta(bruto, anexos_detectados, varios_anexos)
-            bruto = _corregir_secciones_clave(bruto, texto, varios_anexos)
-            out = preparar_texto_para_pdf(bruto)
+            bruto = _agregar_skeleton_si_faltan(bruto, varios_anexos)
+            out   = preparar_texto_para_pdf(bruto)
             _log_tiempo("analizar_single_pass_len1", t0)
             return out
         except Exception as e:
             return f"⚠️ Error al generar el análisis: {e}"
 
     # A) Notas intermedias (CONCURRENTE)
-    notas_list = _generar_notas_concurrente(partes)
+    notas_list       = _generar_notas_concurrente(partes)
     notas_integradas = "\n".join(notas_list)
 
     # B) Síntesis final
     t0_sint = _t()
-    max_out = _max_tokens_salida_adaptivo(texto_len)
+    max_out = _max_tokens_salida_adaptivo(texto_len, varios_anexos)
     messages_final = [
         {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
         {"role": "user", "content": f"""{prompt_maestro}
@@ -829,11 +812,8 @@ def analizar_con_openai(texto: str) -> str:
 === NOTAS INTERMEDIAS INTEGRADAS (DEDUPE Y TRAZABILIDAD) ===
 {notas_integradas}
 
-=== HALLAZGOS AUTOMÁTICOS (para verificación cruzada; snippets literales) ===
+=== HALLAZGOS AUTOMÁTICOS (snippets literales) ===
 {hints}
-
-=== ANEXOS DETECTADOS (obligatorio listarlos en 2.17) ===
-{ '\n'.join([f"- Anexo {n}: {t}" for n,t in anexos_detectados]) if varios_anexos and anexos_detectados else '' }
 
 👉 Integra TODO en un **solo informe**; deduplica; cita una vez por dato con todas las fuentes.
 👉 Prohibido meta-comentarios de fragmentos. No imprimas títulos de estas instrucciones.
@@ -844,10 +824,12 @@ def analizar_con_openai(texto: str) -> str:
         resp_final = _llamada_openai(messages_final, max_completion_tokens=max_out, model=MODEL_SINTESIS)
         bruto = (resp_final.choices[0].message.content or "").strip()
         bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
-        # Reparaciones post-síntesis
+
+        # Reparaciones de cobertura/campos
+        bruto = _completar_secciones_faltantes(bruto, texto, varios_anexos, hints)
         bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
-        bruto = _completar_mapa_anexos_si_falta(bruto, anexos_detectados, varios_anexos)
-        bruto = _corregir_secciones_clave(bruto, texto, varios_anexos)
+        bruto = _agregar_skeleton_si_faltan(bruto, varios_anexos)
+
         out = preparar_texto_para_pdf(bruto)
         _log_tiempo("sintesis_final", t0_sint)
         return out
