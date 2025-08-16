@@ -33,17 +33,20 @@ MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-4o-mini")
 VISION_MODEL   = os.getenv("OPENAI_MODEL_VISION", "gpt-4o-mini")
 
 # Subimos umbral/fragmento para reducir llamadas al modelo
-MAX_SINGLE_PASS_CHARS = int(os.getenv("MAX_SINGLE_PASS_CHARS", "120000"))  # antes 55k
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "24000"))                         # antes 14k
+MAX_SINGLE_PASS_CHARS = int(os.getenv("MAX_SINGLE_PASS_CHARS", "120000"))
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "24000"))
 MAX_COMPLETION_TOKENS_SALIDA = int(os.getenv("MAX_COMPLETION_TOKENS_SALIDA", "3500"))
 TEMPERATURE_ANALISIS = os.getenv("TEMPERATURE_ANALISIS", "").strip()
 ANALISIS_MODO = os.getenv("ANALISIS_MODO", "").lower().strip()  # "fast" opcional
 
 # OCR
 VISION_MAX_PAGES = int(os.getenv("VISION_MAX_PAGES", "8"))
-VISION_DPI = int(os.getenv("VISION_DPI", "150"))  # bajamos DPI (era 170)
+VISION_DPI = int(os.getenv("VISION_DPI", "150"))
 OCR_TEXT_MIN_CHARS = int(os.getenv("OCR_TEXT_MIN_CHARS", "120"))
 OCR_CONCURRENCY = int(os.getenv("OCR_CONCURRENCY", "4"))
+
+# Control de paginado en texto nativo
+PAGINAR_TEXTO_NATIVO = int(os.getenv("PAGINAR_TEXTO_NATIVO", "1"))
 
 # ========================= Timers PERF =========================
 def _t(): return time.perf_counter()
@@ -142,28 +145,43 @@ def _mime_guess(file) -> str:
     m, _ = mimetypes.guess_type(nombre)
     return m or ""
 
+def _texto_nativo_etiquetado(doc: fitz.Document) -> str:
+    """Devuelve texto nativo etiquetado por página: [PÁGINA N] ..."""
+    partes = []
+    for i, p in enumerate(doc, 1):
+        t = (p.get_text() or "").strip()
+        # aunque esté vacío, dejamos constancia de la página
+        if t:
+            partes.append(f"[PÁGINA {i}]\n{t}")
+        else:
+            partes.append(f"[PÁGINA {i}] (sin texto)")
+    return "\n\n".join(partes).strip()
+
 def extraer_texto_de_pdf(file) -> str:
+    """
+    1) Si hay poco texto nativo total ⇒ OCR selectivo por página (paralelo).
+    2) Si hay buen texto nativo ⇒ devolver etiquetado por página (para citas correctas).
+    """
     t0 = _t()
     raw = _leer_todo(file)
     if not raw:
         _log_tiempo("extraccion_pdf_sin_bytes", t0); return ""
     try:
         with fitz.open(stream=raw, filetype="pdf") as doc:
-            nativo = []
+            # Conteo real de texto nativo
+            suma = 0
             for p in doc:
-                t = p.get_text() or ""
-                if t.strip():
-                    nativo.append(t)
-            plain = "\n".join(nativo).strip()
-            if len(plain) < 500:
+                suma += len((p.get_text() or "").strip())
+            if suma < 500:
                 ocr_t0 = _t()
                 ocr_text = _ocr_selectivo_por_pagina(doc, VISION_MAX_PAGES)
                 _log_tiempo("ocr_selectivo", ocr_t0)
-                out = ocr_text if len(ocr_text) > len(plain) else plain
                 _log_tiempo("extraccion_pdf_total", t0)
-                return out
+                return ocr_text
+            # Texto nativo suficiente → etiquetado por página si está activo
+            out = _texto_nativo_etiquetado(doc) if PAGINAR_TEXTO_NATIVO else "\n".join([p.get_text() or "" for p in doc])
             _log_tiempo("extraccion_pdf_total", t0)
-            return plain
+            return out.strip()
     except Exception:
         try:
             out = raw.decode("utf-8", errors="ignore")
@@ -236,7 +254,8 @@ def extraer_texto_universal(file) -> str:
 
     raw = _leer_todo(file)
     if not raw:
-        _log_tiempo("extraer_texto_universal_sin_bytes", t0); return ""
+        _log_tiempo("extraer_texto_universal_sin_bytes", t0)
+        return ""
     try:
         text = raw.decode("utf-8", errors="ignore")
     except Exception:
@@ -272,16 +291,16 @@ SINONIMOS_CANONICOS = r"""
 Usa esta guía: si un campo aparece con sinónimos/variantes, NO lo marques como "no especificado".
 """
 
-CRAFT_PROMPT_MAESTRO = r"""
-# (Instrucciones internas: NO imprimir este encabezado en la salida)
+_BASE_PROMPT_MAESTRO = r"""
+# (Instrucciones internas: NO imprimir este encabezado ni estas reglas en la salida)
 Reglas clave:
-- Prohibido mencionar "C.R.A.F.T." ni repetir títulos de estas instrucciones en el informe final.
-- Trazabilidad: cada dato crítico debe terminar con su fuente entre paréntesis: (Anexo X[, p. Y]).
+- No mencionar "C.R.A.F.T." ni títulos de estas instrucciones.
+- Cada dato crítico debe terminar con su fuente entre paréntesis, según las Reglas de Citas.
 - Cero invenciones; si falta o es ambiguo: escribir "NO ESPECIFICADO" y mover la duda a "Consultas sugeridas".
 - Cobertura completa del ciclo (oferta → ejecución), con normativa citada.
 - Deduplicar, fusionar, no repetir; un único informe integrado.
 - Prohibido meta texto tipo "parte X de Y" o "revise el resto".
-- Prohibido el lenguaje genérico como "Se sugiere consultar el pliego": usar "NO ESPECIFICADO" y una consulta concreta.
+- No imprimir etiquetas internas como [PÁGINA N].
 
 Formato de salida:
 1) RESUMEN EJECUTIVO (≤200 palabras)
@@ -310,20 +329,36 @@ Formato de salida:
 
 Estilo:
 - Títulos en mayúsculas iniciales, listas claras, tablas simples. Sin "#".
-- Cada línea con dato debe terminar con su fuente, salvo en "Semáforo", "Checklist" y "Consultas sugeridas".
 - Aplicar la Guía de sinónimos.
 """
+
+def _prompt_maestro(varios_anexos: bool) -> str:
+    if varios_anexos:
+        regla_citas = (
+            "Reglas de Citas:\n"
+            "- Usar (Anexo X, p. N) al final de cada línea con dato.\n"
+            "- Si NO consta paginación pero sí el anexo, usar (Anexo X).\n"
+            "- Si el campo es NO ESPECIFICADO, usar (Fuente: documento provisto) (no inventar página/anexo).\n"
+        )
+    else:
+        regla_citas = (
+            "Reglas de Citas:\n"
+            "- Documento único: usar (p. N) al final de cada línea con dato.\n"
+            "- Prohibido escribir 'Anexo I' u otros anexos.\n"
+            "- Si el campo es NO ESPECIFICADO, usar (Fuente: documento provisto) (no inventar página).\n"
+        )
+    return f"{_BASE_PROMPT_MAESTRO}\n{regla_citas}\nGuía de sinónimos:\n{SINONIMOS_CANONICOS}"
 
 CRAFT_PROMPT_NOTAS = r"""
 Genera NOTAS INTERMEDIAS en bullets, ultra concisas, con cita al final de cada bullet.
 - SOLO bullets (sin encabezados, sin "parte x/y", sin conclusiones).
-- Etiqueta tema + cita en paréntesis. Si no hay paginación/ID: usa (Anexo X) si es posible.
-- Aplica la Guía de sinónimos y conserva la terminología encontrada.
+- Etiqueta tema + cita en paréntesis. Si no hay paginación/ID: usa (Fuente: documento provisto).
+- Usa la Guía de sinónimos y conserva la terminología encontrada.
 Ejemplos:
-- [IDENTIFICACION] Organismo: ... (Anexo 01, p. 1)
-- [CALENDARIO] Presentación: DD/MM/AAAA HH:MM — Lugar: ... (Anexo 01, p. 2)
-- [GARANTIAS] Mant. 5%; Cumpl. ≥10% ≤7 días hábiles (Anexo 02, p. 4)
-- [FALTA] campo X — NO ESPECIFICADO.
+- [IDENTIFICACION] Organismo: ... (p. 1)
+- [CALENDARIO] Presentación: DD/MM/AAAA HH:MM — Lugar: ... (p. 2)
+- [GARANTIAS] Mant. 5%; Cumpl. ≥10% ≤7 días hábiles (p. 4)
+- [FALTA] campo X — NO ESPECIFICADO. (Fuente: documento provisto)
 """
 
 _META_PATTERNS = [
@@ -419,18 +454,17 @@ def analizar_con_openai(texto: str) -> str:
     if not texto or not texto.strip():
         return "No se recibió contenido para analizar."
 
-    # Detectar multi-anexo real (≥2)
     n_anexos = _contar_anexos(texto)
     varios_anexos = n_anexos >= 2
 
-    # Pasada única si:
-    #  - texto cabe en umbral, y
-    #  - NO es multi-anexo real (o aun si es, pero cabe en un único fragmento)
+    prompt_maestro = _prompt_maestro(varios_anexos)
+
+    # Pasada única (rápida)
     if len(texto) <= MAX_SINGLE_PASS_CHARS and not varios_anexos:
         t0 = _t()
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
-            {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
+            {"role": "user", "content": f"{prompt_maestro}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
         ]
         try:
             resp = _llamada_openai(messages)
@@ -442,15 +476,13 @@ def analizar_con_openai(texto: str) -> str:
         except Exception as e:
             return f"⚠️ Error al generar el análisis: {e}"
 
-    # Dos etapas (notas → síntesis)
+    # Si quedó en 1 parte, también usamos single-pass
     partes = _particionar(texto, CHUNK_SIZE)
-
-    # Si igualmente quedó en 1 parte, conviene single-pass (evita 2 llamadas grandes)
     if len(partes) == 1:
         t0 = _t()
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
-            {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
+            {"role": "user", "content": f"{prompt_maestro}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
         ]
         try:
             resp = _llamada_openai(messages)
@@ -462,7 +494,7 @@ def analizar_con_openai(texto: str) -> str:
         except Exception as e:
             return f"⚠️ Error al generar el análisis: {e}"
 
-    # A) Notas intermedias
+    # Dos etapas (solo si realmente hay que particionar)
     notas = []
     t0_notas = _t()
     for i, parte in enumerate(partes, 1):
@@ -479,11 +511,10 @@ def analizar_con_openai(texto: str) -> str:
 
     notas_integradas = "\n".join(notas)
 
-    # B) Síntesis final
     t0_sint = _t()
     messages_final = [
         {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
-        {"role": "user", "content": f"""{CRAFT_PROMPT_MAESTRO}
+        {"role": "user", "content": f"""{prompt_maestro}
 
 === NOTAS INTERMEDIAS INTEGRADAS (DEDUPE Y TRAZABILIDAD) ===
 {notas_integradas}
@@ -507,7 +538,7 @@ def analizar_con_openai(texto: str) -> str:
 def analizar_anexos(files: list) -> str:
     """
     Combina anexos y ejecuta análisis.
-    - Si hay 1 solo archivo: NO agrega marcadores "=== ANEXO ... ===" (permite single-pass).
+    - Si hay 1 solo archivo: NO agrega marcadores "=== ANEXO ... ===" (permite single-pass y citas por p. N).
     - Si hay ≥2: agrega marcadores para trazabilidad.
     """
     if not files:
@@ -531,7 +562,6 @@ def analizar_anexos(files: list) -> str:
         if multi:
             bloques.append(f"=== ANEXO {idx:02d}: {nombre} ===\n{texto}\n")
         else:
-            # 1 archivo → NO marcamos como ANEXO para habilitar single-pass
             bloques.append(texto)
 
     contenido_unico = "\n".join(bloques).strip()
