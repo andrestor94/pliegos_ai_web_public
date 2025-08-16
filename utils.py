@@ -6,6 +6,7 @@ import mimetypes
 import time
 from datetime import datetime
 from typing import List
+from tempfile import NamedTemporaryFile
 
 import fitz  # PyMuPDF
 from dotenv import load_dotenv
@@ -33,10 +34,18 @@ MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-4o-mini")
 VISION_MODEL   = os.getenv("OPENAI_MODEL_VISION", "gpt-4o-mini")
 
 MAX_SINGLE_PASS_CHARS = int(os.getenv("MAX_SINGLE_PASS_CHARS", "120000"))
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "24000"))
+# Nuevo: habilita single-pass incluso con varios anexos si el total entra en el umbral
+MAX_SINGLE_PASS_CHARS_MULTI = int(os.getenv("MAX_SINGLE_PASS_CHARS_MULTI", str(MAX_SINGLE_PASS_CHARS)))
+
+CHUNK_SIZE_BASE = int(os.getenv("CHUNK_SIZE", "24000"))
+TARGET_PARTS = int(os.getenv("TARGET_PARTS", "2"))  # apuntamos a 2 partes cuando sea inevitable
 MAX_COMPLETION_TOKENS_SALIDA = int(os.getenv("MAX_COMPLETION_TOKENS_SALIDA", "3500"))
 TEMPERATURE_ANALISIS = os.getenv("TEMPERATURE_ANALISIS", "").strip()
 ANALISIS_MODO = os.getenv("ANALISIS_MODO", "").lower().strip()  # "fast" opcional
+
+# Concurrencia en la etapa de NOTAS
+ANALISIS_CONCURRENCY = int(os.getenv("ANALISIS_CONCURRENCY", "3"))
+NOTAS_MAX_TOKENS = int(os.getenv("NOTAS_MAX_TOKENS", "1400"))
 
 # OCR
 VISION_MAX_PAGES = int(os.getenv("VISION_MAX_PAGES", "8"))
@@ -324,14 +333,11 @@ Estilo:
 """
 
 def _prompt_maestro(varios_anexos: bool) -> str:
-    """
-    Reglas de citas según contexto + mapeo explícito de [PÁGINA N] -> (p. N)
-    """
     if varios_anexos:
         regla_citas = (
             "Reglas de Citas:\n"
             "- Al final de cada línea con dato, usar (Anexo X, p. N).\n"
-            "- Para deducir p. N, utiliza la etiqueta [PÁGINA N] más cercana al dato dentro del texto provisto.\n"
+            "- Para deducir p. N, utiliza la etiqueta [PÁGINA N] más cercana al dato dentro del texto provisto de ese ANEXO.\n"
             "- Si NO consta paginación pero sí el anexo, usar (Anexo X).\n"
             "- Si el campo es NO ESPECIFICADO, usar (Fuente: documento provisto) (no inventar página/anexo).\n"
         )
@@ -383,11 +389,6 @@ def _contar_anexos(s: str) -> int:
 # =============== Post-procesamiento de citas para documento único ===============
 _CITA_ANEXO_RE = re.compile(r"\(Anexo\s+([IVXLCDM\d]+)(?:,\s*p\.\s*(\d+))?\)", re.I)
 def _normalize_citas_salida(texto: str, varios_anexos: bool) -> str:
-    """
-    Si es documento único:
-      - (Anexo I, p. N) -> (p. N)
-      - (Anexo I) -> (Fuente: documento provisto)
-    """
     if varios_anexos:
         return texto
     def repl(m):
@@ -428,12 +429,6 @@ def preparar_texto_para_pdf(markdown_text: str) -> str:
 
 # ==================== Llamada a OpenAI robusta ====================
 def _max_tokens_salida_adaptivo(longitud_chars: int) -> int:
-    """
-    En modo fast, reduce salida para bajar latencia:
-      - < 15k chars: 2200
-      - < 40k chars: 2800
-      - resto: MAX_COMPLETION_TOKENS_SALIDA
-    """
     base = MAX_COMPLETION_TOKENS_SALIDA
     if ANALISIS_MODO != "fast":
         return base
@@ -479,19 +474,53 @@ def _llamada_openai(messages, model=MODEL_ANALISIS, temperature_str=TEMPERATURE_
                     break
     raise RuntimeError(str(last_error) if last_error else "Fallo desconocido en _llamada_openai")
 
+# ==================== Concurrencia para NOTAS ====================
+def _compute_chunk_size(total_chars: int) -> int:
+    # intenta dejarlo en ≈ TARGET_PARTS partes (o usa CHUNK_SIZE_BASE si ya es grande)
+    if TARGET_PARTS <= 0:
+        return CHUNK_SIZE_BASE
+    ideal = (total_chars + TARGET_PARTS - 1) // TARGET_PARTS
+    return max(CHUNK_SIZE_BASE, ideal)
+
+def _generar_notas_concurrente(partes: List[str]) -> List[str]:
+    resultados = [None] * len(partes)
+    t0 = _t()
+
+    def worker(idx: int, parte: str):
+        msg = [
+            {"role": "system", "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
+            {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n## Guía de sinónimos/normalización\n{SINONIMOS_CANONICOS}\n\n=== FRAGMENTO {idx+1}/{len(partes)} ===\n{parte}"}
+        ]
+        r = _llamada_openai(msg, max_completion_tokens=NOTAS_MAX_TOKENS)
+        return idx, (r.choices[0].message.content or "").strip()
+
+    with ThreadPoolExecutor(max_workers=max(1, ANALISIS_CONCURRENCY)) as ex:
+        futs = [ex.submit(worker, i, p) for i, p in enumerate(partes)]
+        for fut in as_completed(futs):
+            try:
+                i, content = fut.result()
+                resultados[i] = content
+            except Exception as e:
+                resultados[i] = f"[ERROR] No se pudieron generar notas de la parte {i+1}: {e}"
+
+    _log_tiempo(f"notas_intermedias_{len(partes)}_partes_concurrente", t0)
+    return resultados
+
 # ==================== Analizador principal ====================
 def analizar_con_openai(texto: str) -> str:
     if not texto or not texto.strip():
         return "No se recibió contenido para analizar."
 
+    texto_len = len(texto)
     n_anexos = _contar_anexos(texto)
     varios_anexos = n_anexos >= 2
     prompt_maestro = _prompt_maestro(varios_anexos)
 
-    # Pasada única (rápida)
-    if len(texto) <= MAX_SINGLE_PASS_CHARS and not varios_anexos:
+    # === Single-pass incluso con multi-anexo si entra en el umbral ===
+    if (not varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS) or \
+       (varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS_MULTI):
         t0 = _t()
-        max_out = _max_tokens_salida_adaptivo(len(texto))
+        max_out = _max_tokens_salida_adaptivo(texto_len)
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
             {"role": "user", "content": f"{prompt_maestro}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
@@ -502,16 +531,19 @@ def analizar_con_openai(texto: str) -> str:
             limpio = _limpiar_meta(bruto)
             normalizado = _normalize_citas_salida(limpio, varios_anexos)
             out = preparar_texto_para_pdf(normalizado)
-            _log_tiempo("analizar_single_pass", t0)
+            _log_tiempo("analizar_single_pass" + ("_multi" if varios_anexos else ""), t0)
             return out
         except Exception as e:
             return f"⚠️ Error al generar el análisis: {e}"
 
-    # Si quedó en 1 parte, también usamos single-pass
-    partes = _particionar(texto, CHUNK_SIZE)
+    # === Dos etapas (pero con chunking dinámico y concurrencia) ===
+    chunk_size = _compute_chunk_size(texto_len)
+    partes = _particionar(texto, chunk_size)
+
+    # Si por tamaño quedó en 1 parte, volvemos a single-pass
     if len(partes) == 1:
         t0 = _t()
-        max_out = _max_tokens_salida_adaptivo(len(texto))
+        max_out = _max_tokens_salida_adaptivo(texto_len)
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
             {"role": "user", "content": f"{prompt_maestro}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
@@ -527,25 +559,13 @@ def analizar_con_openai(texto: str) -> str:
         except Exception as e:
             return f"⚠️ Error al generar el análisis: {e}"
 
-    # Dos etapas (solo si realmente hay que particionar)
-    notas = []
-    t0_notas = _t()
-    for i, parte in enumerate(partes, 1):
-        msg = [
-            {"role": "system", "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
-            {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n## Guía de sinónimos/normalización\n{SINONIMOS_CANONICOS}\n\n=== FRAGMENTO {i}/{len(partes)} ===\n{parte}"}
-        ]
-        try:
-            r = _llamada_openai(msg, max_completion_tokens=1800)
-            notas.append(r.choices[0].message.content.strip())
-        except Exception as e:
-            notas.append(f"[ERROR] No se pudieron generar notas de la parte {i}: {e}")
-    _log_tiempo(f"notas_intermedias_{len(partes)}_partes", t0_notas)
+    # A) Notas intermedias (CONCURRENTE)
+    notas_list = _generar_notas_concurrente(partes)
+    notas_integradas = "\n".join(notas_list)
 
-    notas_integradas = "\n".join(notas)
-
+    # B) Síntesis final
     t0_sint = _t()
-    max_out = _max_tokens_salida_adaptivo(len(texto))
+    max_out = _max_tokens_salida_adaptivo(texto_len)
     messages_final = [
         {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
         {"role": "user", "content": f"""{prompt_maestro}
@@ -573,8 +593,8 @@ def analizar_con_openai(texto: str) -> str:
 def analizar_anexos(files: list) -> str:
     """
     Combina anexos y ejecuta análisis.
-    - Si hay 1 solo archivo: NO agrega marcadores "=== ANEXO ... ===" (permite single-pass y citas por p. N).
-    - Si hay ≥2: agrega marcadores para trazabilidad.
+    - 1 archivo: NO marca "=== ANEXO ... ===" para habilitar single-pass y citas (p. N).
+    - ≥2: marca ANEXOS para trazabilidad. Si el total entra en MAX_SINGLE_PASS_CHARS_MULTI, igual va single-pass.
     """
     if not files:
         return "No se recibieron anexos para analizar."
@@ -646,11 +666,10 @@ Respondé natural y directo. Evitá repetir las funciones de la plataforma.
         return f"⚠️ Error al generar respuesta: {e}"
 
 # ==================== PDF ====================
-def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
-    output_dir = os.path.join("generated_pdfs")
-    os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, nombre_archivo)
-
+def _render_pdf_bytes(resumen: str) -> bytes:
+    """
+    Genera el PDF en memoria y devuelve bytes (para endpoints que quieran streamear).
+    """
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
 
@@ -699,8 +718,35 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
         y -= 6
 
     c.save()
-    with open(output_path, "wb") as f:
-        f.write(buffer.getvalue())
+    return buffer.getvalue()
+
+def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
+    """
+    Genera el PDF en disco (escritura atómica) y devuelve la ruta.
+    Si tu endpoint prefiere stream: usá _render_pdf_bytes(resumen) y devolvés StreamingResponse.
+    """
+    output_dir = os.path.join("generated_pdfs")
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, nombre_archivo)
+
+    # Generar en memoria
+    data = _render_pdf_bytes(resumen)
+
+    # Escritura atómica: tmp + replace
+    with NamedTemporaryFile(dir=output_dir, delete=False) as tmp:
+        tmp.write(data)
+        tmp_path = tmp.name
+    try:
+        os.replace(tmp_path, output_path)
+    except Exception:
+        # Si replace falla en el FS del proveedor, hacemos write simple como fallback
+        with open(output_path, "wb") as f:
+            f.write(data)
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+
     return output_path
 
 def dividir_texto(texto, canvas_obj, max_width):
