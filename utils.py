@@ -6,7 +6,7 @@ import base64
 import mimetypes
 import time
 from datetime import datetime
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 from tempfile import NamedTemporaryFile
 
 import fitz  # PyMuPDF
@@ -42,14 +42,13 @@ MAX_SINGLE_PASS_CHARS_MULTI = int(os.getenv("MAX_SINGLE_PASS_CHARS_MULTI", str(M
 
 CHUNK_SIZE_BASE = int(os.getenv("CHUNK_SIZE", "24000"))
 TARGET_PARTS = int(os.getenv("TARGET_PARTS", "2"))
-# Defaults elevados para minimizar truncamientos
-MAX_COMPLETION_TOKENS_SALIDA = int(os.getenv("MAX_COMPLETION_TOKENS_SALIDA", "8000"))
+MAX_COMPLETION_TOKENS_SALIDA = int(os.getenv("MAX_COMPLETION_TOKENS_SALIDA", "3500"))
 TEMPERATURE_ANALISIS = os.getenv("TEMPERATURE_ANALISIS", "").strip()
 ANALISIS_MODO = os.getenv("ANALISIS_MODO", "").lower().strip()  # "fast" opcional
 
 # Concurrencia
 ANALISIS_CONCURRENCY = int(os.getenv("ANALISIS_CONCURRENCY", "3"))
-NOTAS_MAX_TOKENS = int(os.getenv("NOTAS_MAX_TOKENS", "2000"))
+NOTAS_MAX_TOKENS = int(os.getenv("NOTAS_MAX_TOKENS", "1400"))
 
 # OCR
 VISION_MAX_PAGES = int(os.getenv("VISION_MAX_PAGES", "8"))
@@ -66,6 +65,9 @@ ENABLE_REGEX_HINTS = int(os.getenv("ENABLE_REGEX_HINTS", "1"))
 HINTS_MAX_CHARS = int(os.getenv("HINTS_MAX_CHARS", "12000"))
 HINTS_PER_FIELD = int(os.getenv("HINTS_PER_FIELD", "8"))
 ENABLE_SECOND_PASS_COMPLETION = int(os.getenv("ENABLE_SECOND_PASS_COMPLETION", "1"))
+
+# Forzar reemplazo determinístico de 2.13 y 2.16 (cobertura total)
+FORCE_DETERMINISTIC_213_216 = int(os.getenv("FORCE_DETERMINISTIC_213_216", "1"))
 
 # ========================= Timers PERF =========================
 def _t(): return time.perf_counter()
@@ -302,7 +304,6 @@ SINONIMOS_CANONICOS = r"""
 Usa esta guía: si un campo aparece con sinónimos/variantes, NO lo marques como "no especificado".
 """
 
-# <<< Secciones útiles: se mantiene 2.1 → 2.15 y se agrega 2.16 Artículos >>>
 _BASE_PROMPT_MAESTRO = r"""
 # (Instrucciones internas: NO imprimir este encabezado ni estas reglas en la salida)
 Reglas clave:
@@ -406,9 +407,34 @@ def _limpiar_meta(texto: str) -> str:
 def _particionar(texto: str, max_chars: int) -> list[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
-_ANEXO_RE = re.compile(r"===\s*ANEXO\s+\d+", re.I)
+_ANEXO_RE = re.compile(r"(?im)^===\s*ANEXO\s+(\d+)")
 def _contar_anexos(s: str) -> int:
     return len(_ANEXO_RE.findall(s or ""))
+
+# =============== Índices de páginas y anexos ===============
+_PAG_TAG_RE = re.compile(r"\[PÁGINA\s+(\d+)\]")
+
+def _index_paginas(s: str) -> List[Tuple[int,int]]:
+    return [(m.start(), int(m.group(1))) for m in _PAG_TAG_RE.finditer(s)]
+
+def _pagina_de_indice(indices: List[Tuple[int,int]], pos: int) -> int:
+    last = 1
+    for i, p in indices:
+        if i <= pos: last = p
+        else: break
+    return last
+
+def _index_anexos(s: str) -> List[Tuple[int,int]]:
+    return [(m.start(), int(m.group(1))) for m in _ANEXO_RE.finditer(s)]
+
+def _anexo_en_pos(indices: List[Tuple[int,int]], pos: int) -> Optional[int]:
+    last = None
+    for i, a in indices:
+        if i <= pos:
+            last = a
+        else:
+            break
+    return last
 
 # =============== Post-procesamiento de citas para documento único ===============
 _CITA_ANEXO_RE = re.compile(r"\(Anexo\s+([IVXLCDM\d]+)(?:,\s*p\.\s*(\d+))?\)", re.I)
@@ -421,96 +447,6 @@ def _normalize_citas_salida(texto: str, varios_anexos: bool) -> str:
             return f"(p. {pag})"
         return "(Fuente: documento provisto)"
     return _CITA_ANEXO_RE.sub(repl, texto)
-
-# ===== Secciones obligatorias y helpers (relleno de faltantes) =====
-SECCIONES_OBLIGATORIAS = [
-    ("2.1", "Identificación del llamado"),
-    ("2.2", "Calendario y lugares"),
-    ("2.3", "Contactos y portales"),
-    ("2.4", "Alcance y plazo contractual"),
-    ("2.5", "Tipología / modalidad"),
-    ("2.6", "Mantenimiento de oferta y prórroga"),
-    ("2.7", "Garantías"),
-    ("2.8", "Presentación de ofertas"),
-    ("2.9", "Apertura, evaluación y adjudicación"),
-    ("2.10", "Subsanación"),
-    ("2.11", "Perfeccionamiento y modificaciones"),
-    ("2.12", "Entrega, lugares y plazos"),
-    ("2.13", "Planilla de cotización y renglones"),
-    ("2.14", "Muestras"),
-    ("2.15", "Normativa aplicable"),
-    ("2.16", "Catálogo de artículos citados"),
-]
-
-_SECCION_KEY_RE = re.compile(r"(?m)^\s*(2\.(?:1|2|3|4|5|6|7|8|9|1[0-6]))\s+([^\n]+)")
-
-def _secciones_presentes(texto: str) -> dict:
-    presentes = {}
-    for m in _SECCION_KEY_RE.finditer(texto or ""):
-        key = m.group(1).strip()
-        titulo = (m.group(2) or "").strip()
-        presentes[key] = titulo
-    return presentes
-
-def _prompt_seccion_focalizada(key: str, titulo: str, varios_anexos: bool, hints: str) -> str:
-    if varios_anexos:
-        regla_citas = (
-            "Usa citas (Anexo X, p. N). Si no hay paginación, usa (Anexo X). "
-            "No inventes páginas/anexos. "
-        )
-    else:
-        regla_citas = (
-            "Usa citas (p. N) del documento único. Si no hay paginación, usa (Fuente: documento provisto). "
-        )
-
-    refuerzo = ""
-    if key == "2.13":
-        refuerzo = (
-            "Enumera TODOS los renglones sin agrupar ni recortar; por renglón incluye: número, "
-            "descripción, cantidad, unidad de medida, y las **especificaciones técnicas** literales relevantes. "
-            "Si hay planilla de cotización, refleja la información completa. "
-        )
-    elif key == "2.16":
-        refuerzo = (
-            "Incluye cada Art. N citado y agrega una síntesis literal de 1–2 líneas por artículo, una línea por artículo. "
-        )
-    elif key == "2.3":
-        refuerzo = "Incluye absolutamente TODOS los emails y URLs encontrados. "
-    elif key == "2.8":
-        refuerzo = "Incluye costo/valor del pliego y mecanismo de adquisición/pago si constan. "
-    elif key == "2.15":
-        refuerzo = "Lista todas las leyes/decretos/resoluciones/disposiciones con número y año. "
-
-    return (
-        f"(Generación focalizada de sección) Redacta únicamente la sección {key} {titulo}.\n"
-        f"Cero invenciones. {regla_citas}"
-        f"{refuerzo}"
-        "Mantén estilo de listas claras y una sola cita por dato.\n"
-        f"{'=== HALLAZGOS AUTOMÁTICOS ===\n' + hints if hints else ''}\n"
-        "Devuelve solo el texto final de la sección, sin encabezados extra, sin preámbulos."
-    )
-
-def _generar_seccion_faltante(key: str, titulo: str, texto_fuente: str, varios_anexos: bool, hints: str) -> str:
-    msg = [
-        {"role": "system", "content": "Redactor técnico-jurídico; cero invenciones; usa citas literales."},
-        {"role": "user", "content": f"{_prompt_seccion_focalizada(key, titulo, varios_anexos, hints)}\n\n=== CONTENIDO COMPLETO ===\n{texto_fuente}"}
-    ]
-    try:
-        r = _llamada_openai(msg, model=_pick_model("sintesis"))
-        sec = (r.choices[0].message.content or "").strip()
-        return preparar_texto_para_pdf(_limpiar_meta(_normalize_citas_salida(sec, varios_anexos)))
-    except Exception:
-        return ""
-
-def _rellenar_secciones_faltantes(reporte: str, texto_fuente: str, varios_anexos: bool, hints: str) -> str:
-    presentes = _secciones_presentes(reporte)
-    piezas = [reporte.rstrip(), ""]
-    for key, titulo in SECCIONES_OBLIGATORIAS:
-        if key not in presentes:
-            sec_text = _generar_seccion_faltante(key, titulo, texto_fuente, varios_anexos, hints)
-            if sec_text:
-                piezas.append(f"{key} {titulo}\n{sec_text}\n")
-    return re.sub(r"\n{3,}", "\n\n", "\n\n".join([p for p in piezas if p])).strip()
 
 # ==================== Normalización para PDF (sin '#') ====================
 _HDR_RE = re.compile(r"^\s{0,3}(#{1,6})\s*(.+)$")
@@ -554,16 +490,33 @@ def preparar_texto_para_pdf(markdown_text: str) -> str:
     return texto
 
 # ==================== Hints regex (recall) ====================
-_PAG_TAG_RE = re.compile(r"\[PÁGINA\s+(\d+)\]")
-def _index_paginas(s: str) -> List[Tuple[int,int]]:
-    return [(m.start(), int(m.group(1))) for m in _PAG_TAG_RE.finditer(s)]
+def _buscar_candidatos(texto: str, pats: List[str], idx_pag: List[Tuple[int,int]], limit: int) -> List[str]:
+    hits = []
+    for pat in pats:
+        for m in re.finditer(pat, texto, flags=re.I):
+            pos = m.start()
+            p = _pagina_de_indice(idx_pag, pos)
+            start = max(0, pos - 160)
+            end = min(len(texto), pos + 240)
+            snippet = texto[start:end].replace("\n", " ").strip()
+            hits.append(f"- p. {p}: {snippet}")
+            if len(hits) >= limit:
+                return hits
+    return hits[:limit]
 
-def _pagina_de_indice(indices: List[Tuple[int,int]], pos: int) -> int:
-    last = 1
-    for i, p in indices:
-        if i <= pos: last = p
-        else: break
-    return last
+def _build_regex_hints(texto: str, limit_per_field: int = None, max_chars: int = None) -> str:
+    if not texto: return ""
+    if limit_per_field is None: limit_per_field = HINTS_PER_FIELD
+    if max_chars is None: max_chars = HINTS_MAX_CHARS
+    idx_pag = _index_paginas(texto)
+    secciones = []
+    for key, meta in DETECTABLE_FIELDS.items():
+        hits = _buscar_candidatos(texto, meta["pats"], idx_pag, limit_per_field)
+        if hits:
+            secciones.append(f"[{meta['label']}]\n" + "\n".join(hits))
+        if sum(len(s) for s in secciones) > max_chars:
+            break
+    return "\n\n".join(secciones[:])
 
 # Campos detectables (ampliados)
 DETECTABLE_FIELDS: Dict[str, Dict] = {
@@ -606,54 +559,112 @@ _ART_BLOCK_RE = re.compile(
     r"(?ims)^\s*(art(?:[íi]culo|\.?)\s*\d+[a-zº°]?)\s*[-–—:]?\s*(.+?)(?=^\s*art(?:[íi]culo|\.?)\s*\d+[a-zº°]?|\Z)"
 )
 
-def _extraer_articulos_con_snippets(texto: str) -> List[Tuple[str, str, int]]:
+def _extraer_articulos_con_snippets(texto: str) -> List[Tuple[str, str, int, Optional[int]]]:
     """
-    Devuelve lista de (rótulo_articulo, snippet_200c, pagina_aprox)
+    Devuelve lista de (rótulo_articulo, snippet_200c, pagina_aprox, anexo_num)
     """
     idx = _index_paginas(texto)
+    idx_ax = _index_anexos(texto)
     res = []
     for m in _ART_BLOCK_RE.finditer(texto):
         start = m.start()
         p = _pagina_de_indice(idx, start)
+        ax = _anexo_en_pos(idx_ax, start)
         rotulo = m.group(1).strip()
         contenido = (m.group(2) or "").strip()
         snippet = contenido[:200].replace("\n", " ").strip()
-        res.append((rotulo, snippet, p))
+        res.append((rotulo, snippet, p, ax))
     if not res:
         for m in _ART_HEAD_RE.finditer(texto):
             start = m.start()
             p = _pagina_de_indice(idx, start)
+            ax = _anexo_en_pos(idx_ax, start)
             rotulo = m.group(1).strip()
             snippet = (m.group(2) or "").strip()[:200].replace("\n", " ")
-            res.append((rotulo, snippet, p))
+            res.append((rotulo, snippet, p, ax))
     return res
 
-_RENGLON_RE = re.compile(r"(?im)^\s*rengl[oó]n\s*(\d+)\s*[-–—:]?\s*(.*)$")
+# --- Renglones robustos (tablas sin la palabra "Renglón") ---
+_ROW_START_RE = re.compile(r"(?im)^(?:reng(?:l[oó]n)?\.?\s*)?(\d{1,4})\b")
+_CODE_RE = re.compile(r"\b[A-Z]{1,3}\d{5,8}\b")  # p.ej. D0330113, GB079001, E5001253
+_QTY_RE = re.compile(r"\b\d{1,6}\b")
 
-def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[str, str, int]]:
+def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[int, Optional[int], Optional[str], str, int, Optional[int]]]:
     """
-    Devuelve lista de (renglón_id, snippet_260c, pagina_aprox)
-    Toma la línea de encabezado del renglón y un poco de contexto inmediato.
+    Devuelve lista de (num_renglon, cantidad, codigo, descripcion_full, pagina_aprox, anexo_num)
+    - Reconoce filas numeradas aunque no diga "Renglón".
+    - Agrega líneas subsiguientes hasta el próximo comienzo de fila.
     """
     idx = _index_paginas(texto)
-    res = []
-    for m in _RENGLON_RE.finditer(texto):
-        start = m.start()
-        p = _pagina_de_indice(idx, start)
-        encabezado = f"Renglón {m.group(1)}"
-        tail_start = m.end()
-        tail = texto[tail_start: tail_start + 600]
-        prox = _RENGLON_RE.search(tail)
-        if prox:
-            tail = tail[:prox.start()]
-        snippet = (m.group(2) + " " + tail).strip()
-        snippet = re.sub(r"\s+", " ", snippet)[:260]
-        res.append((encabezado, snippet, p))
+    idx_ax = _index_anexos(texto)
+    res: List[Tuple[int, Optional[int], Optional[str], str, int, Optional[int]]] = []
+
+    # Trabajamos línea por línea para detectar cortes con más precisión
+    lines = texto.splitlines()
+    # guardamos posiciones acumuladas para mapear a índice absoluto (para p./anexo)
+    pos = 0
+    starts: List[Tuple[int,int]] = []  # (line_index, abs_pos)
+    for i, ln in enumerate(lines):
+        m = _ROW_START_RE.match(ln)
+        if m:
+            starts.append((i, pos))
+        pos += len(ln) + 1
+
+    if not starts:
+        return res
+
+    # Añadimos un sentinel al final
+    starts.append((len(lines), len(texto)))
+
+    for k in range(len(starts) - 1):
+        i_line, abs_pos = starts[k]
+        j_line, abs_pos_next = starts[k+1]
+        block_lines = lines[i_line:j_line]
+        block_text = " ".join([re.sub(r"\s+", " ", x).strip() for x in block_lines if x.strip()])
+
+        # número de renglón
+        mnum = _ROW_START_RE.match(lines[i_line])
+        try:
+            num_r = int(mnum.group(1)) if mnum else None
+        except Exception:
+            num_r = None
+
+        # cantidad (primer entero de la línea tras el número)
+        qty = None
+        if mnum:
+            tail = lines[i_line][mnum.end():]
+            mqty = _QTY_RE.search(tail)
+            if mqty:
+                try: qty = int(mqty.group(0))
+                except: qty = None
+
+        # código (en todo el bloque)
+        mcode = _CODE_RE.search(block_text)
+        code = mcode.group(0) if mcode else None
+
+        # descripción y especificaciones (bloque sin duplicar código/cantidad)
+        desc = block_text
+        if code:
+            desc = re.sub(re.escape(code), "", desc)
+        if qty is not None:
+            desc = re.sub(rf"\b{qty}\b", "", desc)
+        if num_r is not None:
+            desc = re.sub(rf"^\s*{num_r}\b", "", desc)
+        desc = re.sub(r"\s+", " ", desc).strip()
+
+        p = _pagina_de_indice(idx, abs_pos)
+        ax = _anexo_en_pos(idx_ax, abs_pos)
+
+        if num_r is not None:
+            res.append((num_r, qty, code, desc, p, ax))
+
+    # Ordenar por num de renglón
+    res.sort(key=lambda t: t[0])
     return res
 
 def _construir_evidencia_ampliacion(texto: str) -> Tuple[str, int, int]:
     """
-    Arma bloques de evidencia literal (con páginas) para renglones/planilla y artículos.
+    Arma bloques de evidencia literal (con páginas y anexos) para renglones/planilla y artículos.
     Devuelve (bloque_evidencia, cant_renglones, cant_articulos).
     """
     renglones = _extraer_renglones_y_especificaciones(texto)
@@ -661,13 +672,22 @@ def _construir_evidencia_ampliacion(texto: str) -> Tuple[str, int, int]:
 
     ev_parts = []
     if renglones:
-        ev_parts.append("### EVIDENCIA Renglones / Planilla (literal)\n" + "\n".join(
-            [f"- {rid}: {sn} (p. {p})" for (rid, sn, p) in renglones]
-        ))
+        ev = []
+        for (num, qty, code, desc, p, ax) in renglones:
+            cit = f"(Anexo {ax}, p. {p})" if ax else f"(p. {p})"
+            det = []
+            if qty is not None: det.append(f"cant {qty}")
+            if code: det.append(f"cód {code}")
+            det_txt = " — ".join(det) if det else ""
+            linea = f"- Renglón {num}{(' — ' + det_txt) if det_txt else ''}: {desc} {cit}"
+            ev.append(linea)
+        ev_parts.append("### EVIDENCIA Renglones / Planilla (literal)\n" + "\n".join(ev))
     if articulos:
-        ev_parts.append("### EVIDENCIA Artículos (literal)\n" + "\n".join(
-            [f"- {rot}: {sn} (p. {p})" for (rot, sn, p) in articulos]
-        ))
+        ev = []
+        for (rot, sn, p, ax) in articulos:
+            cit = f"(Anexo {ax}, p. {p})" if ax else f"(p. {p})"
+            ev.append(f"- {rot} — {sn} {cit}")
+        ev_parts.append("### EVIDENCIA Artículos (literal)\n" + "\n".join(ev))
 
     return ("\n\n".join(ev_parts) if ev_parts else ""), len(renglones), len(articulos)
 
@@ -675,11 +695,8 @@ def _conteo_en_informe(informe: str) -> Tuple[int, int]:
     return _count(r"(?im)\brengl[oó]n\s*\d+", informe), _count(r"(?im)\bart(?:[íi]culo|\.?)\s*\d+", informe)
 
 def _max_out_for_text(texto: str) -> int:
-    """
-    Ajusta el tope de salida según volumen y cantidad de renglones/artículos detectados.
-    """
     base_chars = len(texto or "")
-    r_count = _count(r"(?im)^\s*rengl[oó]n\s*\d+", texto)
+    r_count = _count(r"(?im)^\s*(?:reng(?:l[oó]n)?\.?\s*)?\d{1,4}\b", texto)
     a_count = _count(r"(?im)^\s*art(?:[íi]culo|\.?)\s*\d+", texto)
     base = MAX_COMPLETION_TOKENS_SALIDA
     if r_count >= 20 or a_count >= 20:
@@ -693,33 +710,76 @@ def _max_out_for_text(texto: str) -> int:
             base = max(base, 3500)
     return int(base)
 
+# ====== Generadores determinísticos de secciones 2.13 y 2.16 ======
+def _build_section_213(texto: str, varios_anexos: bool) -> str:
+    rows = _extraer_renglones_y_especificaciones(texto)
+    if not rows:
+        return ""
+    lines = ["2.13 Planilla de cotización y renglones:"]
+    for (num, qty, code, desc, p, ax) in rows:
+        partes = [f"Renglón {num}"]
+        if qty is not None: partes.append(f"Cantidad: {qty}")
+        if code: partes.append(f"Código: {code}")
+        partes.append(f"Descripción/Especificaciones: {desc}")
+        cita = f"(Anexo {ax}, p. {p})" if varios_anexos and ax else (f"(p. {p})" if p else "(Fuente: documento provisto)")
+        lines.append(" - " + " — ".join(partes) + f" {cita}")
+    return "\n".join(lines)
+
+def _build_section_216(texto: str, varios_anexos: bool) -> str:
+    arts = _extraer_articulos_con_snippets(texto)
+    if not arts:
+        return ""
+    lines = ["2.16 Catálogo de artículos citados:"]
+    # Normalizamos el rótulo "Art. N"
+    for (rot, sn, p, ax) in arts:
+        rot_norm = re.sub(r"(?i)art(?:[íi]culo|\.)\s*", "Art. ", rot).strip()
+        cita = f"(Anexo {ax}, p. {p})" if varios_anexos and ax else (f"(p. {p})" if p else "(Fuente: documento provisto)")
+        lines.append(f" - {rot_norm} — {sn} {cita}")
+    return "\n".join(lines)
+
+# ====== Reemplazo de secciones en el informe ======
+def _find_section_bounds(text: str, header_regex: str) -> Tuple[int,int]:
+    """Devuelve (start, end) del bloque que inicia en header_regex hasta el próximo '2.' encabezado o fin."""
+    m = re.search(header_regex, text, flags=re.I)
+    if not m:
+        return (-1, -1)
+    start = m.start()
+    nxt = re.search(r"(?im)^\s*2\.(1[0-9]|[1-9])\s", text[m.end():])
+    if not nxt:
+        return (start, len(text))
+    return (start, m.end() + nxt.start())
+
+def _replace_section(text: str, header_regex: str, replacement: str) -> str:
+    s, e = _find_section_bounds(text, header_regex)
+    if s == -1:
+        # si no existe, lo anexamos al final con un salto
+        return text.rstrip() + "\n\n" + replacement.strip() + "\n"
+    return text[:s] + replacement.strip() + "\n" + text[e:]
+
+# ==================== Ampliación / sustitución de 2.13 y 2.16 ====================
 def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
-    """
-    Reemplaza/expande 2.13 (Planilla/Renglones) y 2.16 (Artículos) si el informe quedó corto.
-    Usa evidencia literal detectada por regex para obligar a un listado exhaustivo.
-    """
     evidencia, total_ren, total_art = _construir_evidencia_ampliacion(texto_fuente)
-    if not evidencia:
+    if not evidencia and not FORCE_DETERMINISTIC_213_216:
         return informe
 
-    en_informe_ren, en_informe_art = _conteo_en_informe(informe)
-
-    debe_ampliar = (
-        (total_ren and (en_informe_ren < max(1, total_ren - 1))) or
-        (total_art and (en_informe_art < max(1, total_art - 1))) or
-        (not re.search(r"(?im)^2\.13\s+Planilla", informe)) or
-        (not re.search(r"(?im)^2\.16\s+Cat[aá]logo de art", informe))
-    )
-    if not debe_ampliar:
-        return informe
-
-    prompt = f"""
+    # 1) Intento con LLM (si hay evidencia) para expandir respetando estilo original
+    out = informe
+    if evidencia and not FORCE_DETERMINISTIC_213_216:
+        en_informe_ren, en_informe_art = _conteo_en_informe(informe)
+        debe_ampliar = (
+            (total_ren and (en_informe_ren < max(1, total_ren - 1))) or
+            (total_art and (en_informe_art < max(1, total_art - 1))) or
+            (not re.search(r"(?im)^2\.13\s+Planilla", informe)) or
+            (not re.search(r"(?im)^2\.16\s+Cat[aá]logo de art", informe))
+        )
+        if debe_ampliar:
+            prompt = f"""
 (Reforzador de cobertura) Sustituye y/o expande SOLO las secciones:
 - 2.13 Planilla de cotización y renglones
 - 2.16 Catálogo de artículos citados
 
 Requisitos:
-- 2.13: enumera TODOS los renglones detectados (una línea por renglón) con cantidades/UM/descripcion y **especificaciones técnicas** relevantes si aparecen; sin agrupar ni resumir.
+- 2.13: enumera TODOS los renglones detectados (una línea por renglón) con cantidades/UM/descripcion y **especificaciones técnicas** relevantes si aparecen; sin agrupar ni recortar.
 - 2.16: lista TODOS los artículos citados como "Art. N — síntesis literal 1–2 líneas".
 - Cita al final de cada línea: usa (Anexo X, p. N) o (p. N) según corresponda.
 - NO alteres ninguna otra sección del informe. Mantén exactamente el resto del texto tal cual.
@@ -731,49 +791,32 @@ Requisitos:
 === EVIDENCIA LITERAL PARA AMPLIAR ===
 {evidencia}
 """
-    try:
-        resp = _llamada_openai(
-            [
-                {"role": "system", "content": "Redactor técnico-jurídico. Expande solo 2.13 y 2.16 con listados exhaustivos y citas."},
-                {"role": "user", "content": prompt},
-            ],
-            model=_pick_model("sintesis"),
-            max_completion_tokens=_max_out_for_text(texto_fuente)
-        )
-        out = (resp.choices[0].message.content or "").strip()
-        out = _normalize_citas_salida(_limpiar_meta(out), varios_anexos)
-        out = re.sub(r"(?im)^\s*informe\s+original\s*$", "", out)
-        return out
-    except Exception:
-        return informe.rstrip() + "\n\nANEXO — Evidencia literal (ampliación 2.13/2.16):\n" + evidencia
+            try:
+                resp = _llamada_openai(
+                    [
+                        {"role": "system", "content": "Redactor técnico-jurídico. Expande solo 2.13 y 2.16 con listados exhaustivos y citas."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    model=_pick_model("sintesis"),
+                    max_completion_tokens=_max_out_for_text(texto_fuente)
+                )
+                out = (resp.choices[0].message.content or "").strip()
+                out = _normalize_citas_salida(_limpiar_meta(out), varios_anexos)
+            except Exception:
+                out = informe
 
-def _buscar_candidatos(texto: str, pats: List[str], idx_pag: List[Tuple[int,int]], limit: int) -> List[str]:
-    hits = []
-    for pat in pats:
-        for m in re.finditer(pat, texto, flags=re.I):
-            pos = m.start()
-            p = _pagina_de_indice(idx_pag, pos)
-            start = max(0, pos - 160)
-            end = min(len(texto), pos + 240)
-            snippet = texto[start:end].replace("\n", " ").strip()
-            hits.append(f"- p. {p}: {snippet}")
-            if len(hits) >= limit:
-                return hits
-    return hits[:limit]
+    # 2) Sustitución determinística (garantía de cobertura)
+    sec213 = _build_section_213(texto_fuente, varios_anexos)
+    if sec213:
+        out = _replace_section(out, r"(?im)^\s*2\.13\s+Planilla", sec213)
 
-def _build_regex_hints(texto: str, limit_per_field: int = None, max_chars: int = None) -> str:
-    if not texto: return ""
-    if limit_per_field is None: limit_per_field = HINTS_PER_FIELD
-    if max_chars is None: max_chars = HINTS_MAX_CHARS
-    idx_pag = _index_paginas(texto)
-    secciones = []
-    for key, meta in DETECTABLE_FIELDS.items():
-        hits = _buscar_candidatos(texto, meta["pats"], idx_pag, limit_per_field)
-        if hits:
-            secciones.append(f"[{meta['label']}]\n" + "\n".join(hits))
-        if sum(len(s) for s in secciones) > max_chars:
-            break
-    return "\n\n".join(secciones[:])
+    sec216 = _build_section_216(texto_fuente, varios_anexos)
+    if sec216:
+        out = _replace_section(out, r"(?im)^\s*2\.16\s+Cat[aá]logo de art", sec216)
+
+    # Limpiezas finales
+    out = re.sub(r"(?im)^\s*informe\s+original\s*$", "", out)
+    return out
 
 # ==================== Llamada a OpenAI robusta ====================
 def _max_tokens_salida_adaptivo(longitud_chars: int) -> int:
@@ -787,10 +830,6 @@ def _max_tokens_salida_adaptivo(longitud_chars: int) -> int:
     return base
 
 def _pick_model(stage_default: str) -> str:
-    """
-    stage_default: 'analisis' | 'notas' | 'sintesis'
-    Aplica FAST_FORCE_MODEL si corresponde.
-    """
     if ANALISIS_MODO == "fast" and FAST_FORCE_MODEL:
         return FAST_FORCE_MODEL
     if stage_default == "notas":
@@ -870,14 +909,6 @@ def _generar_notas_concurrente(partes: List[str]) -> List[str]:
 
 # ==================== Segundo pase (opcional y focalizado) ====================
 _NOESP_RE = re.compile(r"(?i)\bNO ESPECIFICADO\b")
-def _posibles_paginas_para(clave: str, texto: str) -> List[int]:
-    idx = _index_paginas(texto)
-    pags = set()
-    for pat in DETECTABLE_FIELDS.get(clave, {}).get("pats", []):
-        for m in re.finditer(pat, texto, flags=re.I):
-            pos = m.start()
-            pags.add(_pagina_de_indice(idx, pos))
-    return sorted(pags)
 
 def _segundo_pase_si_falta(original_report: str, texto_fuente: str, varios_anexos: bool) -> str:
     if not ENABLE_SECOND_PASS_COMPLETION:
@@ -954,8 +985,6 @@ def analizar_con_openai(texto: str) -> str:
             bruto = resp.choices[0].message.content.strip()
             bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
             bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
-            # Completar secciones ausentes y luego ampliar 2.13/2.16
-            bruto = _rellenar_secciones_faltantes(bruto, texto, varios_anexos, hints)
             bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
             out = preparar_texto_para_pdf(bruto)
             _log_tiempo("analizar_single_pass" + ("_multi" if varios_anexos else ""), t0)
@@ -980,7 +1009,6 @@ def analizar_con_openai(texto: str) -> str:
             bruto = resp.choices[0].message.content.strip()
             bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
             bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
-            bruto = _rellenar_secciones_faltantes(bruto, texto, varios_anexos, hints)
             bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
             out = preparar_texto_para_pdf(bruto)
             _log_tiempo("analizar_single_pass_len1", t0)
@@ -1014,7 +1042,6 @@ def analizar_con_openai(texto: str) -> str:
         bruto = (resp_final.choices[0].message.content or "").strip()
         bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
         bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
-        bruto = _rellenar_secciones_faltantes(bruto, texto, varios_anexos, hints)
         bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
         out = preparar_texto_para_pdf(bruto)
         _log_tiempo("sintesis_final", t0_sint)
