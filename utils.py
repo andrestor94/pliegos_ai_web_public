@@ -3,6 +3,7 @@ import os
 import re
 import base64
 import mimetypes
+import time
 from datetime import datetime
 from typing import List
 
@@ -22,10 +23,10 @@ try:
 except Exception:
     docx = None
 
+# ========================= Carga .env =========================
 load_dotenv()
 
 # ========================= OpenAI client =========================
-# Timeout defensivo para evitar llamadas que queden colgadas
 OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "90"))
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
 
@@ -33,16 +34,28 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
 MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-4o-mini")
 VISION_MODEL   = os.getenv("OPENAI_MODEL_VISION", "gpt-4o-mini")
 
-# Heurísticas
-MAX_SINGLE_PASS_CHARS = int(os.getenv("MAX_SINGLE_PASS_CHARS", "55000"))
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "14000"))  # tamaño razonable en chars
+# ========================= Heurísticas =========================
+# Subimos umbral y chunk para reducir cantidad de llamadas al modelo
+MAX_SINGLE_PASS_CHARS = int(os.getenv("MAX_SINGLE_PASS_CHARS", "120000"))  # antes 55k
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "24000"))                         # antes 14k
 MAX_COMPLETION_TOKENS_SALIDA = int(os.getenv("MAX_COMPLETION_TOKENS_SALIDA", "3500"))
 TEMPERATURE_ANALISIS = os.getenv("TEMPERATURE_ANALISIS", "").strip()
-# si está vacío, no la mandamos (evita error en modelos que no soportan temperature)
+ANALISIS_MODO = os.getenv("ANALISIS_MODO", "").lower().strip()  # "fast" opcional
 
-# OCR
+# ========================= OCR =========================
 VISION_MAX_PAGES = int(os.getenv("VISION_MAX_PAGES", "8"))
-VISION_DPI = int(os.getenv("VISION_DPI", "170"))
+VISION_DPI = int(os.getenv("VISION_DPI", "150"))  # bajamos DPI por defecto (era 170)
+OCR_TEXT_MIN_CHARS = int(os.getenv("OCR_TEXT_MIN_CHARS", "120"))  # si la página tiene menos que esto ⇒ OCR
+OCR_CONCURRENCY = int(os.getenv("OCR_CONCURRENCY", "4"))
+
+# ========================= Perf helpers =========================
+def _t(): return time.perf_counter()
+def _log_tiempo(etiqueta, t0):
+    try:
+        dt = time.perf_counter() - t0
+        print(f"[PERF] {etiqueta}: {dt:0.2f}s")
+    except Exception:
+        pass
 
 # ==================== Utilidades de OCR / Raster ====================
 def _rasterizar_pagina(page, dpi=VISION_DPI) -> bytes:
@@ -75,25 +88,48 @@ def _ocr_openai_imagen_b64(b64_png: str) -> str:
     except Exception as e:
         return f"[OCR-ERROR] {e}"
 
-def _ocr_con_vision(doc: fitz.Document, max_pages: int = VISION_MAX_PAGES) -> str:
+# --------- OCR selectivo y paralelo ----------
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def _ocr_pagina_png_bytes(png_bytes: bytes, idx: int) -> str:
+    b64 = base64.b64encode(png_bytes).decode("utf-8")
+    txt = _ocr_openai_imagen_b64(b64)
+    return f"[PÁGINA {idx+1}]\n{txt}" if txt else f"[PÁGINA {idx+1}] (sin texto OCR)"
+
+def _ocr_selectivo_por_pagina(doc: fitz.Document, max_pages: int) -> str:
     """
-    OCR por OpenAI Vision (primeras N páginas del PDF). Devuelve texto literal por página.
+    Solo hace OCR en páginas con muy poco texto nativo. Corre en paralelo hasta OCR_CONCURRENCY.
+    Si la página ya tiene suficiente texto nativo, lo usa tal cual (sin OCR).
     """
-    textos = []
     n = len(doc)
     to_process = min(n, max_pages)
-    for i in range(to_process):
-        page = doc.load_page(i)
-        png_bytes = _rasterizar_pagina(page)
-        b64 = base64.b64encode(png_bytes).decode("utf-8")
-        content = _ocr_openai_imagen_b64(b64)
-        if content:
-            textos.append(f"[PÁGINA {i+1}]\n{content}")
-        else:
-            textos.append(f"[PÁGINA {i+1}] (sin texto OCR)")
+    resultados = [""] * to_process
+    tareas = []
+
+    with ThreadPoolExecutor(max_workers=OCR_CONCURRENCY) as ex:
+        for i in range(to_process):
+            p = doc.load_page(i)
+            txt_nat = (p.get_text() or "").strip()
+            if len(txt_nat) >= OCR_TEXT_MIN_CHARS:
+                resultados[i] = f"[PÁGINA {i+1}]\n{txt_nat}"
+            else:
+                png_bytes = _rasterizar_pagina(p)
+                tareas.append(ex.submit(_ocr_pagina_png_bytes, png_bytes, i))
+
+        for fut in as_completed(tareas):
+            try:
+                s = fut.result()
+                m = re.search(r"\[PÁGINA\s+(\d+)\]", s)
+                if m:
+                    idx = int(m.group(1)) - 1
+                    if 0 <= idx < to_process:
+                        resultados[idx] = s
+            except Exception:
+                pass
+
     if n > to_process:
-        textos.append(f"\n[AVISO] Se procesaron {to_process}/{n} páginas por OCR (ajustable con VISION_MAX_PAGES).")
-    return "\n\n".join(textos).strip()
+        resultados.append(f"\n[AVISO] Se procesaron {to_process}/{n} páginas por OCR selectivo.")
+    return "\n\n".join([r for r in resultados if r]).strip()
 
 # ==================== Extracción por tipo de archivo ====================
 def _leer_todo(file) -> bytes:
@@ -120,30 +156,38 @@ def _mime_guess(file) -> str:
 def extraer_texto_de_pdf(file) -> str:
     """
     1) Texto nativo con PyMuPDF.
-    2) Si es muy poco (PDF escaneado), OCR con Vision para primeras N páginas.
+    2) Si es muy poco (PDF escaneado), OCR selectivo por página (y paralelo) para las primeras N.
     """
+    t0 = _t()
     raw = _leer_todo(file)
     if not raw:
+        _log_tiempo("extraccion_pdf_sin_bytes", t0)
         return ""
     try:
         with fitz.open(stream=raw, filetype="pdf") as doc:
             nativo = []
             for p in doc:
-                # get_text() suele respetar rotaciones; extrae texto si es nativo
                 t = p.get_text() or ""
                 if t.strip():
                     nativo.append(t)
             plain = "\n".join(nativo).strip()
-            # Heurística simple de “poco texto” => probablemente escaneado
             if len(plain) < 500:
-                ocr_text = _ocr_con_vision(doc)
-                return ocr_text if len(ocr_text) > len(plain) else plain
+                ocr_t0 = _t()
+                ocr_text = _ocr_selectivo_por_pagina(doc, VISION_MAX_PAGES)
+                _log_tiempo("ocr_selectivo", ocr_t0)
+                out = ocr_text if len(ocr_text) > len(plain) else plain
+                _log_tiempo("extraccion_pdf_total", t0)
+                return out
+            _log_tiempo("extraccion_pdf_total", t0)
             return plain
     except Exception:
         # Si no abre como PDF, intentá decodificar como texto
         try:
-            return raw.decode("utf-8", errors="ignore")
+            out = raw.decode("utf-8", errors="ignore")
+            _log_tiempo("extraccion_pdf_decode", t0)
+            return out
         except Exception:
+            _log_tiempo("extraccion_pdf_error", t0)
             return ""
 
 def extraer_texto_de_docx(file) -> str:
@@ -151,61 +195,68 @@ def extraer_texto_de_docx(file) -> str:
     Extrae texto de DOCX (párrafos + tablas).
     Si python-docx no está instalado, intenta decode plano.
     """
+    t0 = _t()
     raw = _leer_todo(file)
     if not raw:
+        _log_tiempo("extraccion_docx_sin_bytes", t0)
         return ""
     if docx is None:
         try:
-            return raw.decode("utf-8", errors="ignore")
+            out = raw.decode("utf-8", errors="ignore")
+            _log_tiempo("extraccion_docx_decode", t0)
+            return out
         except Exception:
+            _log_tiempo("extraccion_docx_error", t0)
             return ""
     try:
         document = docx.Document(io.BytesIO(raw))
         partes: List[str] = []
-        # Párrafos
         for p in document.paragraphs:
             txt = (p.text or "").strip()
             if txt:
                 partes.append(txt)
-        # Tablas -> líneas tipo "col1 | col2 | col3"
         for tbl in document.tables:
             for row in tbl.rows:
                 celdas = []
                 for cell in row.cells:
                     celdas.append((cell.text or "").strip())
                 partes.append(" | ".join(celdas))
-        return "\n".join(partes).strip()
+        out = "\n".join(partes).strip()
+        _log_tiempo("extraccion_docx_total", t0)
+        return out
     except Exception:
         try:
-            return raw.decode("utf-8", errors="ignore")
+            out = raw.decode("utf-8", errors="ignore")
+            _log_tiempo("extraccion_docx_decode_fallback", t0)
+            return out
         except Exception:
+            _log_tiempo("extraccion_docx_error", t0)
             return ""
 
 def extraer_texto_de_imagen(file) -> str:
     """
     OCR de imagen (png/jpg/jpeg/webp) con Vision.
     """
+    t0 = _t()
     raw = _leer_todo(file)
     if not raw:
+        _log_tiempo("extraccion_imagen_sin_bytes", t0)
         return ""
-    # Si no es PNG, convertimos a PNG en memoria usando PyMuPDF si es posible
-    # PyMuPDF permite abrir imágenes como docs para rasterizar a PNG
     b64 = None
     try:
-        # Intento 1: abrir como image-doc y re-exportar a PNG
         img_doc = fitz.open(stream=raw, filetype=_ext_de_archivo(file).lstrip(".") or None)
         page = img_doc.load_page(0)
         png = page.get_pixmap(alpha=False).tobytes("png")
         b64 = base64.b64encode(png).decode("utf-8")
     except Exception:
-        # Intento 2: usar bytes tal cual si ya es PNG
         ext = _ext_de_archivo(file)
         if ext == ".png":
             b64 = base64.b64encode(raw).decode("utf-8")
         else:
-            # Fallback: enviamos como png aunque no sea ideal
             b64 = base64.b64encode(raw).decode("utf-8")
-    return _ocr_openai_imagen_b64(b64)
+    out = _ocr_openai_imagen_b64(b64)
+    _log_tiempo("extraccion_imagen_ocr", t0)
+    return out
 
 def extraer_texto_universal(file) -> str:
     """
@@ -216,35 +267,40 @@ def extraer_texto_universal(file) -> str:
     - TXT / RTF básico
     - Otros → intenta decode UTF-8
     """
+    t0 = _t()
     ext = _ext_de_archivo(file)
     mime = _mime_guess(file)
 
-    # PDF
     if ext == ".pdf" or (mime == "application/pdf"):
-        return extraer_texto_de_pdf(file)
+        out = extraer_texto_de_pdf(file)
+        _log_tiempo("extraer_texto_universal_pdf", t0)
+        return out
 
-    # DOCX
     if ext == ".docx" or (mime in ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"]):
-        return extraer_texto_de_docx(file)
+        out = extraer_texto_de_docx(file)
+        _log_tiempo("extraer_texto_universal_docx", t0)
+        return out
 
-    # Imágenes comunes
-    if ext in [".png", ".jpg", ".jpeg", ".webp"] or mime.startswith("image/"):
-        return extraer_texto_de_imagen(file)
+    if ext in [".png", ".jpg", ".jpeg", ".webp"] or (mime.startswith("image/") if mime else False):
+        out = extraer_texto_de_imagen(file)
+        _log_tiempo("extraer_texto_universal_imagen", t0)
+        return out
 
-    # TXT / RTF (muy básico: removemos marcas RTF simples)
     raw = _leer_todo(file)
     if not raw:
+        _log_tiempo("extraer_texto_universal_sin_bytes", t0)
         return ""
     try:
         text = raw.decode("utf-8", errors="ignore")
     except Exception:
         text = ""
     if ext == ".rtf":
-        # Limpieza simple de RTF — no es un parser completo
         text = re.sub(r"{\\rtf1.*?\\viewkind4\\uc1", "", text, flags=re.S)
         text = re.sub(r"\\[a-z]+-?\d* ?", "", text)
         text = text.replace("{", "").replace("}", "")
-    return (text or "").strip()
+    out = (text or "").strip()
+    _log_tiempo("extraer_texto_universal_texto_plano", t0)
+    return out
 
 # ==================== Prompts y limpieza ====================
 SINONIMOS_CANONICOS = r"""
@@ -328,6 +384,14 @@ def _limpiar_meta(texto: str) -> str:
 def _particionar(texto: str, max_chars: int) -> list[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
+def _limpieza_basica_preanalisis(s: str) -> str:
+    # Quita headers/pies repetidos por número de página, líneas separadoras, espacios sobrantes
+    s = re.sub(r"\n?P[aá]gina\s+\d+\s+de\s+\d+\s*\n", "\n", s, flags=re.I)
+    s = re.sub(r"\n[-_]{3,}\n", "\n", s)
+    s = re.sub(r"[ \t]+\n", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
 # ==================== Normalización para PDF (sin '#') ====================
 _HDR_RE = re.compile(r"^\s{0,3}(#{1,6})\s*(.+)$")
 _BULLET_RE = re.compile(r"^\s*[-*•]\s+")
@@ -344,10 +408,10 @@ def _title_case(s: str) -> str:
 def preparar_texto_para_pdf(markdown_text: str) -> str:
     """
     Convierte Markdown a texto plano prolijo para tu PDF:
-    - Quita '#' de encabezados y los pasa a Title Case (activando estilo en tu plantilla).
+    - Quita '#' de encabezados y los pasa a Title Case.
     - Convierte bullets a '•'.
     - Mantiene listas numeradas.
-    - Elimina líneas separadoras de tablas (---|---).
+    - Elimina separadores de tablas.
     - Quita fences de código.
     - Convierte [texto](url) → 'texto (url)'.
     - Quita marcas ** **, * *, __ __ y _ _ (mantiene el contenido).
@@ -355,37 +419,21 @@ def preparar_texto_para_pdf(markdown_text: str) -> str:
     out_lines: List[str] = []
     for raw_ln in (markdown_text or "").splitlines():
         ln = raw_ln.rstrip()
-
-        # Code fences → eliminar línea
         if _CODE_FENCE_RE.match(ln):
             continue
-
-        # Encabezados '#'
         m = _HDR_RE.match(ln)
         if m:
             titulo = _title_case(m.group(2).strip(": ").strip())
             out_lines.append(titulo)
             continue
-
-        # Remover separadores de tablas markdown
         if _TABLE_SEP_RE.match(ln):
             continue
-
-        # Bullets → '• '
         if _BULLET_RE.match(ln):
             ln = _BULLET_RE.sub("• ", ln)
-
-        # Links [t](u) → t (u)
         ln = _LINK_RE.sub(lambda mm: f"{mm.group(1)} ({mm.group(2)})", ln)
-
-        # Quitar marcas de negrita/cursiva (dejar solo texto)
         ln = _BOLD_ITALIC_RE.sub(lambda mm: mm.group(2), ln)
-
         out_lines.append(ln)
-
     texto = "\n".join(out_lines)
-
-    # Compactar saltos múltiples
     texto = re.sub(r"\n{3,}", "\n\n", texto).strip()
     return texto
 
@@ -394,16 +442,18 @@ def _llamada_openai(messages, model=MODEL_ANALISIS, temperature_str=TEMPERATURE_
                     max_completion_tokens=MAX_COMPLETION_TOKENS_SALIDA, retries=2, fallback_model="gpt-4o-mini"):
     """
     - Usa max_completion_tokens (no max_tokens).
-    - Si temperature_str == "" no manda 'temperature' (evita error en modelos que no lo soportan).
+    - Temperatura configurable. Si ANALISIS_MODO=fast, fuerza 0 (si no se definió otra cosa).
     - Reintenta si choices vienen vacías o content vacío.
-    - Fallback de modelo si el principal falla en el primer intento.
+    - Fallback de modelo si el principal falla.
     """
     def _build_kwargs(mdl):
         kw = dict(model=mdl, messages=messages, max_completion_tokens=max_completion_tokens)
-        if temperature_str != "":
+        if ANALISIS_MODO == "fast":
+            # prioridad a velocidad/consistencia
+            kw["temperature"] = 0
+        elif temperature_str != "":
             try:
-                temp_val = float(temperature_str)
-                kw["temperature"] = temp_val
+                kw["temperature"] = float(temperature_str)
             except:
                 pass
         return kw
@@ -426,7 +476,7 @@ def _llamada_openai(messages, model=MODEL_ANALISIS, temperature_str=TEMPERATURE_
             except Exception as e:
                 last_error = e
                 if attempt < retries:
-                    import time; time.sleep(1.2 * (attempt + 1))
+                    time.sleep(1.2 * (attempt + 1))
                 else:
                     break
     raise RuntimeError(str(last_error) if last_error else "Fallo desconocido en _llamada_openai")
@@ -441,12 +491,13 @@ def analizar_con_openai(texto: str) -> str:
     if not texto or not texto.strip():
         return "No se recibió contenido para analizar."
 
-    # Detectar si hay varios anexos
+    # Detectar multi-anexo
     separadores = ["===ANEXO===", "=== ANEXO ===", "### ANEXO", "## ANEXO", "\nAnexo "]
     varios_anexos = any(sep.lower() in texto.lower() for sep in separadores)
 
     # Pasada única
     if len(texto) <= MAX_SINGLE_PASS_CHARS and not varios_anexos:
+        t0 = _t()
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
             {"role": "user", "content": f"{CRAFT_PROMPT_MAESTRO}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve ÚNICAMENTE el informe final (texto), sin preámbulos."}
@@ -455,7 +506,9 @@ def analizar_con_openai(texto: str) -> str:
             resp = _llamada_openai(messages)
             bruto = resp.choices[0].message.content.strip()
             limpio = _limpiar_meta(bruto)
-            return preparar_texto_para_pdf(limpio)
+            out = preparar_texto_para_pdf(limpio)
+            _log_tiempo("analizar_single_pass", t0)
+            return out
         except Exception as e:
             return f"⚠️ Error al generar el análisis: {e}"
 
@@ -464,6 +517,7 @@ def analizar_con_openai(texto: str) -> str:
     notas = []
 
     # A) Notas intermedias
+    t0_notas = _t()
     for i, parte in enumerate(partes, 1):
         msg = [
             {"role": "system", "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
@@ -474,10 +528,12 @@ def analizar_con_openai(texto: str) -> str:
             notas.append(r.choices[0].message.content.strip())
         except Exception as e:
             notas.append(f"[ERROR] No se pudieron generar notas de la parte {i}: {e}")
+    _log_tiempo(f"notas_intermedias_{len(partes)}_partes", t0_notas)
 
     notas_integradas = "\n".join(notas)
 
     # B) Síntesis final
+    t0_sint = _t()
     messages_final = [
         {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
         {"role": "user", "content": f"""{CRAFT_PROMPT_MAESTRO}
@@ -490,12 +546,13 @@ def analizar_con_openai(texto: str) -> str:
 👉 Devuelve SOLO el informe final en texto.
 """}
     ]
-
     try:
         resp_final = _llamada_openai(messages_final, max_completion_tokens=MAX_COMPLETION_TOKENS_SALIDA)
         bruto = resp_final.choices[0].message.content.strip()
         limpio = _limpiar_meta(bruto)
-        return preparar_texto_para_pdf(limpio)
+        out = preparar_texto_para_pdf(limpio)
+        _log_tiempo("sintesis_final", t0_sint)
+        return out
     except Exception as e:
         return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias (limpias):\n{_limpiar_meta(notas_integradas)}"
 
@@ -508,28 +565,30 @@ def analizar_anexos(files: list) -> str:
     if not files:
         return "No se recibieron anexos para analizar."
 
+    t0 = _t()
     bloques = []
     for idx, f in enumerate(files, 1):
         try:
             texto = extraer_texto_universal(f)
         except Exception:
-            # Fallback de lectura plana
             try:
                 f.file.seek(0)
                 texto = f.file.read().decode("utf-8", errors="ignore")
             except Exception:
                 texto = ""
-
-        nombre = getattr(f, "filename", f"anexo_{idx}")
-        if not nombre:
-            nombre = f"anexo_{idx}"
+        nombre = getattr(f, "filename", f"anexo_{idx}") or f"anexo_{idx}"
         bloques.append(f"=== ANEXO {idx:02d}: {nombre} ===\n{texto}\n")
 
     contenido_unico = "\n".join(bloques).strip()
     if len(contenido_unico) < 100:
+        _log_tiempo("anexos_armado_vacio", t0)
         return ("No se pudo extraer texto útil de los anexos. "
                 "Verificá si los documentos están escaneados y elevá VISION_MAX_PAGES/DPI, "
                 "o subí archivos en texto nativo.")
+
+    # Pre-limpieza reduce tokens → menos latencia/costo
+    contenido_unico = _limpieza_basica_preanalisis(contenido_unico)
+    _log_tiempo("anexos_armado_y_limpieza", t0)
 
     return analizar_con_openai(contenido_unico)
 
