@@ -32,7 +32,6 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
 MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-4o-mini")
 VISION_MODEL   = os.getenv("OPENAI_MODEL_VISION", "gpt-4o-mini")
 
-# Subimos umbral/fragmento para reducir llamadas al modelo
 MAX_SINGLE_PASS_CHARS = int(os.getenv("MAX_SINGLE_PASS_CHARS", "120000"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "24000"))
 MAX_COMPLETION_TOKENS_SALIDA = int(os.getenv("MAX_COMPLETION_TOKENS_SALIDA", "3500"))
@@ -146,11 +145,9 @@ def _mime_guess(file) -> str:
     return m or ""
 
 def _texto_nativo_etiquetado(doc: fitz.Document) -> str:
-    """Devuelve texto nativo etiquetado por página: [PÁGINA N] ..."""
     partes = []
     for i, p in enumerate(doc, 1):
         t = (p.get_text() or "").strip()
-        # aunque esté vacío, dejamos constancia de la página
         if t:
             partes.append(f"[PÁGINA {i}]\n{t}")
         else:
@@ -158,17 +155,12 @@ def _texto_nativo_etiquetado(doc: fitz.Document) -> str:
     return "\n\n".join(partes).strip()
 
 def extraer_texto_de_pdf(file) -> str:
-    """
-    1) Si hay poco texto nativo total ⇒ OCR selectivo por página (paralelo).
-    2) Si hay buen texto nativo ⇒ devolver etiquetado por página (para citas correctas).
-    """
     t0 = _t()
     raw = _leer_todo(file)
     if not raw:
         _log_tiempo("extraccion_pdf_sin_bytes", t0); return ""
     try:
         with fitz.open(stream=raw, filetype="pdf") as doc:
-            # Conteo real de texto nativo
             suma = 0
             for p in doc:
                 suma += len((p.get_text() or "").strip())
@@ -178,7 +170,6 @@ def extraer_texto_de_pdf(file) -> str:
                 _log_tiempo("ocr_selectivo", ocr_t0)
                 _log_tiempo("extraccion_pdf_total", t0)
                 return ocr_text
-            # Texto nativo suficiente → etiquetado por página si está activo
             out = _texto_nativo_etiquetado(doc) if PAGINAR_TEXTO_NATIVO else "\n".join([p.get_text() or "" for p in doc])
             _log_tiempo("extraccion_pdf_total", t0)
             return out.strip()
@@ -297,7 +288,7 @@ Reglas clave:
 - No mencionar "C.R.A.F.T." ni títulos de estas instrucciones.
 - Cada dato crítico debe terminar con su fuente entre paréntesis, según las Reglas de Citas.
 - Cero invenciones; si falta o es ambiguo: escribir "NO ESPECIFICADO" y mover la duda a "Consultas sugeridas".
-- Cobertura completa del ciclo (oferta → ejecución), con normativa citada.
+- Cobertura completa (oferta → ejecución), con normativa citada.
 - Deduplicar, fusionar, no repetir; un único informe integrado.
 - Prohibido meta texto tipo "parte X de Y" o "revise el resto".
 - No imprimir etiquetas internas como [PÁGINA N].
@@ -333,18 +324,23 @@ Estilo:
 """
 
 def _prompt_maestro(varios_anexos: bool) -> str:
+    """
+    Reglas de citas según contexto + mapeo explícito de [PÁGINA N] -> (p. N)
+    """
     if varios_anexos:
         regla_citas = (
             "Reglas de Citas:\n"
-            "- Usar (Anexo X, p. N) al final de cada línea con dato.\n"
+            "- Al final de cada línea con dato, usar (Anexo X, p. N).\n"
+            "- Para deducir p. N, utiliza la etiqueta [PÁGINA N] más cercana al dato dentro del texto provisto.\n"
             "- Si NO consta paginación pero sí el anexo, usar (Anexo X).\n"
             "- Si el campo es NO ESPECIFICADO, usar (Fuente: documento provisto) (no inventar página/anexo).\n"
         )
     else:
         regla_citas = (
             "Reglas de Citas:\n"
-            "- Documento único: usar (p. N) al final de cada línea con dato.\n"
-            "- Prohibido escribir 'Anexo I' u otros anexos.\n"
+            "- Documento único: al final de cada línea con dato, usar (p. N).\n"
+            "- Para deducir p. N, utiliza la etiqueta [PÁGINA N] más cercana al dato dentro del texto provisto.\n"
+            "- Prohibido escribir 'Anexo I' u otros anexos en las citas.\n"
             "- Si el campo es NO ESPECIFICADO, usar (Fuente: documento provisto) (no inventar página).\n"
         )
     return f"{_BASE_PROMPT_MAESTRO}\n{regla_citas}\nGuía de sinónimos:\n{SINONIMOS_CANONICOS}"
@@ -352,7 +348,8 @@ def _prompt_maestro(varios_anexos: bool) -> str:
 CRAFT_PROMPT_NOTAS = r"""
 Genera NOTAS INTERMEDIAS en bullets, ultra concisas, con cita al final de cada bullet.
 - SOLO bullets (sin encabezados, sin "parte x/y", sin conclusiones).
-- Etiqueta tema + cita en paréntesis. Si no hay paginación/ID: usa (Fuente: documento provisto).
+- Etiqueta tema + cita en paréntesis.
+- Si NO hay paginación: (Fuente: documento provisto).
 - Usa la Guía de sinónimos y conserva la terminología encontrada.
 Ejemplos:
 - [IDENTIFICACION] Organismo: ... (p. 1)
@@ -382,6 +379,23 @@ def _particionar(texto: str, max_chars: int) -> list[str]:
 _ANEXO_RE = re.compile(r"===\s*ANEXO\s+\d+", re.I)
 def _contar_anexos(s: str) -> int:
     return len(_ANEXO_RE.findall(s or ""))
+
+# =============== Post-procesamiento de citas para documento único ===============
+_CITA_ANEXO_RE = re.compile(r"\(Anexo\s+([IVXLCDM\d]+)(?:,\s*p\.\s*(\d+))?\)", re.I)
+def _normalize_citas_salida(texto: str, varios_anexos: bool) -> str:
+    """
+    Si es documento único:
+      - (Anexo I, p. N) -> (p. N)
+      - (Anexo I) -> (Fuente: documento provisto)
+    """
+    if varios_anexos:
+        return texto
+    def repl(m):
+        pag = m.group(2)
+        if pag:
+            return f"(p. {pag})"
+        return "(Fuente: documento provisto)"
+    return _CITA_ANEXO_RE.sub(repl, texto)
 
 # ==================== Normalización para PDF (sin '#') ====================
 _HDR_RE = re.compile(r"^\s{0,3}(#{1,6})\s*(.+)$")
@@ -413,10 +427,26 @@ def preparar_texto_para_pdf(markdown_text: str) -> str:
     return texto
 
 # ==================== Llamada a OpenAI robusta ====================
+def _max_tokens_salida_adaptivo(longitud_chars: int) -> int:
+    """
+    En modo fast, reduce salida para bajar latencia:
+      - < 15k chars: 2200
+      - < 40k chars: 2800
+      - resto: MAX_COMPLETION_TOKENS_SALIDA
+    """
+    base = MAX_COMPLETION_TOKENS_SALIDA
+    if ANALISIS_MODO != "fast":
+        return base
+    if longitud_chars < 15000:
+        return min(base, 2200)
+    if longitud_chars < 40000:
+        return min(base, 2800)
+    return base
+
 def _llamada_openai(messages, model=MODEL_ANALISIS, temperature_str=TEMPERATURE_ANALISIS,
-                    max_completion_tokens=MAX_COMPLETION_TOKENS_SALIDA, retries=2, fallback_model="gpt-4o-mini"):
+                    max_completion_tokens=None, retries=2, fallback_model="gpt-4o-mini"):
     def _build_kwargs(mdl):
-        kw = dict(model=mdl, messages=messages, max_completion_tokens=max_completion_tokens)
+        kw = dict(model=mdl, messages=messages, max_completion_tokens=max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA)
         if ANALISIS_MODO == "fast":
             kw["temperature"] = 0
         elif temperature_str != "":
@@ -456,21 +486,22 @@ def analizar_con_openai(texto: str) -> str:
 
     n_anexos = _contar_anexos(texto)
     varios_anexos = n_anexos >= 2
-
     prompt_maestro = _prompt_maestro(varios_anexos)
 
     # Pasada única (rápida)
     if len(texto) <= MAX_SINGLE_PASS_CHARS and not varios_anexos:
         t0 = _t()
+        max_out = _max_tokens_salida_adaptivo(len(texto))
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
             {"role": "user", "content": f"{prompt_maestro}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
         ]
         try:
-            resp = _llamada_openai(messages)
+            resp = _llamada_openai(messages, max_completion_tokens=max_out)
             bruto = resp.choices[0].message.content.strip()
             limpio = _limpiar_meta(bruto)
-            out = preparar_texto_para_pdf(limpio)
+            normalizado = _normalize_citas_salida(limpio, varios_anexos)
+            out = preparar_texto_para_pdf(normalizado)
             _log_tiempo("analizar_single_pass", t0)
             return out
         except Exception as e:
@@ -480,15 +511,17 @@ def analizar_con_openai(texto: str) -> str:
     partes = _particionar(texto, CHUNK_SIZE)
     if len(partes) == 1:
         t0 = _t()
+        max_out = _max_tokens_salida_adaptivo(len(texto))
         messages = [
             {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
             {"role": "user", "content": f"{prompt_maestro}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
         ]
         try:
-            resp = _llamada_openai(messages)
+            resp = _llamada_openai(messages, max_completion_tokens=max_out)
             bruto = resp.choices[0].message.content.strip()
             limpio = _limpiar_meta(bruto)
-            out = preparar_texto_para_pdf(limpio)
+            normalizado = _normalize_citas_salida(limpio, varios_anexos)
+            out = preparar_texto_para_pdf(normalizado)
             _log_tiempo("analizar_single_pass_len1", t0)
             return out
         except Exception as e:
@@ -512,6 +545,7 @@ def analizar_con_openai(texto: str) -> str:
     notas_integradas = "\n".join(notas)
 
     t0_sint = _t()
+    max_out = _max_tokens_salida_adaptivo(len(texto))
     messages_final = [
         {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
         {"role": "user", "content": f"""{prompt_maestro}
@@ -525,10 +559,11 @@ def analizar_con_openai(texto: str) -> str:
 """}
     ]
     try:
-        resp_final = _llamada_openai(messages_final, max_completion_tokens=MAX_COMPLETION_TOKENS_SALIDA)
+        resp_final = _llamada_openai(messages_final, max_completion_tokens=max_out)
         bruto = resp_final.choices[0].message.content.strip()
         limpio = _limpiar_meta(bruto)
-        out = preparar_texto_para_pdf(limpio)
+        normalizado = _normalize_citas_salida(limpio, varios_anexos)
+        out = preparar_texto_para_pdf(normalizado)
         _log_tiempo("sintesis_final", t0_sint)
         return out
     except Exception as e:
@@ -635,7 +670,6 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
     fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
     c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_actual}")
 
-    # Normalización para evitar '#', etc.
     resumen = preparar_texto_para_pdf((resumen or "").replace("**", ""))
 
     c.setFont("Helvetica", 11)
