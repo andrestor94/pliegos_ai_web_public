@@ -914,7 +914,7 @@ async def chat_enviar_archivos(
             # Continuamos; se podría informar un warning al front.
 
     # 🔔 Push en tiempo real para el receptor
-    await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=(texto or "[Adjuntos]"))
+    await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=(texto o "[Adjuntos]"))
     return JSONResponse({"ok": True, "id": msg_id})
 
 # ---- Compat: enviar mensaje con 1 archivo (reusa la lógica nueva) ---------
@@ -1060,133 +1060,36 @@ async def ver_auditoria(request: Request):
         "logs": logs
     })
 
-# ================== Auditoría (eliminar registro individual) ==================
+# ================== Auditoría (operaciones de borrado DESHABILITADAS) ==================
 @app.post("/auditoria/eliminar", dependencies=[Depends(require_admin)])
-async def auditoria_eliminar(request: Request):
+async def auditoria_eliminar_disabled(request: Request):
     """
-    Elimina un registro de auditoría por ID.
-    Espera JSON: { "id": 123 }
-    Devuelve: { "ok": true }
+    Deshabilitado: la auditoría es inmutable.
     """
-    try:
-        data = await request.json()
-    except Exception:
-        return JSONResponse({"error": "JSON inválido"}, status_code=400)
+    return JSONResponse(
+        {"error": "Operación no permitida: la auditoría es inmutable"},
+        status_code=405
+    )
 
-    try:
-        log_id = int((data or {}).get("id"))
-    except Exception:
-        return JSONResponse({"error": "Falta o es inválido el campo 'id' (int)"}, status_code=400)
-
-    with SessionLocal() as db:
-        obj = db.query(AuditLog).filter(AuditLog.id == log_id).first()
-        if not obj:
-            return JSONResponse({"error": "Registro no encontrado"}, status_code=404)
-        db.delete(obj)
-        db.commit()
-
-    try:
-        email = request.session.get("usuario", "admin")
-        await emit_alert(email, "Auditoría eliminada", f"Registro #{log_id} eliminado")
-    except Exception:
-        pass
-
-    return {"ok": True}
-
-# ================== Auditoría (eliminación masiva) ==================
 @app.post("/auditoria/eliminar-masivo", dependencies=[Depends(require_admin)])
-async def auditoria_eliminar_masivo(request: Request):
+async def auditoria_eliminar_masivo_disabled(request: Request):
     """
-    Elimina registros de auditoría por IDs o por filtros.
-    Body JSON:
-      - ids: [int, ...]        (opcional)
-      - filtros: { accion?, desde?, hasta?, term? }   (opcional)
-    Si se envían ids, se priorizan; si no hay ids, se usan filtros.
-    Respuesta: { ok: true, count: <int> }
+    Deshabilitado: la auditoría es inmutable.
     """
-    try:
-        data = await request.json()
-    except Exception:
-        return JSONResponse({"error": "JSON inválido"}, status_code=400)
+    return JSONResponse(
+        {"error": "Operación no permitida: la auditoría es inmutable"},
+        status_code=405
+    )
 
-    ids = data.get("ids") or []
-    filtros = data.get("filtros") or {}
-
-    deleted = 0
-    with SessionLocal() as db:
-        q = db.query(AuditLog)
-        if ids:
-            try:
-                ids_int = [int(i) for i in ids]
-            except Exception:
-                return JSONResponse({"error": "ids inválidos"}, status_code=400)
-            q = q.filter(AuditLog.id.in_(ids_int))
-        else:
-            q = _build_audit_filters(q, filtros)
-
-        to_delete = q.all()
-        deleted = len(to_delete)
-        if deleted == 0:
-            return {"ok": True, "count": 0}
-
-        for obj in to_delete:
-            db.delete(obj)
-        db.commit()
-
-    try:
-        email = request.session.get("usuario", "admin")
-        await emit_alert(email, "Auditoría (masivo)", f"{deleted} registro(s) eliminados")
-    except Exception:
-        pass
-
-    return {"ok": True, "count": deleted}
-
-# ================== Auditoría (purga por antigüedad/fecha) ==================
 @app.post("/auditoria/purgar", dependencies=[Depends(require_admin)])
-async def auditoria_purgar(request: Request):
+async def auditoria_purgar_disabled(request: Request):
     """
-    Purga rápida por antigüedad o fecha:
-    Body JSON:
-      - days: int     (borra todo lo anterior a hoy - days)
-      - before: "YYYY-MM-DD"  (borra todo lo anterior a esa fecha 23:59:59)
-    Uno de los dos es requerido.
+    Deshabilitado: la auditoría es inmutable.
     """
-    try:
-        data = await request.json()
-    except Exception:
-        return JSONResponse({"error": "JSON inválido"}, status_code=400)
-
-    days = data.get("days")
-    before = (data.get("before") or "").strip()
-
-    if days is None and not before:
-        return JSONResponse({"error": "Debe enviar 'days' o 'before' (YYYY-MM-DD)"}, status_code=400)
-
-    if before:
-        limite = f"{before} 23:59:59"
-    else:
-        from datetime import timedelta
-        dt = datetime.utcnow() - timedelta(days=int(days))
-        limite = dt.strftime("%Y-%m-%d %H:%M:%S")
-
-    with SessionLocal() as db:
-        q = db.query(AuditLog).filter(AuditLog.fecha <= limite)
-        to_delete = q.all()
-        count = len(to_delete)
-        if count == 0:
-            return {"ok": True, "count": 0}
-
-        for obj in to_delete:
-            db.delete(obj)
-        db.commit()
-
-    try:
-        email = request.session.get("usuario", "admin")
-        await emit_alert(email, "Auditoría (purga)", f"{count} registro(s) eliminados")
-    except Exception:
-        pass
-
-    return {"ok": True, "count": count}
+    return JSONResponse(
+        {"error": "Operación no permitida: la auditoría es inmutable"},
+        status_code=405
+    )
 
 # =====================================================================
 # ========================== CALENDARIO ===============================
