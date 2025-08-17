@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Auditoría de actividad de usuarios</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+    rel="stylesheet">
+  <style>
+    body{ background:#f6f8fb; }
+    .table thead th{ position:sticky; top:0; background:#fff; z-index:1; }
+    .badge-pill{ border-radius:50rem; }
+    .small-mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:.85rem; }
+  </style>
+</head>
+<body>
+  <div class="container py-4">
+    <div class="d-flex align-items-center mb-3">
+      <h1 class="h4 mb-0">Auditoría de actividad</h1>
+      <span id="total" class="ms-3 badge text-bg-secondary">0 sesiones</span>
+      <div class="ms-auto">
+        <button id="btnExport" class="btn btn-outline-secondary btn-sm">Exportar CSV</button>
+      </div>
+    </div>
+
+    <!-- Filtros -->
+    <form id="filtros" class="row g-2 mb-3">
+      <div class="col-sm-4 col-md-3">
+        <label class="form-label mb-1">Usuario (email contiene)</label>
+        <input type="text" class="form-control" id="usuario" placeholder="ej: @acme.com">
+      </div>
+      <div class="col-sm-3 col-md-2">
+        <label class="form-label mb-1">Desde</label>
+        <input type="date" class="form-control" id="desde">
+      </div>
+      <div class="col-sm-3 col-md-2">
+        <label class="form-label mb-1">Hasta</label>
+        <input type="date" class="form-control" id="hasta">
+      </div>
+      <div class="col-sm-6 col-md-3 d-flex align-items-end gap-2">
+        <button class="btn btn-primary" id="btnBuscar" type="submit">Buscar</button>
+        <button class="btn btn-outline-secondary" id="btnLimpiar" type="button">Limpiar</button>
+        <div class="form-check ms-2">
+          <input class="form-check-input" type="checkbox" id="autoRefresh" checked>
+          <label class="form-check-label" for="autoRefresh">Auto-refresh</label>
+        </div>
+      </div>
+    </form>
+
+    <div class="card shadow-sm">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Estado</th>
+              <th>Usuario</th>
+              <th>Nombre</th>
+              <th>Inicio</th>
+              <th>Último visto</th>
+              <th>Cierre</th>
+              <th>Duración</th>
+              <th>IP</th>
+              <th>Agente</th>
+              <th>SID</th>
+            </tr>
+          </thead>
+          <tbody id="tbody">
+            <tr><td colspan="10" class="text-center text-muted py-4">Sin datos</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <p class="text-muted small mt-2">
+      Timeout de inactividad: <span id="timeoutMin">–</span> min · Hora del servidor: <span id="nowUtc">–</span>
+    </p>
+  </div>
+
+  <script>
+    const q = sel => document.querySelector(sel);
+    const esc = s => (s||'').toString().replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+
+    function fmtDate(s){
+      if(!s) return '';
+      // muestra local legible, manteniendo ISO como title
+      const d = new Date(s);
+      if(isNaN(d)) return esc(s);
+      return `<span title="${esc(s)}">${d.toLocaleString()}</span>`;
+    }
+    function fmtDur(seg){
+      if(seg == null) return '';
+      const s = Number(seg)||0;
+      const h = Math.floor(s/3600);
+      const m = Math.floor((s%3600)/60);
+      const r = s%60;
+      if(h>0) return `${h}h ${m}m ${r}s`;
+      if(m>0) return `${m}m ${r}s`;
+      return `${r}s`;
+    }
+    function badgeEstado(estado){
+      const map = {activa:'success', expirada:'warning', cerrada:'secondary'};
+      const cls = map[estado] || 'light';
+      return `<span class="badge text-bg-${cls} badge-pill text-uppercase">${esc(estado||'')}</span>`;
+    }
+
+    async function fetchData(){
+      const params = new URLSearchParams();
+      const usuario = q('#usuario').value.trim();
+      const desde = q('#desde').value;
+      const hasta = q('#hasta').value;
+      if(usuario) params.set('usuario', usuario);
+      if(desde) params.set('desde', desde);
+      if(hasta) params.set('hasta', hasta);
+      params.set('limit', '1000'); // ajustable
+
+      const r = await fetch(`/auditoria/actividad?${params.toString()}`, {headers:{'Accept':'application/json'}});
+      if(!r.ok){
+        throw new Error('Error de servidor');
+      }
+      return await r.json();
+    }
+
+    function render(rows, meta){
+      const tb = q('#tbody');
+      tb.innerHTML = '';
+      if(!rows || rows.length===0){
+        tb.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">Sin coincidencias</td></tr>';
+        q('#total').textContent = '0 sesiones';
+        q('#timeoutMin').textContent = meta?.timeout_min ?? '–';
+        q('#nowUtc').textContent = meta?.now_utc ?? '–';
+        return;
+      }
+      const fr = document.createDocumentFragment();
+      rows.forEach(r=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${badgeEstado(r.estado)}</td>
+          <td class="small-mono">${esc(r.usuario)}</td>
+          <td>${esc(r.nombre||'')}</td>
+          <td>${fmtDate(r.login_at)}</td>
+          <td>${fmtDate(r.last_seen)}</td>
+          <td>${fmtDate(r.logout_at)}</td>
+          <td>${fmtDur(r.duracion_seg)}</td>
+          <td class="small-mono">${esc(r.ip||'')}</td>
+          <td><span title="${esc(r.ua||'')}">${esc((r.ua||'').slice(0,60))}${(r.ua||'').length>60?'…':''}</span></td>
+          <td class="small-mono"><span title="${esc(r.id)}">${esc(r.id.slice(0,8))}…</span></td>
+        `;
+        fr.appendChild(tr);
+      });
+      tb.appendChild(fr);
+      q('#total').textContent = `${rows.length} ${rows.length===1?'sesión':'sesiones'}`;
+      q('#timeoutMin').textContent = meta?.timeout_min ?? '–';
+      q('#nowUtc').textContent = meta?.now_utc ?? '–';
+    }
+
+    function toCSV(rows){
+      const head = ["estado","usuario","nombre","login_at","last_seen","logout_at","duracion_seg","ip","ua","sid"];
+      const escCSV = v => {
+        const s = (v??'').toString();
+        return /[",\n;]/.test(s) ? `"${s.replaceAll('"','""')}"` : s;
+      };
+      const lines = [head.join(",")];
+      for(const r of rows){
+        lines.push([
+          r.estado, r.usuario, r.nombre||"", r.login_at||"", r.last_seen||"", r.logout_at||"",
+          r.duracion_seg??"", r.ip||"", r.ua||"", r.id||""
+        ].map(escCSV).join(","));
+      }
+      return lines.join("\n");
+    }
+
+    async function load(){
+      try{
+        q('#btnBuscar').disabled = true;
+        const data = await fetchData();
+        render(data.items||[], {timeout_min: data.timeout_min, now_utc: data.now_utc});
+        window.__lastRows = data.items||[];
+      }catch(e){
+        console.error(e);
+        q('#tbody').innerHTML = '<tr><td colspan="10" class="text-danger text-center py-4">No se pudo cargar la auditoría</td></tr>';
+      }finally{
+        q('#btnBuscar').disabled = false;
+      }
+    }
+
+    // Eventos
+    q('#filtros').addEventListener('submit', (e)=>{ e.preventDefault(); load(); });
+    q('#btnLimpiar').addEventListener('click', ()=>{
+      q('#usuario').value=''; q('#desde').value=''; q('#hasta').value='';
+      load();
+    });
+    q('#btnExport').addEventListener('click', ()=>{
+      const rows = window.__lastRows || [];
+      const csv = toCSV(rows);
+      const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `auditoria_actividad_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+
+    // Auto-refresh cada 30s si está marcado
+    let timer = null;
+    function setupAutoRefresh(){
+      if(timer){ clearInterval(timer); timer=null; }
+      if(q('#autoRefresh').checked){
+        timer = setInterval(load, 30000);
+      }
+    }
+    q('#autoRefresh').addEventListener('change', setupAutoRefresh);
+
+    // Primera carga
+    load(); setupAutoRefresh();
+  </script>
+</body>
+</html>

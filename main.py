@@ -3,7 +3,7 @@ import sqlite3
 import uuid
 import asyncio
 from typing import List, Optional, Dict, Set
-from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body, WebSocket, WebSocketDisconnect, Depends, status
+from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body, WebSocket, WebSocketDisconnect, Depends, status, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -304,17 +304,43 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
         request.session["email"] = usuario[2]
         request.session["rol"] = usuario[4]
         request.session["nombre"] = usuario[1] or usuario[2]  # 👈 nombre en sesión para el front
+
+        # === Auditoría de sesiones (login) ===
+        sid = uuid.uuid4().hex
+        request.session["sid"] = sid
+        nombre_s = request.session.get("nombre") or usuario[1] or usuario[2]
+        ip_s = request.client.host if request.client else None
+        ua_s = request.headers.get("user-agent", "")
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        with cal_conn() as c:
+            c.execute("""
+                INSERT INTO sessions(id, user, nombre, ip, ua, login_at, last_seen, logout_at, closed_reason)
+                VALUES(?,?,?,?,?,?,?,?,?)
+            """, (sid, request.session["usuario"], nombre_s, ip_s, ua_s, now_iso, now_iso, None, None))
+
         return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse("login.html", {"request": request, "error": "Credenciales incorrectas"})
 
 # Logout por POST (existente) y por GET (para el link del menú)
 @app.post("/logout")
 async def logout_post(request: Request):
+    # === Auditoría de sesiones (logout) ===
+    sid = request.session.get("sid")
+    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    if sid:
+        with cal_conn() as c:
+            c.execute("UPDATE sessions SET logout_at=?, closed_reason=? WHERE id=?", (now_iso, "logout", sid))
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
 
 @app.get("/logout")
 async def logout_get(request: Request):
+    # === Auditoría de sesiones (logout) ===
+    sid = request.session.get("sid")
+    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    if sid:
+        with cal_conn() as c:
+            c.execute("UPDATE sessions SET logout_at=?, closed_reason=? WHERE id=?", (now_iso, "logout", sid))
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
 
@@ -1293,6 +1319,9 @@ async def mark_read(request: Request):
 # ========================== PRESENCIA / ONLINE =======================
 # =====================================================================
 
+# Tiempo de inactividad para considerar una sesión "expirada" (en minutos)
+SESSION_TIMEOUT_MIN = 10
+
 def init_presence_db():
     with cal_conn() as c:
         c.execute("""
@@ -1304,6 +1333,22 @@ def init_presence_db():
                 ua TEXT
             )
         """)
+        # === Auditoría de sesiones ===
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS sessions(
+                id TEXT PRIMARY KEY,          -- UUID de la sesión
+                user TEXT NOT NULL,           -- email
+                nombre TEXT,                  -- nombre legible
+                ip TEXT,
+                ua TEXT,
+                login_at TEXT NOT NULL,       -- ISO UTC (Z)
+                last_seen TEXT NOT NULL,      -- último ping
+                logout_at TEXT,               -- si cerró sesión
+                closed_reason TEXT            -- 'logout' | 'timeout' | 'unknown'
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_sessions_dates ON sessions(login_at, last_seen, logout_at)")
 
 # Llamamos a la init de presencia después de la del calendario
 init_presence_db()
@@ -1326,6 +1371,7 @@ async def presence_ping(request: Request):
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent", "")
     now = _now_iso()  # UTC con 'Z'
+    sid = request.session.get("sid")
 
     with cal_conn() as c:
         c.execute("""
@@ -1337,6 +1383,11 @@ async def presence_ping(request: Request):
               ip=excluded.ip,
               ua=excluded.ua
         """, (email, nombre, now, ip, ua))
+
+        # === Refrescar last_seen de la sesión activa (si tenemos sid) ===
+        if sid:
+            c.execute("UPDATE sessions SET last_seen=? WHERE id=?", (now, sid))
+
     return {"ok": True}
 
 
@@ -1379,3 +1430,104 @@ async def usuarios_activos(request: Request):
         "request": request,
         "items": data.get("items", [])
     })
+
+# ========================== Auditoría de Actividad (admins) =================
+
+def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
+    if not ts:
+        return None
+    try:
+        if len(ts) == 10:
+            return datetime.strptime(ts, "%Y-%m-%d")
+        if ts.endswith("Z"):
+            return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
+        return datetime.fromisoformat(ts)
+    except Exception:
+        return None
+
+def _to_dt(s: Optional[str]) -> Optional[datetime]:
+    if not s:
+        return None
+    try:
+        if s.endswith("Z"):
+            return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ")
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
+
+@app.get("/auditoria/actividad", dependencies=[Depends(require_admin)])
+async def auditoria_actividad(
+    request: Request,
+    usuario: Optional[str] = Query(default=None, description="email exacto o parte"),
+    desde: Optional[str] = Query(default=None, description="YYYY-MM-DD"),
+    hasta: Optional[str] = Query(default=None, description="YYYY-MM-DD"),
+    limit: int = Query(default=500, ge=1, le=5000)
+):
+    """
+    Devuelve sesiones de usuario con duración (en segundos) y estado.
+    Reglas:
+      - Si logout_at es NULL y (now - last_seen) <= SESSION_TIMEOUT_MIN => estado = 'activa'
+      - Si logout_at es NULL y (now - last_seen) >  SESSION_TIMEOUT_MIN => estado = 'expirada'
+      - Si logout_at no es NULL => estado = 'cerrada'
+    """
+    now = datetime.utcnow()
+    rows_out = []
+
+    q = "SELECT id, user, nombre, ip, ua, login_at, last_seen, logout_at, closed_reason FROM sessions"
+    conds, args = [], []
+
+    if usuario:
+        conds.append("user LIKE ?")
+        args.append(f"%{usuario}%")
+
+    d = _parse_iso(desde)
+    h = _parse_iso(hasta)
+    if d:
+        conds.append("login_at >= ?")
+        args.append(d.strftime("%Y-%m-%dT00:00:00Z"))
+    if h:
+        conds.append("login_at <= ?")
+        args.append(h.strftime("%Y-%m-%dT23:59:59Z"))
+
+    if conds:
+        q += " WHERE " + " AND ".join(conds)
+    q += " ORDER BY login_at DESC LIMIT ?"
+    args.append(limit)
+
+    with cal_conn() as c:
+        cur = c.execute(q, tuple(args))
+        for r in cur.fetchall():
+            login_dt = _to_dt(r["login_at"])
+            last_dt  = _to_dt(r["last_seen"])
+            logout_dt= _to_dt(r["logout_at"])
+
+            # estado
+            if logout_dt:
+                estado = "cerrada"
+                ref_end = logout_dt
+            else:
+                if last_dt and (now - last_dt).total_seconds() <= SESSION_TIMEOUT_MIN * 60:
+                    estado = "activa"
+                else:
+                    estado = "expirada"
+                ref_end = last_dt or now
+
+            dur_sec = None
+            if login_dt and ref_end:
+                dur_sec = int(max(0, (ref_end - login_dt).total_seconds()))
+
+            rows_out.append({
+                "id": r["id"],
+                "usuario": r["user"],
+                "nombre": r["nombre"] or r["user"],
+                "ip": r["ip"] or "",
+                "ua": r["ua"] or "",
+                "login_at": r["login_at"],
+                "last_seen": r["last_seen"],
+                "logout_at": r["logout_at"],
+                "estado": estado,               # activa | expirada | cerrada
+                "closed_reason": r["closed_reason"] or "",
+                "duracion_seg": dur_sec
+            })
+
+    return {"items": rows_out, "timeout_min": SESSION_TIMEOUT_MIN, "now_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
