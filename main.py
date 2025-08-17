@@ -14,36 +14,27 @@ from datetime import datetime
 from sqlalchemy import or_, and_
 
 from utils import (
-    extraer_texto_de_pdf,     # se mantiene por compatibilidad en otros puntos si lo usas
-    analizar_con_openai,      # idem
+    extraer_texto_de_pdf,
+    analizar_con_openai,
     generar_pdf_con_plantilla,
     responder_chat_openai,
-    analizar_anexos           # 👈 NUEVO: análisis unificado multi-anexo
+    analizar_anexos
 )
 
 from database import (
-    # Inicialización
     inicializar_bd,
-    # Usuarios
     obtener_usuario_por_email, agregar_usuario, listar_usuarios,
     actualizar_password, cambiar_estado_usuario, borrar_usuario,
-    buscar_usuarios,                      # 👈 autocompletar
-    # Historial
+    buscar_usuarios,
     guardar_en_historial, obtener_historial, eliminar_del_historial,
     obtener_historial_completo,
-    # Tickets
     crear_tabla_tickets, crear_ticket, obtener_todos_los_tickets, obtener_tickets_por_usuario,
     actualizar_estado_ticket, eliminar_ticket,
-    # Auditoría
     obtener_auditoria,
-    # Chat interno
     enviar_mensaje, obtener_hilos_para, obtener_mensajes_entre,
     marcar_mensajes_leidos, contar_no_leidos,
-    # Hilos ocultos
     ocultar_hilo, restaurar_hilo,
-    # Adjuntos (chat)
     guardar_adjunto,
-    # Roles helpers
     es_admin
 )
 
@@ -61,7 +52,6 @@ inicializar_bd()
 inicializar_bd_orm()
 
 # Static
-# Si tus archivos están en backend/static, cambia a directory="backend/static"
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="generated_pdfs")
 
@@ -70,25 +60,19 @@ templates.env.globals['os'] = os
 
 # ================== Guardas/Dependencias de auth/roles ==================
 def require_auth(request: Request):
-    """Obliga a tener sesión iniciada."""
     if not request.session.get("usuario"):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
 
 def require_admin(request: Request):
-    """
-    Requiere rol admin.
-    Valida primero contra sesión y, por robustez, revalida en BD si la sesión dice que no.
-    """
     email = request.session.get("usuario")
     if not email:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
     rol = request.session.get("rol")
     if rol == "admin":
         return
-    # Fallback: por si el rol cambió en BD y la sesión quedó vieja
     try:
         if es_admin(email):
-            request.session["rol"] = "admin"  # refrescamos sesión
+            request.session["rol"] = "admin"
             return
     except Exception:
         pass
@@ -96,9 +80,6 @@ def require_admin(request: Request):
 
 # ================== Alert/WS manager ==================
 class ConnectionManager:
-    """
-    Mantiene websockets por usuario (email). Permite enviar eventos en tiempo real.
-    """
     def __init__(self):
         self._by_user: Dict[str, Set[WebSocket]] = {}
 
@@ -126,7 +107,6 @@ class ConnectionManager:
                 await ws.send_json(payload)
             except Exception:
                 dead.append(ws)
-        # Limpieza
         for ws in dead:
             self._by_user.get(email, set()).discard(ws)
 
@@ -137,12 +117,8 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 def _get_ws_email(websocket: WebSocket) -> str:
-    """
-    Intenta obtener el email de la sesión. Si no, toma query param ?email=.
-    """
     email = None
     try:
-        # Disponible gracias a SessionMiddleware
         email = websocket.scope.get("session", {}).get("usuario")
     except Exception:
         email = None
@@ -156,9 +132,7 @@ async def ws_endpoint(websocket: WebSocket):
     await manager.connect(websocket, email)
     try:
         while True:
-            # Mantener la conexión viva (recibir pings del front).
             _ = await websocket.receive_text()
-            # Si querés responder a pings:
             try:
                 await websocket.send_json({"event": "ws:pong", "ts": datetime.utcnow().isoformat() + "Z"})
             except Exception:
@@ -169,9 +143,6 @@ async def ws_endpoint(websocket: WebSocket):
         manager.disconnect(websocket, email)
 
 async def emit_alert(email: str, title: str, body: str = "", extra: dict = None):
-    """
-    Empuja una alerta genérica a un usuario.
-    """
     payload = {"event": "alert:new", "title": title, "body": body, "ts": datetime.utcnow().isoformat() + "Z"}
     if extra:
         payload["extra"] = extra
@@ -191,7 +162,6 @@ async def emit_chat_new_message(para_email: str, de_email: str, msg_id: int, pre
 CHAT_ATTACH_DIR = os.path.join("static", "chat_adjuntos")
 os.makedirs(CHAT_ATTACH_DIR, exist_ok=True)
 
-# Límites y validaciones para adjuntos del chat (alineados con el front)
 CHAT_ALLOWED_EXT = {
     ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp",
     ".txt", ".csv", ".xlsx", ".xls", ".docx", ".doc", ".pptx"
@@ -223,11 +193,10 @@ def _email_safe(s: str) -> str:
     return (s or "anon").replace("@", "_at_").replace(".", "_dot_")
 
 async def _save_upload_stream(upload: UploadFile, dst_path: str) -> int:
-    """Guarda el UploadFile en disco por chunks. Devuelve tamaño en bytes."""
     size = 0
     with open(dst_path, "wb") as f:
         while True:
-            chunk = await upload.read(1024 * 1024)  # 1MB
+            chunk = await upload.read(1024 * 1024)
             if not chunk:
                 break
             size += len(chunk)
@@ -240,12 +209,7 @@ def _validate_ext(filename: str):
     if ext not in CHAT_ALLOWED_EXT:
         raise HTTPException(status_code=400, detail=f"Tipo de archivo no permitido: {ext}")
 
-# --- Filtros para eliminación masiva de auditoría ---
 def _build_audit_filters(q, filtros):
-    """
-    Aplica filtros al query de AuditLog.
-    filtros: dict con claves opcionales: accion, desde (YYYY-MM-DD), hasta (YYYY-MM-DD), term (texto)
-    """
     if not filtros:
         return q
     acc = (filtros.get("accion") or "").strip()
@@ -299,11 +263,10 @@ async def login_form(request: Request):
 async def login(request: Request, email: str = Form(...), password: str = Form(...)):
     usuario = obtener_usuario_por_email(email)
     if usuario and usuario[3] == password:
-        # Guardamos ambas claves para compatibilidad con plantillas
-        request.session["usuario"] = usuario[2]   # email
+        request.session["usuario"] = usuario[2]
         request.session["email"] = usuario[2]
         request.session["rol"] = usuario[4]
-        request.session["nombre"] = usuario[1] or usuario[2]  # 👈 nombre en sesión para el front
+        request.session["nombre"] = usuario[1] or usuario[2]
 
         # === Auditoría de sesiones (login) ===
         sid = uuid.uuid4().hex
@@ -321,10 +284,8 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
         return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse("login.html", {"request": request, "error": "Credenciales incorrectas"})
 
-# Logout por POST (existente) y por GET (para el link del menú)
 @app.post("/logout")
 async def logout_post(request: Request):
-    # === Auditoría de sesiones (logout) ===
     sid = request.session.get("sid")
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     if sid:
@@ -335,7 +296,6 @@ async def logout_post(request: Request):
 
 @app.get("/logout")
 async def logout_get(request: Request):
-    # === Auditoría de sesiones (logout) ===
     sid = request.session.get("sid")
     now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     if sid:
@@ -347,29 +307,21 @@ async def logout_get(request: Request):
 # ================== Análisis ==================
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
-    """
-    Unifica TODOS los anexos recibidos en un solo análisis y devuelve:
-      - resumen (texto)
-      - nombre del PDF generado
-    """
     usuario = request.session.get("usuario", "Anónimo")
 
     if not archivos:
         return JSONResponse({"error": "Subí al menos un archivo"}, status_code=400)
 
-    # Validación mínima de extensiones (pueden venir PDFs/DOCX/XLSX)
     for a in archivos:
         if not a or not a.filename:
             continue
         _validate_ext(a.filename)
 
-    # 1) Análisis integrado (bloqueante → lo mando al threadpool)
     try:
         resumen = await run_in_threadpool(analizar_anexos, archivos)
     except Exception as e:
         return JSONResponse({"error": f"Fallo en el análisis: {e}"}, status_code=500)
 
-    # 2) Generar PDF (también en thread para no bloquear el loop)
     try:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         nombre_archivo = f"resumen_{timestamp}.pdf"
@@ -377,11 +329,9 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     except Exception as e:
         return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
 
-    # 3) Persistir en historial
     try:
         guardar_en_historial(timestamp, usuario, nombre_archivo, nombre_archivo, resumen)
     except Exception:
-        # No frenamos la respuesta si falla el guardado en historial
         pass
 
     return {"resumen": resumen, "pdf": nombre_archivo}
@@ -391,12 +341,10 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
 async def ver_historial():
     return JSONResponse(obtener_historial())
 
-# 🔁 Alias de vista para el botón de la barra lateral
 @app.get("/historia")
 async def alias_historia():
     return RedirectResponse("/?goto=historial", status_code=307)
 
-# 🔁 Alias para “nuevo análisis”
 @app.get("/analisis")
 @app.get("/analisis/nuevo")
 @app.get("/report")
@@ -425,10 +373,8 @@ async def usuario_actual(request: Request):
     rol = request.session.get("rol", "usuario")
 
     row = obtener_usuario_por_email(email) if email else None
-    # (id, nombre, email, password, rol, ...)
     nombre = (row[1] if row else None) or request.session.get("nombre") or (email or "Desconocido")
 
-    # Buscar avatar existente
     avatar_url = ""
     if email:
         prefix = _email_safe(email)
@@ -442,7 +388,7 @@ async def usuario_actual(request: Request):
         "usuario": email or "Desconocido",
         "rol": rol,
         "nombre": nombre,
-        "avatar_url": avatar_url  # '' si no hay
+        "avatar_url": avatar_url
     }
 
 # ===== Subir/actualizar avatar =====
@@ -457,7 +403,6 @@ async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
     if ext not in AVATAR_ALLOWED_EXT:
         return JSONResponse({"error": f"Formato no permitido: {ext}"}, status_code=400)
 
-    # Límite de tamaño
     data = await avatar.read()
     size_mb = len(data) / (1024 * 1024)
     if size_mb > AVATAR_MAX_MB:
@@ -466,7 +411,6 @@ async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
     prefix = _email_safe(email)
     dst = os.path.join(AVATAR_DIR, prefix + ext)
 
-    # Borrar otros formatos previos
     for e in (".webp", ".png", ".jpg", ".jpeg"):
         p = os.path.join(AVATAR_DIR, prefix + e)
         if os.path.isfile(p) and p != dst:
@@ -500,7 +444,6 @@ async def vista_incidencias(request: Request):
         if len(t) < 7:
             continue
         fecha_legible = datetime.strptime(t[6], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M")
-        # Adjuntos
         carpeta_adjuntos = os.path.join("static", "adjuntos_incidencias")
         prefix = f"{t[1]}_{t[6].replace(':','').replace('-','').replace(' ','')[:14]}"
         adjuntos = []
@@ -621,8 +564,7 @@ async def crear_usuario_api(request: Request):
         nombre = data.get("nombre")
         email = data.get("email")
         rol = data.get("rol")
-        # FIX: usar 'or' (no 'o') para que no falle la sintaxis
-        if not nombre or not email or not rol:  # noqa: E712
+        if not nombre or not email or not rol:
             return JSONResponse({"error": "Faltan campos: nombre, email, rol"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
         agregar_usuario(nombre, email, "1234", rol, actor_user_id=actor_user_id, ip=ip)
@@ -673,7 +615,7 @@ async def eliminar_usuario(request: Request):
         if not email:
             return JSONResponse({"error": "Falta email"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
-        ok = borrar_usuario(email, actor_user_id=actor_user_id, ip=ip, soft=False)  # borrado duro
+        ok = borrar_usuario(email, actor_user_id=actor_user_id, ip=ip, soft=False)
         if not ok:
             return JSONResponse({"error": "Usuario no encontrado"}, status_code=404)
         return JSONResponse({"mensaje": "Usuario eliminado definitivamente."})
@@ -715,7 +657,7 @@ async def chat_openai(request: Request):
     respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
     return JSONResponse({"respuesta": respuesta})
 
-# ================== API puente para el drawer (formato reply) ==============
+# ================== API puente para el drawer ==================
 @app.post("/api/chat-openai")
 async def api_chat_openai(request: Request, payload: dict = Body(...)):
     mensaje = (payload or {}).get("message", "").strip()
@@ -755,7 +697,7 @@ async def api_chat_openai(request: Request, payload: dict = Body(...)):
     respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
     return JSONResponse({"reply": respuesta})
 
-# ===== Mini vista embebida para el widget del topbar/FAB (Enter envía) =====
+# ===== Mini vista embebida para el widget del topbar/FAB =====
 @app.get("/chat_openai_embed", response_class=HTMLResponse)
 async def chat_openai_embed(request: Request):
     if not request.session.get("usuario"):
@@ -764,9 +706,7 @@ async def chat_openai_embed(request: Request):
     <!doctype html><html><head>
     <meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
-    <style>
-      #t{ resize:none; min-height:42px; max-height:150px; }
-    </style>
+    <style>#t{ resize:none; min-height:42px; max-height:150px; }</style>
     </head><body class="p-2" style="background:transparent">
       <div id="log" class="mb-2" style="height:410px; overflow:auto; background:#f6f8fb; border-radius:12px; padding:8px;"></div>
       <form id="f" class="d-flex gap-2">
@@ -777,58 +717,27 @@ async def chat_openai_embed(request: Request):
         const log  = document.getElementById('log');
         const ta   = document.getElementById('t');
         const btn  = document.getElementById('send');
-
         function esc(s){ return (s||'').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
-        function add(b){
-          const p=document.createElement('div');
-          p.innerHTML=b;
-          log.appendChild(p);
-          log.scrollTop=log.scrollHeight;
-        }
-
-        // Auto-altura del textarea (UX)
+        function add(b){ const p=document.createElement('div'); p.innerHTML=b; log.appendChild(p); log.scrollTop=log.scrollHeight; }
         function autosize(){ ta.style.height='auto'; ta.style.height = Math.min(ta.scrollHeight, 150) + 'px'; }
         ta.addEventListener('input', autosize); autosize();
-
         let busy = false;
         async function send(){
           if(busy) return;
           const v = ta.value.trim();
           if(!v) return;
-          busy = true;
-          btn.disabled = true;
+          busy = true; btn.disabled = true;
           add('<div><b>Tú:</b> '+esc(v)+'</div>');
           ta.value=''; autosize();
           try{
-            const r = await fetch('/chat-openai', {
-              method:'POST',
-              headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({mensaje:v})
-            });
+            const r = await fetch('/chat-openai', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mensaje:v}) });
             const j = await r.json().catch(()=>({}));
             add('<div class="mt-1"><b>IA:</b> '+(j.respuesta||'')+'</div>');
-          }catch(_){
-            add('<div class="text-danger mt-1"><b>Error:</b> No se pudo enviar.</div>');
-          }finally{
-            busy = false;
-            btn.disabled = false;
-            ta.focus();
-          }
+          }catch(_){ add('<div class="text-danger mt-1"><b>Error:</b> No se pudo enviar.</div>'); }
+          finally{ busy=false; btn.disabled=false; ta.focus(); }
         }
-
-        // Enter = enviar | Shift+Enter = salto de línea
-        ta.addEventListener('keydown', (e)=>{
-          if(e.key === 'Enter' && !e.shiftKey){
-            e.preventDefault();  // evita salto de línea
-            send();              // envía directamente
-          }
-        });
-
-        // Botón enviar
-        btn.addEventListener('click', (e)=>{
-          e.preventDefault();
-          send();
-        });
+        ta.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
+        btn.addEventListener('click', (e)=>{ e.preventDefault(); send(); });
       </script>
     </body></html>
     """
@@ -844,7 +753,6 @@ async def chat_view(request: Request):
 # ================== Chat interno (API) ==================
 @app.get("/api/usuarios")
 async def api_buscar_usuarios(request: Request, term: str = "", limit: int = 8):
-    """Autocompletar de usuarios por nombre/email."""
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
     term = (term or "").strip()
@@ -874,14 +782,12 @@ async def chat_enviar(request: Request):
     try:
         msg_id = enviar_mensaje(de_email=de, para_email=para, texto=texto,
                                 actor_user_id=actor_user_id, ip=ip)
-        # 🔔 Push en tiempo real para el receptor
         await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=texto)
         return JSONResponse({"ok": True, "id": msg_id})
     except Exception as e:
         print("❌ Error chat_enviar:", repr(e))
         return JSONResponse({"error": "No se pudo enviar el mensaje"}, status_code=500)
 
-# ---- NUEVO: enviar mensaje con múltiples archivos -------------------------
 @app.post("/chat/enviar-archivos")
 async def chat_enviar_archivos(
     request: Request,
@@ -889,7 +795,6 @@ async def chat_enviar_archivos(
     texto: str = Form(default=""),
     archivos: List[UploadFile] = File(default=[])
 ):
-    """Envía un mensaje con 0..N adjuntos. Guarda cada archivo y registra metadatos."""
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
 
@@ -937,13 +842,10 @@ async def chat_enviar_archivos(
             )
         except Exception as e:
             print("❌ Error guardar_adjunto:", repr(e))
-            # Continuamos; se podría informar un warning al front.
 
-    # 🔔 Push en tiempo real para el receptor
     await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=(texto or "[Adjuntos]"))
     return JSONResponse({"ok": True, "id": msg_id})
 
-# ---- Compat: enviar mensaje con 1 archivo (reusa la lógica nueva) ---------
 @app.post("/chat/enviar-archivo")
 async def chat_enviar_archivo(
     request: Request,
@@ -951,13 +853,11 @@ async def chat_enviar_archivo(
     texto: str = Form(default=""),
     archivo: UploadFile = File(...)
 ):
-    """Compat: 1 archivo. Internamente llama a /chat/enviar-archivos."""
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
     archivos = [archivo] if archivo and archivo.filename else []
     return await chat_enviar_archivos(request, para=para, texto=texto, archivos=archivos)
 
-# ---- Servir adjunto por nombre --------------------------------------------
 @app.get("/chat/adjunto/{filename}")
 async def chat_adjunto(filename: str):
     path = os.path.join(CHAT_ATTACH_DIR, filename)
@@ -971,7 +871,7 @@ async def chat_hilos(request: Request):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
     yo = request.session.get("usuario")
     try:
-        hilos = obtener_hilos_para(yo)  # ya filtra ocultos y reaparece si hay mensajes nuevos
+        hilos = obtener_hilos_para(yo)
         return JSONResponse({"hilos": hilos})
     except Exception as e:
         print("❌ Error chat_hilos:", repr(e))
@@ -1019,10 +919,8 @@ async def chat_no_leidos(request: Request):
         print("❌ Error chat_no_leidos:", repr(e))
         return JSONResponse({"error": "No se pudo obtener el conteo"}, status_code=500)
 
-# ---- Hilos: ocultar / restaurar / abrir ----------------------------------
 @app.post("/chat/ocultar")
 async def chat_ocultar(request: Request):
-    """‘Eliminar chat’: oculta el hilo para el usuario actual (no borra mensajes)."""
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
     data = await request.json()
@@ -1040,7 +938,6 @@ async def chat_ocultar(request: Request):
 
 @app.post("/chat/restaurar")
 async def chat_restaurar(request: Request):
-    """Revierte el ocultamiento del hilo (vuelve a aparecer en el sidebar)."""
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
     data = await request.json()
@@ -1058,10 +955,6 @@ async def chat_restaurar(request: Request):
 
 @app.post("/chat/abrir")
 async def chat_abrir(request: Request):
-    """
-    Atajo para el buscador ‘@’: restaura (si estaba oculto) y no devuelve mensajes.
-    Úsalo antes de llamar a /chat/mensajes.
-    """
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
     data = await request.json()
@@ -1077,7 +970,7 @@ async def chat_abrir(request: Request):
         print("❌ Error chat_abrir:", repr(e))
         return JSONResponse({"error": "No se pudo abrir el hilo"}, status_code=500)
 
-# ================== Auditoría (vista) ==================
+# ================== Auditoría (vista audit_logs) ==================
 @app.get("/auditoria", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def ver_auditoria(request: Request):
     logs = obtener_auditoria()
@@ -1086,36 +979,17 @@ async def ver_auditoria(request: Request):
         "logs": logs
     })
 
-# ================== Auditoría (operaciones de borrado DESHABILITADAS) ==================
 @app.post("/auditoria/eliminar", dependencies=[Depends(require_admin)])
 async def auditoria_eliminar_disabled(request: Request):
-    """
-    Deshabilitado: la auditoría es inmutable.
-    """
-    return JSONResponse(
-        {"error": "Operación no permitida: la auditoría es inmutable"},
-        status_code=405
-    )
+    return JSONResponse({"error": "Operación no permitida: la auditoría es inmutable"}, status_code=405)
 
 @app.post("/auditoria/eliminar-masivo", dependencies=[Depends(require_admin)])
 async def auditoria_eliminar_masivo_disabled(request: Request):
-    """
-    Deshabilitado: la auditoría es inmutable.
-    """
-    return JSONResponse(
-        {"error": "Operación no permitida: la auditoría es inmutable"},
-        status_code=405
-    )
+    return JSONResponse({"error": "Operación no permitida: la auditoría es inmutable"}, status_code=405)
 
 @app.post("/auditoria/purgar", dependencies=[Depends(require_admin)])
 async def auditoria_purgar_disabled(request: Request):
-    """
-    Deshabilitado: la auditoría es inmutable.
-    """
-    return JSONResponse(
-        {"error": "Operación no permitida: la auditoría es inmutable"},
-        status_code=405
-    )
+    return JSONResponse({"error": "Operación no permitida: la auditoría es inmutable"}, status_code=405)
 
 # =====================================================================
 # ========================== CALENDARIO ===============================
@@ -1154,6 +1028,7 @@ def init_calendar_db():
                 leida INTEGER NOT NULL DEFAULT 0
             )
         """)
+
 init_calendar_db()
 
 def _now_iso():
@@ -1171,10 +1046,6 @@ def _event_row_to_dict(r: sqlite3.Row):
     }
 
 def _notify(user: str, titulo: str, cuerpo: str = ""):
-    """
-    Síncrono (compat) — guarda en BD.
-    Para push en vivo, usar notify_async().
-    """
     with cal_conn() as c:
         c.execute(
             "INSERT INTO notificaciones(user, titulo, cuerpo, created_at, leida) VALUES(?,?,?,?,0)",
@@ -1182,9 +1053,6 @@ def _notify(user: str, titulo: str, cuerpo: str = ""):
         )
 
 async def notify_async(user: str, titulo: str, cuerpo: str = ""):
-    """
-    Inserta la notificación en BD y además emite un evento en tiempo real.
-    """
     _notify(user, titulo, cuerpo)
     await emit_alert(user, titulo, cuerpo)
 
@@ -1198,10 +1066,9 @@ async def calendario_view(request: Request):
 async def cal_list():
     with cal_conn() as c:
         cur = c.execute("SELECT * FROM eventos ORDER BY start ASC")
-        rows = [ _event_row_to_dict(r) for r in cur.fetchall() ]
+        rows = [_event_row_to_dict(r) for r in cur.fetchall()]
     return rows
 
-# Alias para la Home (index) que espera {events:[...]}
 @app.get("/api/calendar/events")
 async def cal_list_alias():
     items = await cal_list()
@@ -1285,7 +1152,7 @@ async def cal_delete(evt_id: str, request: Request):
     await notify_async(request.session.get("usuario","Desconocido"), "Evento eliminado", f"ID: {evt_id}")
     return {"ok": True}
 
-# ================== Notificaciones mínimas usadas por calendario.html ======
+# ================== Notificaciones mínimas ==================
 @app.get("/notificaciones")
 async def list_notifs(request: Request, limit: int = 20):
     user = request.session.get("usuario", "Desconocido")
@@ -1336,41 +1203,35 @@ def init_presence_db():
         # === Auditoría de sesiones ===
         c.execute("""
             CREATE TABLE IF NOT EXISTS sessions(
-                id TEXT PRIMARY KEY,          -- UUID de la sesión
-                user TEXT NOT NULL,           -- email
-                nombre TEXT,                  -- nombre legible
+                id TEXT PRIMARY KEY,
+                user TEXT NOT NULL,
+                nombre TEXT,
                 ip TEXT,
                 ua TEXT,
-                login_at TEXT NOT NULL,       -- ISO UTC (Z)
-                last_seen TEXT NOT NULL,      -- último ping
-                logout_at TEXT,               -- si cerró sesión
-                closed_reason TEXT            -- 'logout' | 'timeout' | 'unknown'
+                login_at TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                logout_at TEXT,
+                closed_reason TEXT
             )
         """)
         c.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_sessions_dates ON sessions(login_at, last_seen, logout_at)")
 
-# Llamamos a la init de presencia después de la del calendario
 init_presence_db()
 
 # ========================== Endpoints presencia ======================
-
 @app.post("/presence/ping")
 async def presence_ping(request: Request):
-    """
-    El front llama a este endpoint cada ~30s para marcar al usuario como activo.
-    """
     email = request.session.get("usuario")
     if not email:
         return JSONResponse({"ok": False, "error": "No autenticado"}, status_code=401)
 
-    # Intentamos sacar nombre desde la BD de usuarios
     row = obtener_usuario_por_email(email)
     nombre = row[1] if row else email
 
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent", "")
-    now = _now_iso()  # UTC con 'Z'
+    now = _now_iso()
     sid = request.session.get("sid")
 
     with cal_conn() as c:
@@ -1384,18 +1245,13 @@ async def presence_ping(request: Request):
               ua=excluded.ua
         """, (email, nombre, now, ip, ua))
 
-        # === Refrescar last_seen de la sesión activa (si tenemos sid) ===
         if sid:
             c.execute("UPDATE sessions SET last_seen=? WHERE id=?", (now, sid))
 
     return {"ok": True}
 
-
 @app.get("/presence/online")
 async def presence_online(minutes: int = 5):
-    """
-    Devuelve usuarios con last_seen dentro de los últimos N minutos (default 5).
-    """
     threshold_ts = datetime.utcnow().timestamp() - (minutes * 60)
 
     items = []
@@ -1417,22 +1273,17 @@ async def presence_online(minutes: int = 5):
                 })
     return {"items": items}
 
-
 @app.get("/usuarios-activos", response_class=HTMLResponse)
 async def usuarios_activos(request: Request):
-    """
-    Vista HTML con el listado (usa templates/usuarios_activos.html).
-    """
     if not request.session.get("usuario"):
         return RedirectResponse("/login")
-    data = await presence_online(minutes=5)  # reutilizamos el JSON
+    data = await presence_online(minutes=5)
     return templates.TemplateResponse("usuarios_activos.html", {
         "request": request,
         "items": data.get("items", [])
     })
 
 # ========================== Auditoría de Actividad (admins) =================
-
 def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
     if not ts:
         return None
@@ -1455,6 +1306,12 @@ def _to_dt(s: Optional[str]) -> Optional[datetime]:
     except Exception:
         return None
 
+# --- Vista HTML (usa templates/auditoria_actividad.html) ---
+@app.get("/auditoria-actividad", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+async def auditoria_actividad_view(request: Request):
+    return templates.TemplateResponse("auditoria_actividad.html", {"request": request})
+
+# --- API JSON con datos de sesiones ---
 @app.get("/auditoria/actividad", dependencies=[Depends(require_admin)])
 async def auditoria_actividad(
     request: Request,
@@ -1466,9 +1323,9 @@ async def auditoria_actividad(
     """
     Devuelve sesiones de usuario con duración (en segundos) y estado.
     Reglas:
-      - Si logout_at es NULL y (now - last_seen) <= SESSION_TIMEOUT_MIN => estado = 'activa'
-      - Si logout_at es NULL y (now - last_seen) >  SESSION_TIMEOUT_MIN => estado = 'expirada'
-      - Si logout_at no es NULL => estado = 'cerrada'
+      - Si logout_at es NULL y (now - last_seen) <= SESSION_TIMEOUT_MIN => 'activa'
+      - Si logout_at es NULL y (now - last_seen) >  SESSION_TIMEOUT_MIN => 'expirada'
+      - Si logout_at no es NULL => 'cerrada'
     """
     now = datetime.utcnow()
     rows_out = []
@@ -1501,7 +1358,6 @@ async def auditoria_actividad(
             last_dt  = _to_dt(r["last_seen"])
             logout_dt= _to_dt(r["logout_at"])
 
-            # estado
             if logout_dt:
                 estado = "cerrada"
                 ref_end = logout_dt
