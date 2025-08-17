@@ -46,6 +46,10 @@ MAX_COMPLETION_TOKENS_SALIDA = int(os.getenv("MAX_COMPLETION_TOKENS_SALIDA", "35
 TEMPERATURE_ANALISIS = os.getenv("TEMPERATURE_ANALISIS", "").strip()
 ANALISIS_MODO = os.getenv("ANALISIS_MODO", "").lower().strip()  # "fast" opcional
 
+# Granularidad / anti-copia ligera (sin perder cobertura)
+RENGLON_DESC_MAX_WORDS = int(os.getenv("RENGLON_DESC_MAX_WORDS", "24"))   # palabras máx en descripción del renglón
+ART_SNIPPET_MAX_WORDS  = int(os.getenv("ART_SNIPPET_MAX_WORDS", "18"))    # palabras máx en snippet de artículo
+
 # Concurrencia
 ANALISIS_CONCURRENCY = int(os.getenv("ANALISIS_CONCURRENCY", "3"))
 NOTAS_MAX_TOKENS = int(os.getenv("NOTAS_MAX_TOKENS", "1400"))
@@ -710,6 +714,16 @@ def _max_out_for_text(texto: str) -> int:
             base = max(base, 3500)
     return int(base)
 
+# ====== Utilidades de compresión no literal ======
+def _truncate_words(s: str, max_words: int) -> str:
+    try:
+        words = re.findall(r"\S+", s or "")
+        if len(words) <= max_words:
+            return (s or "").strip()
+        return " ".join(words[:max_words]).rstrip(",.;:") + "…"
+    except Exception:
+        return (s or "").strip()
+
 # ====== Generadores determinísticos de secciones 2.13 y 2.16 ======
 def _build_section_213(texto: str, varios_anexos: bool) -> str:
     rows = _extraer_renglones_y_especificaciones(texto)
@@ -717,10 +731,12 @@ def _build_section_213(texto: str, varios_anexos: bool) -> str:
         return ""
     lines = ["2.13 Planilla de cotización y renglones:"]
     for (num, qty, code, desc, p, ax) in rows:
+        # Descripción acotada para evitar “volcados” largos
+        desc_corta = _truncate_words(desc, RENGLON_DESC_MAX_WORDS)
         partes = [f"Renglón {num}"]
         if qty is not None: partes.append(f"Cantidad: {qty}")
         if code: partes.append(f"Código: {code}")
-        partes.append(f"Descripción/Especificaciones: {desc}")
+        partes.append(f"Descripción/Especificaciones: {desc_corta}")
         cita = f"(Anexo {ax}, p. {p})" if varios_anexos and ax else (f"(p. {p})" if p else "(Fuente: documento provisto)")
         lines.append(" - " + " — ".join(partes) + f" {cita}")
     return "\n".join(lines)
@@ -733,9 +749,94 @@ def _build_section_216(texto: str, varios_anexos: bool) -> str:
     # Normalizamos el rótulo "Art. N"
     for (rot, sn, p, ax) in arts:
         rot_norm = re.sub(r"(?i)art(?:[íi]culo|\.)\s*", "Art. ", rot).strip()
+        sn = _truncate_words(sn, ART_SNIPPET_MAX_WORDS)
         cita = f"(Anexo {ax}, p. {p})" if varios_anexos and ax else (f"(p. {p})" if p else "(Fuente: documento provisto)")
         lines.append(f" - {rot_norm} — {sn} {cita}")
     return "\n".join(lines)
+
+# ====== Contactos (emails/URLs) con página/anexo ======
+CONTACT_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+CONTACT_URL_RE   = re.compile(r"(https?://[^\s)]+|www\.[^\s)]+)")
+
+def _extraer_contactos_con_paginas(texto: str) -> List[Tuple[str, str, int, Optional[int]]]:
+    """
+    Devuelve lista de (tipo, valor, p, anexo) con tipo in {"email","url"}
+    """
+    idx_pag = _index_paginas(texto)
+    idx_ax  = _index_anexos(texto)
+    res: List[Tuple[str,str,int,Optional[int]]] = []
+    for m in CONTACT_EMAIL_RE.finditer(texto):
+        pos = m.start()
+        p = _pagina_de_indice(idx_pag, pos)
+        ax = _anexo_en_pos(idx_ax, pos)
+        res.append(("email", m.group(0), p, ax))
+    for m in CONTACT_URL_RE.finditer(texto):
+        pos = m.start()
+        p = _pagina_de_indice(idx_pag, pos)
+        ax = _anexo_en_pos(idx_ax, pos)
+        # limpiar trailing puntuación común
+        v = m.group(0).rstrip(").,;")
+        res.append(("url", v, p, ax))
+    # dedupe preservando orden
+    seen = set()
+    dedup = []
+    for t,v,p,ax in res:
+        key = (t, v.lower())
+        if key in seen: continue
+        seen.add(key); dedup.append((t,v,p,ax))
+    return dedup
+
+def _build_section_23(texto: str, varios_anexos: bool) -> str:
+    items = _extraer_contactos_con_paginas(texto)
+    if not items:
+        return ""
+    out = ["2.3 Contactos y portales:"]
+    for (t,v,p,ax) in items:
+        etiqueta = "Email" if t=="email" else "URL"
+        cita = f"(Anexo {ax}, p. {p})" if varios_anexos and ax else (f"(p. {p})" if p else "(Fuente: documento provisto)")
+        out.append(f" - {etiqueta}: {v} {cita}")
+    return "\n".join(out)
+
+# ====== Normativa aplicable (Ley/Decreto/Resolución/Disposición) ======
+NORM_TIPOS = [
+    (r"Ley", r"\bLey(?:\s*N[°º])?\s*([\d\.]{1,7}(?:/\d{2,4})?)\b"),
+    (r"Decreto", r"\bDecreto(?:\s*N[°º])?\s*([\d\.]{1,7}(?:/\d{2,4})?)\b"),
+    (r"Resolución", r"\bResoluci[oó]n(?:\s*(?:Ministerial|Conjunta))?\s*(?:N[°º]\s*)?(\d{1,7}(?:/\d{2,4})?)\b"),
+    (r"Disposición", r"\bDisposici[oó]n\s*(?:N[°º]\s*)?(\d{1,7}(?:/\d{2,4})?)\b"),
+]
+NORM_PATTS = [(tipo, re.compile(patt, re.I)) for (tipo, patt) in NORM_TIPOS]
+
+def _extraer_normativa(texto: str) -> List[Tuple[str,str,int,Optional[int]]]:
+    """
+    Devuelve lista de (tipo, numero, p, anexo)
+    """
+    idx_pag = _index_paginas(texto)
+    idx_ax  = _index_anexos(texto)
+    res = []
+    for (tipo, cre) in NORM_PATTS:
+        for m in cre.finditer(texto):
+            pos = m.start()
+            p = _pagina_de_indice(idx_pag, pos)
+            ax = _anexo_en_pos(idx_ax, pos)
+            numero = m.group(1).strip()
+            res.append((tipo, numero, p, ax))
+    # dedupe preservando orden
+    seen = set(); dedup = []
+    for t,n,p,ax in res:
+        key = (t.lower(), n)
+        if key in seen: continue
+        seen.add(key); dedup.append((t,n,p,ax))
+    return dedup
+
+def _build_section_215(texto: str, varios_anexos: bool) -> str:
+    normas = _extraer_normativa(texto)
+    if not normas:
+        return ""
+    out = ["2.15 Normativa aplicable:"]
+    for (t,n,p,ax) in normas:
+        cita = f"(Anexo {ax}, p. {p})" if varios_anexos and ax else (f"(p. {p})" if p else "(Fuente: documento provisto)")
+        out.append(f" - {t} {n} {cita}")
+    return "\n".join(out)
 
 # ====== Reemplazo de secciones en el informe ======
 def _find_section_bounds(text: str, header_regex: str) -> Tuple[int,int]:
@@ -813,6 +914,16 @@ Requisitos:
     sec216 = _build_section_216(texto_fuente, varios_anexos)
     if sec216:
         out = _replace_section(out, r"(?im)^\s*2\.16\s+Cat[aá]logo de art", sec216)
+
+    # NUEVO: 2.3 Contactos/portales (determinístico)
+    sec23 = _build_section_23(texto_fuente, varios_anexos)
+    if sec23:
+        out = _replace_section(out, r"(?im)^\s*2\.3\s+Contactos", sec23)
+
+    # NUEVO: 2.15 Normativa (determinístico)
+    sec215 = _build_section_215(texto_fuente, varios_anexos)
+    if sec215:
+        out = _replace_section(out, r"(?im)^\s*2\.15\s+Normativa", sec215)
 
     # Limpiezas finales
     out = re.sub(r"(?im)^\s*informe\s+original\s*$", "", out)
