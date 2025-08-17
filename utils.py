@@ -17,6 +17,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import HexColor
+from zoneinfo import ZoneInfo  # <<< agregado para fallback local AR
 
 # ========================= Opcionales (DOCX) =========================
 try:
@@ -1136,12 +1137,12 @@ def analizar_con_openai(texto: str) -> str:
     max_out = _max_out_for_text(texto)
     messages_final = [
         {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
-        {"role": "user", "content": f"""{prompt_maestro}
+        {"role": "user", "content": f"""{_prompt_maestro(varios_anexos)}
 
 === NOTAS INTERMEDIAS INTEGRADAS (DEDUPE Y TRAZABILIDAD) ===
 {notas_integradas}
 
-{("=== HALLAZGOS AUTOMÁTICOS (snippets literales) ===\n" + hints) if hints else ""}
+{("=== HALLAZGOS AUTOMÁTICOS (snippets literales) ===\n" + _build_regex_hints(texto)) if ENABLE_REGEX_HINTS else ""}
 
 👉 Integra TODO en un **solo informe**; deduplica; cita una vez por dato con todas las fuentes.
 👉 Prohibido meta-comentarios de fragmentos. No imprimas títulos de estas instrucciones.
@@ -1237,7 +1238,11 @@ Respondé natural y directo. Evitá repetir las funciones de la plataforma.
         return f"⚠️ Error al generar respuesta: {e}"
 
 # ==================== PDF ====================
-def _render_pdf_bytes(resumen: str) -> bytes:
+def _render_pdf_bytes(resumen: str, fecha_display: Optional[str] = None) -> bytes:
+    """
+    Renderiza el PDF. Si `fecha_display` viene informada (ej: '31/05/2025 14:03'),
+    la usa tal cual. Si no, usa hora local de AR para evitar corrimientos.
+    """
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
 
@@ -1254,8 +1259,14 @@ def _render_pdf_bytes(resumen: str) -> bytes:
     c.drawCentredString(A4[0] / 2, A4[1] - 36 * mm, "Inteligencia Comercial")
     c.setFillColor("black")
     c.setFont("Helvetica", 10)
-    fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
-    c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_actual}")
+
+    # Fecha en encabezado: prioriza la pasada por parámetro (AR), sino cae en local AR.
+    if not fecha_display:
+        try:
+            fecha_display = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            fecha_display = datetime.now().strftime("%d/%m/%Y %H:%M")
+    c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_display}")
 
     # Filtros de rótulos indeseados
     resumen = (resumen or "").replace("**", "")
@@ -1295,12 +1306,17 @@ def _render_pdf_bytes(resumen: str) -> bytes:
     c.save()
     return buffer.getvalue()
 
-def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str):
+def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str, fecha_display: Optional[str] = None):
+    """
+    Genera el PDF en generated_pdfs/{nombre_archivo}
+    - `fecha_display`: string ya formateado (DD/MM/YYYY HH:MM) que se imprime en el header.
+                       Si no se pasa, se usa la hora local de Argentina.
+    """
     output_dir = os.path.join("generated_pdfs")
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, nombre_archivo)
 
-    data = _render_pdf_bytes(resumen)
+    data = _render_pdf_bytes(resumen, fecha_display=fecha_display)
 
     with NamedTemporaryFile(dir=output_dir, delete=False) as tmp:
         tmp.write(data)

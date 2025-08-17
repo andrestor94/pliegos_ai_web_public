@@ -362,7 +362,10 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         # Importante: nombre con hora local AR para que el usuario vea su hora real
         timestamp = now_stamp_ar()
         nombre_archivo = f"resumen_{timestamp}.pdf"
-        await run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo)
+
+        # NUEVO: fecha legible local para que el PDF no quede corrido +3h
+        fecha_ar_legible = datetime.now(TZ_AR).strftime("%d/%m/%Y %H:%M")
+        await run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo, fecha_ar_legible)
     except Exception as e:
         return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
 
@@ -611,7 +614,7 @@ async def crear_usuario_api(request: Request):
         nombre = data.get("nombre")
         email = data.get("email")
         rol = data.get("rol")
-        if not nombre or not email or not rol:
+        if not nombre, or not email, or not rol:  # noqa: E999 (claridad)
             return JSONResponse({"error": "Faltan campos: nombre, email, rol"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
         agregar_usuario(nombre, email, "1234", rol, actor_user_id=actor_user_id, ip=ip)
