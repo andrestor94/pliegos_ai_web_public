@@ -914,7 +914,7 @@ async def chat_enviar_archivos(
             # Continuamos; se podría informar un warning al front.
 
     # 🔔 Push en tiempo real para el receptor
-    await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=(texto o "[Adjuntos]"))
+    await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=(texto or "[Adjuntos]"))
     return JSONResponse({"ok": True, "id": msg_id})
 
 # ---- Compat: enviar mensaje con 1 archivo (reusa la lógica nueva) ---------
