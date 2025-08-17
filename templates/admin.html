@@ -3,36 +3,36 @@
 {% block title %}Panel de Administración · Suizo Argentina{% endblock %}
 
 {% block extra_head %}
-  <!-- Axios para las llamadas del panel -->
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <style>
-    /* Ajustes finos del panel admin (encajan con la UI global) */
     .admin-actions .btn{ border-radius:10px; }
     .badge-role{ background:#eef2ff; color:#1e40af; border:1px solid #c7d2fe; }
     .badge-ok{ background:#10b981; }
     .badge-off{ background:#cbd5e1; color:#334155; }
     .table thead{ background:#f6f7fe; }
     .hint{ color:#667085; }
-    /* Métricas */
-    .metric{
-      display:flex; align-items:center; gap:.6rem;
-      padding:.75rem 1rem; border:1px solid #e5e7eb; border-radius:12px;
-      background:#fafafa;
+
+    /* KPI compacto en “Monitoreo & Auditoría de actividad” */
+    .kpi-box{
+      display:flex; align-items:center; gap:10px;
+      padding:10px 14px; border:1px solid var(--border); border-radius:12px;
+      background:var(--card); min-width:140px;
     }
-    .metric .num{ font-weight:700; font-size:1.25rem; }
-    .metric .label{ color:#4b5563; }
+    .kpi-num{ font-size:20px; font-weight:700; line-height:1; }
+    .kpi-sub{ font-size:12px; color:#64748b; }
   </style>
 {% endblock %}
 
 {% block content %}
   <div class="grid">
+    <!-- Encabezado + acciones (SOLO AQUÍ los botones) -->
     <section class="cardx col-12">
       <div class="d-flex align-items-center justify-content-between">
         <h5 class="title mb-0">
           <i class="bi bi-gear"></i> Administración de Usuarios
         </h5>
         <div class="d-flex gap-2">
-          <a href="/auditoria-actividad" class="btn btn-sm btn-outline-primary">
+          <a href="/auditoria/actividad" class="btn btn-sm btn-outline-primary">
             <i class="bi bi-graph-up"></i> Actividad de usuarios
           </a>
           <a href="/usuarios-activos" class="btn btn-sm btn-outline-primary">
@@ -46,31 +46,21 @@
       </div>
     </section>
 
-    <!-- Métricas rápidas de actividad -->
+    <!-- Monitoreo (SIN botones repetidos) -->
     <section class="cardx col-12">
-      <h6 class="mb-3">Monitoreo &amp; Auditoría de actividad</h6>
-      <div class="row g-3">
-        <div class="col-md-4">
-          <div class="metric">
-            <i class="bi bi-activity"></i>
-            <div>
-              <div class="num" id="onlineCount">0</div>
-              <div class="label">en línea (últ. 5&nbsp;min)</div>
-            </div>
+      <h6 class="mb-3">Monitoreo & Auditoría de actividad</h6>
+      <div class="d-flex align-items-center gap-3">
+        <div class="kpi-box">
+          <i class="bi bi-activity"></i>
+          <div>
+            <div id="kpiOnline" class="kpi-num">—</div>
+            <div class="kpi-sub">en línea (últ. 5 min)</div>
           </div>
         </div>
-        <div class="col-md-8 d-flex flex-wrap gap-2">
-          <a href="/auditoria-actividad" class="btn btn-outline-primary">
-            <i class="bi bi-graph-up"></i> Ir a Auditoría de actividad
-          </a>
-          <a href="/usuarios-activos" class="btn btn-outline-primary">
-            <i class="bi bi-people"></i> Ver usuarios activos en vivo
-          </a>
+        <div class="hint ms-1">
+          La auditoría de actividad registra inicios/cierres y duración por usuario. La vista de “Usuarios activos”
+          muestra quién está conectado ahora mismo (señalado por los pings del front).
         </div>
-      </div>
-      <div class="mt-2 hint small">
-        La auditoría de actividad registra inicios/cierres y duración por usuario. La vista de “Usuarios activos” muestra quién
-        está conectado ahora mismo (señalado por los pings del front).
       </div>
     </section>
 
@@ -139,6 +129,17 @@
   /* Util */
   function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+  /* KPI en línea */
+  async function refreshOnline(){
+    try{
+      const r = await fetch('/presence/online?minutes=5');
+      const j = await r.json();
+      document.getElementById('kpiOnline').textContent = (j.items||[]).length ?? 0;
+    }catch(_){
+      document.getElementById('kpiOnline').textContent = '0';
+    }
+  }
+
   /* Cargar usuarios */
   let usuariosCache = [];
   async function cargarUsuarios(){
@@ -147,7 +148,6 @@
       <tr><td colspan="5" class="text-center py-4 text-muted">
         <div class="spinner-border spinner-border-sm me-2" role="status"></div> Cargando…
       </td></tr>`;
-
     try{
       const res = await axios.get('/admin/usuarios');
       usuariosCache = Array.isArray(res.data) ? res.data : [];
@@ -199,26 +199,24 @@
     });
   }
 
-  /* Acciones */
+  /* Acciones CRUD */
   document.getElementById('crearUsuarioForm').addEventListener('submit', async (e)=>{
     e.preventDefault();
     const nombre = document.getElementById('nombre').value.trim();
     const email  = document.getElementById('email').value.trim();
     const rol    = document.getElementById('rol').value;
-
-    const box = document.getElementById('mensaje');
-    box.innerHTML = '';
+    const box = document.getElementById('mensaje'); box.innerHTML = '';
 
     try{
       const res = await axios.post('/admin/crear-usuario', { nombre, email, rol });
       box.innerHTML = `<div class="alert alert-success">${escapeHtml(res?.data?.mensaje || 'Usuario creado')}</div>`;
       e.target.reset();
       await cargarUsuarios();
-      if (window.showToast) showToast({title:'Usuario creado', body: email, icon:'check2-circle'});
+      showToast({title:'Usuario creado', body: email, icon:'check2-circle'});
     }catch(err){
       const msg = err?.response?.data?.error || 'Error al crear el usuario';
       box.innerHTML = `<div class="alert alert-danger">${escapeHtml(msg)}</div>`;
-      if (window.showToast) showToast({title:'Error', body: msg, icon:'exclamation-triangle'});
+      showToast({title:'Error', body: msg, icon:'exclamation-triangle'});
     }
   });
 
@@ -226,67 +224,51 @@
     const email = decodeURIComponent(emailEnc);
     try{
       await axios.post('/admin/blanquear-password', { email });
-      if (window.showToast) showToast({title:'Password blanqueado', body:`Usuario: ${email}`, icon:'key'});
+      showToast({title:'Password blanqueado', body:`Usuario: ${email}`, icon:'key'});
       alert('Contraseña blanqueada a 1234');
     }catch(_){
-      if (window.showToast) showToast({title:'Error', body:'No se pudo blanquear la contraseña', icon:'exclamation-triangle'});
+      showToast({title:'Error', body:'No se pudo blanquear la contraseña', icon:'exclamation-triangle'});
     }
   }
-
   async function desactivarUsuario(emailEnc){
     const email = decodeURIComponent(emailEnc);
     try{
       await axios.post('/admin/desactivar-usuario', { email });
       await cargarUsuarios();
-      if (window.showToast) showToast({title:'Usuario desactivado', body:email, icon:'person-dash'});
+      showToast({title:'Usuario desactivado', body:email, icon:'person-dash'});
     }catch(_){
-      if (window.showToast) showToast({title:'Error', body:'No se pudo desactivar', icon:'exclamation-triangle'});
+      showToast({title:'Error', body:'No se pudo desactivar', icon:'exclamation-triangle'});
     }
   }
-
   async function activarUsuario(emailEnc){
     const email = decodeURIComponent(emailEnc);
     try{
       await axios.post('/admin/activar-usuario', { email });
       await cargarUsuarios();
-      if (window.showToast) showToast({title:'Usuario activado', body:email, icon:'person-check'});
+      showToast({title:'Usuario activado', body:email, icon:'person-check'});
     }catch(_){
-      if (window.showToast) showToast({title:'Error', body:'No se pudo activar', icon:'exclamation-triangle'});
+      showToast({title:'Error', body:'No se pudo activar', icon:'exclamation-triangle'});
     }
   }
-
   async function eliminarUsuario(emailEnc){
     const email = decodeURIComponent(emailEnc);
     if(!confirm(`¿Eliminar definitivamente a ${email}?`)) return;
     try{
       await axios.post('/admin/eliminar-usuario', { email });
       await cargarUsuarios();
-      if (window.showToast) showToast({title:'Usuario eliminado', body:email, icon:'trash'});
+      showToast({title:'Usuario eliminado', body:email, icon:'trash'});
     }catch(_){
-      if (window.showToast) showToast({title:'Error', body:'No se pudo eliminar', icon:'exclamation-triangle'});
+      showToast({title:'Error', body:'No se pudo eliminar', icon:'exclamation-triangle'});
     }
   }
-
-  // (Opcional) endpoint para cerrar sesiones activas del usuario si lo implementaste en backend
   async function reiniciarSesion(emailEnc){
     const email = decodeURIComponent(emailEnc);
     try{
       await axios.post('/admin/reset-sesion', { email });
-      if (window.showToast) showToast({title:'Sesión reiniciada', body:email, icon:'arrow-counterclockwise'});
+      showToast({title:'Sesión reiniciada', body:email, icon:'arrow-counterclockwise'});
     }catch(_){
-      if (window.showToast) showToast({title:'Aviso', body:'Endpoint /admin/reset-sesion no disponible', icon:'info'});
+      showToast({title:'Aviso', body:'Endpoint /admin/reset-sesion no disponible', icon:'info'});
     }
-  }
-
-  /* Métrica: online últimos 5 min (se actualiza cada 30s) */
-  async function refrescarOnline(){
-    try{
-      const r = await fetch('/presence/online?minutes=5');
-      const j = await r.json();
-      const n = Array.isArray(j.items) ? j.items.length : 0;
-      const el = document.getElementById('onlineCount');
-      if(el) el.textContent = n;
-    }catch(_){}
   }
 
   /* Eventos UI */
@@ -295,7 +277,7 @@
 
   /* Init */
   cargarUsuarios();
-  refrescarOnline();
-  setInterval(refrescarOnline, 30000);
+  refreshOnline();
+  setInterval(refreshOnline, 30000);
 </script>
 {% endblock %}
