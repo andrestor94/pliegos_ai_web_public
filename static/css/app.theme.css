@@ -1,8 +1,9 @@
-<!-- ===================== app.theme.css =====================
+/* ===================== app.theme.css =====================
 Place in: /backend/static/css/app.theme.css  (or /static/app.theme.css)
-Link it in base.html (see below)
--->
-<style>
+Link it in base.html with: <link rel="stylesheet" href="{{ url_for('static', path='css/app.theme.css') }}">
+========================================================= */
+
+/* ---------- Design tokens ---------- */
 :root{
   /* Brand */
   --brand-700:#03314B; /* deep */
@@ -32,6 +33,10 @@ Link it in base.html (see below)
   --bs-primary: var(--brand-500);
   --bs-body-bg: var(--bg);
   --bs-body-color: var(--text);
+
+  /* Layout helpers */
+  --header-h: 76px;
+  --container-max: 1240px;
 }
 
 /* Dark theme */
@@ -48,7 +53,7 @@ html[data-theme="dark"]{
   --shadow-sm: 0 6px 16px rgba(0,0,0,.35);
 }
 
-/* Base */
+/* ---------- Base ---------- */
 html,body{height:100%;}
 body{
   background:var(--bg);
@@ -56,7 +61,7 @@ body{
   -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
 }
 
-/* Topbar */
+/* ---------- Topbar (sticky) ---------- */
 .app-topbar{
   position:fixed; top:0; left:0; right:0; z-index:1030;
   background: var(--surface);
@@ -67,39 +72,77 @@ body{
 .app-topbar .nav-link, .app-topbar .navbar-text{color:var(--text-2);} 
 .app-topbar .btn-chat{ border-radius: 999px; padding:.5rem 1rem; font-weight:600;}
 
-/* Layout */
-.app-main{ padding-top: 76px; }
-.container-xxl{ max-width: 1240px; }
+/* ---------- Layout ---------- */
+.app-main{ padding-top: var(--header-h); }
+.container-xxl{ max-width: var(--container-max); }
 
-/* Cards */
+/* ---------- Cards ---------- */
 .card-clean{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow-sm); }
 .card-clean .card-header{ background:transparent; border-bottom:1px solid var(--border); }
 .card-clean .card-body{ padding:1rem 1.25rem; }
 
-/* Segmented control */
+/* ---------- Segmented control ---------- */
 .segmented{ display:inline-flex; background:var(--muted); border-radius:999px; padding:4px; gap:4px; border:1px solid var(--border); }
 .segmented .btn{ border-radius:999px; font-weight:600; }
 .segmented .btn.active{ background:var(--surface); box-shadow:var(--shadow-sm); }
 
-/* Offcanvas menu */
+/* ---------- Menú offcanvas (Bootstrap) ---------- */
 .offcanvas-start{ border-right:1px solid var(--border); background:var(--surface); }
 .app-menu a{ color:var(--text-2); border-radius:12px; }
 .app-menu a.active,.app-menu a:hover{ background:var(--muted); color:var(--text); }
 
-/* Inputs */
-.form-control, .form-select{ border-radius:12px; border-color:var(--border); background:var(--surface); color:var(--text); }
-.form-control:focus, .form-select:focus{ box-shadow:0 0 0 .25rem rgba(13,110,253,.15); border-color:var(--brand-300); }
+/* Tamaños y comportamiento en móviles */
+@media (max-width: 575.98px){
+  .offcanvas-start{ width: 88vw; max-width: 420px; }
+}
+@media (min-width: 576px) and (max-width: 991.98px){
+  .offcanvas-start{ width: 360px; }
+}
 
-/* FAB */
-.fab{ position:fixed; right:24px; bottom:24px; z-index:1030; border-radius:999px; padding:.875rem 1rem; box-shadow:var(--shadow-lg); font-weight:700; }
+/* ---------- Inputs ---------- */
+.form-control, .form-select{
+  border-radius:12px; border-color:var(--border);
+  background:var(--surface); color:var(--text);
+}
+.form-control:focus, .form-select:focus{
+  box-shadow:0 0 0 .25rem rgba(13,110,253,.15); border-color:var(--brand-300);
+}
 
-/* AI widget */
-.ai-widget{ position:fixed; right:24px; bottom:88px; width:360px; max-width:86vw; height:520px; background:var(--surface); border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow-lg); overflow:hidden; transform:translateY(16px); opacity:0; pointer-events:none; transition: all .2s cubic-bezier(0.22,1,0.36,1); }
+/* ---------- Tablas responsivas ---------- */
+.table-wrap{ width:100%; overflow-x:auto; -webkit-overflow-scrolling: touch; }
+.table-wrap > .table{ width:100%; white-space:nowrap; margin-bottom:0; }
+.table thead{ background:var(--muted); }
+html[data-theme="dark"] .table thead{ background:#0f172a; }
+
+/* ---------- AI widget ---------- */
+.ai-widget{
+  position:fixed; right:24px; bottom:88px;
+  width:360px; max-width:86vw; height:520px;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:18px; box-shadow:var(--shadow-lg); overflow:hidden;
+  transform:translateY(16px); opacity:0; pointer-events:none;
+  transition: all .2s cubic-bezier(0.22,1,0.36,1);
+  z-index: 1040;
+}
 .ai-widget.open{ transform:translateY(0); opacity:1; pointer-events:auto; }
 .ai-widget .ai-header{ display:flex; align-items:center; justify-content:space-between; padding:.5rem .75rem; border-bottom:1px solid var(--border); }
 .ai-widget .ai-body{ height:100%; background:var(--bg); }
 
-/* FullCalendar overrides */
+@media (max-width: 575.98px){
+  .ai-widget{ right:12px; left:12px; width:auto; height: 70vh; bottom: 16px; }
+}
+
+/* ---------- FAB ---------- */
+.fab{
+  position:fixed; right:24px; bottom:24px; z-index:1030;
+  border-radius:999px; padding:.875rem 1rem; font-weight:700;
+  box-shadow:var(--shadow-lg);
+}
+@media (max-width: 575.98px){
+  .fab{ right:16px; bottom:16px; }
+}
+
+/* ---------- FullCalendar overrides ---------- */
 .fc .fc-toolbar-title{ font-size:1.4rem; font-weight:700; color:var(--text); }
 .fc .fc-daygrid-day-number{ font-weight:600; color:var(--text-2); }
 .fc .fc-daygrid-day-frame{ background:var(--surface); }
@@ -108,275 +151,46 @@ body{
 .fc .fc-button{ border-radius:999px; border-color:var(--border); background:var(--surface); color:var(--text); }
 .fc .fc-button-primary:not(:disabled).fc-button-active{ background:var(--brand-500); border-color:var(--brand-500); }
 
-/* Utilities */
-.hero-title{ font-size:clamp(1.6rem, 1.2rem + 1.2vw, 2rem); font-weight:800; color:var(--brand-700); }
+/* ---------- Utilities ---------- */
+.hero-title{
+  font-size:clamp(1.6rem, 1.2rem + 1.2vw, 2rem);
+  font-weight:800; color:var(--brand-700);
+}
 .subtle{ color:var(--text-2); }
 .shadow-hover{ transition: box-shadow .18s cubic-bezier(0.22,1,0.36,1), transform .18s; }
 .shadow-hover:hover{ box-shadow:var(--shadow-md); transform: translateY(-2px); }
 
-/* Respect reduced motion */
+/* ---------- Responsive helpers (mobile-first) ---------- */
+/* Grillas adaptables para tus vistas (analisis, admin, etc.) */
+.stack{ display:grid; gap: .75rem; } /* 1 columna por defecto */
+@media (min-width: 768px){
+  .cols-md-2{ display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+}
+@media (min-width: 992px){
+  .cols-lg-3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem; }
+  .split{ display:grid; grid-template-columns: 1.2fr .8fr; gap:1rem; } /* Ej: resultados | chat */
+}
+
+/* Zonas arrastrar/soltar */
+.dropzone{
+  border: 2px dashed var(--border); background: var(--muted);
+  padding: 1rem; border-radius: var(--radius); text-align:center;
+}
+
+/* Alturas útiles para paneles con scroll (chat, previsualización) */
+.h-pane-50{ height: 50vh; overflow:auto; }
+.h-pane-55{ height: 55vh; overflow:auto; }
+.h-pane-60{ height: 60vh; overflow:auto; }
+
+/* Inputs compactos (útil en móviles) */
+.input-compact .form-control,
+.input-compact .form-select{ padding:.45rem .6rem; font-size:.95rem; }
+
+/* ---------- Sticky helpers ---------- */
+.sticky-topbar{ position: sticky; top: 0; z-index: 10; background: var(--surface); border-bottom: 1px solid var(--border); }
+.sticky-footer{ position: sticky; bottom: 0; z-index: 5; background: var(--surface); border-top: 1px solid var(--border); }
+
+/* ---------- Reduced motion ---------- */
 @media (prefers-reduced-motion: reduce){
   *{ transition:none !important; animation:none !important; }
 }
-</style>
-
-
-<!-- ===================== base.html =====================
-All templates should extend this base. Replace your old base if any.
--->
-<!DOCTYPE html>
-<html lang="es" data-theme="light">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{% block title %}Suizo Argentina – Licitaciones IA{% endblock %}</title>
-  <!-- Bootstrap & Icons -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" />
-  <!-- App theme (above) -->
-  {% block theme_css %}
-    <!-- If you move app.theme.css to a file, link it here instead of inline -->
-  {% endblock %}
-  {% block extra_head %}{% endblock %}
-</head>
-<body>
-<nav class="navbar app-topbar navbar-expand px-2 px-md-3">
-  <div class="container-xxl align-items-center">
-    <button class="btn btn-outline-secondary me-2" data-bs-toggle="offcanvas" data-bs-target="#appMenu" aria-controls="appMenu" title="Menú">
-      <i class="bi bi-list"></i>
-    </button>
-    <a class="navbar-brand d-flex align-items-center" href="/">
-      <img src="/static/logo_suizo.svg" alt="Suizo" height="22" class="me-2">
-      <span>Suizo Argentina <span class="text-body-secondary">– Licitaciones IA</span></span>
-    </a>
-
-    <div class="ms-auto d-flex align-items-center gap-2">
-      <button id="themeToggle" class="btn btn-outline-secondary" title="Cambiar tema"><i class="bi bi-moon-stars"></i></button>
-      <a href="#" id="chatTopbar" class="btn btn-primary btn-chat"><i class="bi bi-robot me-1"></i> Chat OpenAI</a>
-      <span class="navbar-text d-none d-md-inline subtle"><i class="bi bi-person-circle me-1"></i>{{ request.session.get('email') or 'usuario' }}</span>
-    </div>
-  </div>
-</nav>
-
-<!-- Offcanvas menu -->
-<div class="offcanvas offcanvas-start" tabindex="-1" id="appMenu" aria-labelledby="appMenuLabel">
-  <div class="offcanvas-header">
-    <h5 class="offcanvas-title" id="appMenuLabel">Menú</h5>
-    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
-  </div>
-  <div class="offcanvas-body app-menu">
-    <div class="list-group list-group-flush">
-      <a class="list-group-item list-group-item-action" href="/">Inicio</a>
-      <a class="list-group-item list-group-item-action" href="/chat">Chat interno</a>
-      <a class="list-group-item list-group-item-action" href="/incidencias">Incidencias</a>
-      <a class="list-group-item list-group-item-action" href="/historial">Historial</a>
-      <a class="list-group-item list-group-item-action" href="/auditoria">Auditoría</a>
-      <a class="list-group-item list-group-item-action" href="/report">Reportes</a>
-      <a class="list-group-item list-group-item-action" href="/admin">Panel Admin</a>
-      <hr>
-      <a class="list-group-item list-group-item-action" href="/cambiar_password">Cambiar contraseña</a>
-      <a class="list-group-item list-group-item-action" href="/logout">Salir</a>
-    </div>
-  </div>
-</div>
-
-<main class="app-main">
-  <div class="container-xxl">
-    {% block content %}{% endblock %}
-  </div>
-</main>
-
-<!-- AI Widget (toggle from Topbar & FAB) -->
-<section id="aiWidget" class="ai-widget" aria-hidden="true">
-  <div class="ai-header">
-    <strong><i class="bi bi-robot me-1"></i> Chat con OpenAI</strong>
-    <div class="d-flex align-items-center gap-2">
-      <button class="btn btn-sm btn-outline-secondary" id="aiMin" title="Minimizar"><i class="bi bi-dash"></i></button>
-      <button class="btn btn-sm btn-outline-secondary" id="aiClose" title="Cerrar"><i class="bi bi-x"></i></button>
-    </div>
-  </div>
-  <div class="ai-body">
-    <!-- Reemplaza este iframe con tu widget/endpoint real si lo tenés -->
-    <iframe src="/chat_openai_embed" title="Chat OpenAI" style="border:0;width:100%;height:100%;background:transparent"></iframe>
-  </div>
-</section>
-
-<!-- Bootstrap JS -->
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script>
-// Theme toggle with localStorage
-(function(){
-  const key='theme';
-  const root=document.documentElement;
-  const btn=document.getElementById('themeToggle');
-  const stored=localStorage.getItem(key);
-  if(stored){ root.setAttribute('data-theme', stored); }
-  btn?.addEventListener('click',()=>{
-    const cur=root.getAttribute('data-theme')||'light';
-    const next= cur==='light' ? 'dark' : 'light';
-    root.setAttribute('data-theme', next);
-    localStorage.setItem(key,next);
-    btn.innerHTML = next==='dark' ? '<i class="bi bi-sun"></i>' : '<i class="bi bi-moon-stars"></i>';
-  });
-  // set correct icon on load
-  btn.innerHTML = (root.getAttribute('data-theme')==='dark')? '<i class="bi bi-sun"></i>' : '<i class="bi bi-moon-stars"></i>';
-})();
-
-// AI widget toggle
-(function(){
-  const widget=document.getElementById('aiWidget');
-  const openers=[document.getElementById('chatTopbar')];
-  openers.forEach(el=>el?.addEventListener('click', (e)=>{ e.preventDefault(); widget.classList.toggle('open'); }));
-  document.getElementById('aiClose')?.addEventListener('click',()=> widget.classList.remove('open'));
-  document.getElementById('aiMin')?.addEventListener('click',()=> widget.classList.toggle('open'));
-  window.toggleAiWidget=()=> widget.classList.toggle('open');
-})();
-</script>
-
-{% block extra_scripts %}{% endblock %}
-</body>
-</html>
-
-
-<!-- ===================== index.html =====================
-Home with Calendar + Quick actions + FAB for Chat OpenAI
--->
-{% extends "base.html" %}
-{% block title %}Inicio – Suizo Argentina{% endblock %}
-
-{% block extra_head %}
-  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css" rel="stylesheet"/>
-{% endblock %}
-
-{% block content %}
-  <div class="py-3">
-    <div class="d-flex align-items-center justify-content-between mb-3">
-      <div>
-        <h1 class="hero-title mb-1">Panel principal</h1>
-        <div class="subtle" id="todayLabel"></div>
-      </div>
-      <div class="segmented">
-        <button class="btn btn-sm btn-light active" data-calview="dayGridMonth">Mes</button>
-        <button class="btn btn-sm btn-light" data-calview="timeGridWeek">Semana</button>
-        <button class="btn btn-sm btn-light" data-calview="listWeek">Lista</button>
-      </div>
-    </div>
-
-    <div class="row g-3">
-      <div class="col-lg-8">
-        <div class="card card-clean shadow-hover">
-          <div class="card-header d-flex align-items-center justify-content-between">
-            <strong><i class="bi bi-calendar3 me-2"></i> Calendario</strong>
-            <div class="d-flex align-items-center gap-2">
-              <button class="btn btn-sm btn-outline-secondary" id="prevBtn"><i class="bi bi-chevron-left"></i></button>
-              <button class="btn btn-sm btn-outline-secondary" id="todayBtn">Hoy</button>
-              <button class="btn btn-sm btn-outline-secondary" id="nextBtn"><i class="bi bi-chevron-right"></i></button>
-            </div>
-          </div>
-          <div class="card-body p-2">
-            <div id="calendar"></div>
-          </div>
-        </div>
-      </div>
-      <div class="col-lg-4">
-        <div class="card card-clean mb-3 shadow-hover">
-          <div class="card-header"><strong>Acciones rápidas</strong></div>
-          <div class="card-body d-grid gap-2">
-            <a class="btn btn-primary" href="/incidencias"><i class="bi bi-tools me-1"></i> Crear incidencia</a>
-            <a class="btn btn-outline-primary" href="/chat"><i class="bi bi-chat-dots me-1"></i> Abrir chat interno</a>
-            <a class="btn btn-outline-primary" href="/report"><i class="bi bi-file-earmark-text me-1"></i> Nuevo análisis de pliego</a>
-          </div>
-        </div>
-        <div class="card card-clean shadow-hover">
-          <div class="card-header"><strong>Resumen</strong></div>
-          <div class="card-body">
-            <ul class="list-unstyled mb-0">
-              <li class="mb-2"><span class="badge bg-primary-subtle text-primary me-2">•</span> Incidencias abiertas: <strong>{{ incidencias_abiertas or 0 }}</strong></li>
-              <li class="mb-2"><span class="badge bg-warning-subtle text-warning me-2">•</span> Eventos esta semana: <strong id="kpiSemana">—</strong></li>
-              <li><span class="badge bg-success-subtle text-success me-2">•</span> Último análisis: <strong>{{ ultimo_analisis or '—' }}</strong></li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- FAB Chat OpenAI -->
-  <button class="btn btn-primary fab" onclick="toggleAiWidget()"><i class="bi bi-robot me-2"></i>Chat OpenAI</button>
-{% endblock %}
-
-{% block extra_scripts %}
-<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
-<script>
-// Today label
-(function(){
-  const el=document.getElementById('todayLabel');
-  const fmt = new Intl.DateTimeFormat('es-AR', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
-  el.textContent = fmt.format(new Date());
-})();
-
-// FullCalendar init
-let calendar;
-(function(){
-  const calendarEl=document.getElementById('calendar');
-  if(!calendarEl) return;
-  calendar = new FullCalendar.Calendar(calendarEl, {
-    height: 'auto',
-    initialView: 'dayGridMonth',
-    headerToolbar: false,
-    locale: 'es',
-    buttonIcons: true,
-    nowIndicator: true,
-    firstDay: 1,
-    navLinks: true,
-    events: async function(fetchInfo, successCallback){
-      try{
-        const res = await fetch('/api/calendar/events');
-        if(!res.ok) throw new Error('No events endpoint');
-        const data = await res.json();
-        successCallback(data.events || []);
-        // KPI semana
-        const start = new Date();
-        const end = new Date(); end.setDate(start.getDate()+7);
-        const cnt = (data.events||[]).filter(e=>{ const d=new Date(e.start||e.date); return d>=start && d<=end; }).length;
-        document.getElementById('kpiSemana').textContent = cnt;
-      }catch(e){
-        successCallback([]);
-        document.getElementById('kpiSemana').textContent = '0';
-      }
-    },
-    eventTimeFormat: { hour: '2-digit', minute: '2-digit', meridiem:false },
-  });
-  calendar.render();
-
-  // Controls
-  document.querySelectorAll('[data-calview]').forEach(btn=>{
-    btn.addEventListener('click',()=>{
-      document.querySelectorAll('[data-calview]').forEach(b=>b.classList.remove('active'));
-      btn.classList.add('active');
-      calendar.changeView(btn.getAttribute('data-calview'));
-    })
-  });
-  document.getElementById('prevBtn').addEventListener('click',()=> calendar.prev());
-  document.getElementById('nextBtn').addEventListener('click',()=> calendar.next());
-  document.getElementById('todayBtn').addEventListener('click',()=> calendar.today());
-})();
-</script>
-{% endblock %}
-
-
-<!-- ===================== Example snippet for other templates =====================
-Use this pattern in admin.html, incidencias.html, chat.html, etc. Replace inner content only.
--->
-{% extends "base.html" %}
-{% block title %}Incidencias – Suizo Argentina{% endblock %}
-{% block content %}
-  <div class="py-3">
-    <h1 class="hero-title mb-3"><i class="bi bi-tools me-2"></i> Gestión de incidencias</h1>
-    <div class="card card-clean">
-      <div class="card-body">
-        <!-- TU FORMULARIO EXISTENTE AQUÍ, sin cambiar nombres de inputs -->
-      </div>
-    </div>
-  </div>
-{% endblock %}

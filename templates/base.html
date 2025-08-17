@@ -34,6 +34,9 @@
       --bg-body:#f7f8ff;
       --sidebar-grad-a:#0f172a; --sidebar-grad-b:#0b1220;
       --chip-bg:#f6f7fe;
+      --sidebar-w: 74px;
+      --drawer-w: 280px; /* ancho del drawer en móviles/tablets */
+      --header-h: 76px;
     }
     /* Modo oscuro global (forzado por atributo) */
     [data-theme="dark"]{
@@ -59,8 +62,8 @@
     .app{
       height:100%;
       display:grid;
-      grid-template-columns: 74px 1fr;
-      grid-template-rows: 76px 1fr;
+      grid-template-columns: var(--sidebar-w) 1fr;
+      grid-template-rows: var(--header-h) 1fr;
       grid-template-areas:
         "sidebar header"
         "sidebar content";
@@ -70,13 +73,14 @@
     .sidebar{
       grid-area:sidebar;
       display:flex; flex-direction:column; align-items:center;
-      width:74px; padding:14px 8px;
+      width:var(--sidebar-w); padding:14px 8px;
       background: linear-gradient(180deg, var(--sidebar-grad-a), var(--sidebar-grad-b));
       border-radius: 0 26px 26px 0;
       box-shadow: 0 10px 26px rgba(2,6,23,.34), inset 0 0 0 1px rgba(255,255,255,.04);
       color:#fff;
-      height: 70%;
+      height: calc(100% - 10vh);
       margin: auto 0;
+      z-index: 1020;
     }
     [data-theme="dark"] .sidebar{
       box-shadow: 0 10px 26px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.04);
@@ -114,9 +118,25 @@
       border-bottom:1px solid var(--border);
       background:linear-gradient(0deg, rgba(255,255,255,.92), rgba(255,255,255,.92));
       backdrop-filter: blur(6px);
+      position: sticky;
+      top: 0;
+      z-index: 1030;
     }
     [data-theme="dark"] .header{
       background:linear-gradient(0deg, rgba(11,18,32,.92), rgba(11,18,32,.92));
+    }
+
+    /* Botón hamburguesa (visible en móviles/tablets) */
+    .menu-btn{
+      display:none;
+      width:42px; height:42px; border-radius:12px;
+      border:1px solid var(--border);
+      background:#fff; color:var(--ink);
+      align-items:center; justify-content:center;
+    }
+    [data-theme="dark"] .menu-btn{ background:#0b1220; color:#e5e7eb; }
+    @media (max-width: 992px){
+      .menu-btn{ display:inline-flex; }
     }
 
     /* Brand: sólo logo + “Licitaciones IA” */
@@ -188,12 +208,53 @@
     .col-6{ grid-column: span 6; } .col-7{ grid-column: span 7; } .col-8{ grid-column: span 8; } .col-12{ grid-column: span 12; }
 
     @media (max-width: 1200px){ .col-5,.col-4,.col-3{ grid-column: span 6; } }
-    @media (max-width: 760px){
-      .app{ grid-template-columns: 1fr; grid-template-rows: 76px 1fr; grid-template-areas: "header" "content"; }
-      .sidebar{ display:none; }
-      .content{ padding:16px; }
-      .grid{ grid-template-columns: repeat(6, 1fr); }
-      .col-8,.col-7,.col-6,.col-5,.col-4,.col-3{ grid-column: span 6; }
+
+    /* ====== Drawer Mobile / Tablet ======
+       En < 992px la sidebar pasa a drawer deslizante, con overlay.
+    */
+    @media (max-width: 991.98px){
+      .app{
+        grid-template-columns: 1fr;
+        grid-template-rows: var(--header-h) 1fr;
+        grid-template-areas:
+          "header"
+          "content";
+      }
+      .sidebar{
+        position: fixed;
+        top: 0; left: 0;
+        height: 100dvh;
+        width: min(var(--drawer-w), 88vw);
+        max-width: 92vw;
+        padding: 16px 10px;
+        margin: 0;
+        border-radius: 0 22px 22px 0;
+        transform: translateX(-100%);
+        transition: transform .25s ease;
+      }
+      .sidebar.open{ transform: translateX(0); }
+      .sidebar .close-drawer{
+        display: inline-flex;
+        align-items:center; justify-content:center;
+        width:36px; height:36px; border-radius:10px;
+        border:1px solid rgba(255,255,255,.12);
+        color:#fff; background:rgba(255,255,255,.06);
+        margin: 2px 0 10px auto;
+      }
+      .sidebar-overlay{
+        position: fixed;
+        inset: 0;
+        background: rgba(15,18,34,.35);
+        backdrop-filter: blur(2px);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity .2s ease;
+        z-index: 1010;
+      }
+      .sidebar-overlay.open{
+        opacity: 1;
+        pointer-events: auto;
+      }
     }
 
     /* Inputs y tablas en dark/light */
@@ -268,7 +329,6 @@
     .msg.me{ background:#eff4ff; border-color:#dfe6ff; }
     [data-theme="dark"] .msg{ background:#0f172a; }
 
-    /* Indicador escribiendo… */
     .msg.typing{ display:flex; align-items:center; gap:8px; }
     .typing-dot{
       display:inline-block; width:6px; height:6px; border-radius:50%;
@@ -296,7 +356,7 @@
       box-shadow:0 12px 26px rgba(139,92,246,.22);
     }
 
-    /* ===== Theming FullCalendar ===== */
+    /* ===== FullCalendar (si se usa) ===== */
     .fc { --fc-border-color: var(--border); --fc-page-bg-color: transparent; }
     .fc .fc-toolbar-title{ font-weight:700; color:#111827; }
     [data-theme="dark"] .fc .fc-toolbar-title{ color:#e5e7eb; }
@@ -319,12 +379,7 @@
     }
     .fc .fc-highlight{ background: rgba(139,92,246,.16); }
 
-    /* Calendario compacto dentro de una card */
-    .calendar-card{ padding:12px; }
-    .calendar-compact .fc .fc-view-harness{ min-height: 520px; }
-    .calendar-compact .fc .fc-toolbar{ margin:8px 0 12px; }
-
-    /* ===== Ocultar FAB flotante “Chat OpenAI” si existe ===== */
+    /* Ocultar FAB externo si existe */
     #chatOpenAiFab, .chat-openai-fab, [data-chat-fab]{ display:none !important; }
   </style>
 
@@ -344,8 +399,13 @@
 
   <div class="shell">
     <div class="app">
-      <!-- ===== Sidebar ===== -->
-      <aside class="sidebar">
+      <!-- ===== Sidebar (drawer en mobile) ===== -->
+      <aside class="sidebar" id="sidebar" aria-hidden="false" aria-label="Navegación lateral">
+        <!-- Botón cerrar (solo visible en mobile) -->
+        <button class="close-drawer d-none d-lg-none" id="btnCloseDrawer" aria-label="Cerrar menú">
+          <i class="bi bi-x-lg"></i>
+        </button>
+
         <div class="side-logo" title="Suizo Argentina">
           <img src="/static/logo-suizo.png" alt="Suizo"/>
         </div>
@@ -379,9 +439,17 @@
         <div class="side-small">v1</div>
       </aside>
 
+      <!-- Overlay del drawer (solo mobile) -->
+      <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
+
       <!-- ===== Header ===== -->
       <header class="header">
-        <!-- Brand: solo logo + “Licitaciones IA” -->
+        <!-- Botón hamburguesa (abre drawer en mobile/tablet) -->
+        <button class="menu-btn" id="btnOpenDrawer" aria-label="Abrir menú" aria-controls="sidebar" aria-expanded="false">
+          <i class="bi bi-list"></i>
+        </button>
+
+        <!-- Brand -->
         <div class="brand">
           <img src="/static/logo-suizo.png" alt="Logo Suizo">
           <div class="brand-title">Licitaciones IA</div>
@@ -520,7 +588,6 @@
         const j = await r.json().catch(()=> ({}));
         if(!r.ok || !j.ok){ throw new Error(j?.error || 'No se pudo actualizar el avatar'); }
         showToast({title:'Perfil', body:'Avatar actualizado', icon:'person-check'});
-        // Forzar refresco (evitar cache)
         const url = j.avatar_url + '?t=' + Date.now();
         const imgEl  = document.getElementById('avatarImg');
         const iniEl  = document.getElementById('avatarInitials');
@@ -577,6 +644,63 @@
       }catch(_){}
     });
 
+    /* ====== Drawer Sidebar (mobile/tablet) ====== */
+    const mqDesktop = window.matchMedia('(min-width: 992px)');
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    const btnOpen = document.getElementById('btnOpenDrawer');
+    const btnClose = document.getElementById('btnCloseDrawer');
+
+    function isDesktop(){ return mqDesktop.matches; }
+
+    function openSidebarMobile(){
+      if(isDesktop()) return;
+      sidebar.classList.add('open');
+      overlay.classList.add('open');
+      sidebar.setAttribute('aria-hidden','false');
+      btnOpen?.setAttribute('aria-expanded','true');
+      // focus first interactive (logo siguiente o nav)
+      const first = sidebar.querySelector('a,button,[tabindex]:not([tabindex="-1"])');
+      if(first) try{ first.focus(); }catch(_){}
+    }
+    function closeSidebarMobile(){
+      if(isDesktop()){
+        // en desktop la sidebar es fija
+        sidebar.classList.remove('open');
+        overlay.classList.remove('open');
+        sidebar.setAttribute('aria-hidden','false');
+        btnOpen?.setAttribute('aria-expanded','false');
+        return;
+      }
+      sidebar.classList.remove('open');
+      overlay.classList.remove('open');
+      sidebar.setAttribute('aria-hidden','true');
+      btnOpen?.setAttribute('aria-expanded','false');
+      btnOpen?.focus?.();
+    }
+
+    btnOpen?.addEventListener('click', openSidebarMobile);
+    btnClose?.addEventListener('click', closeSidebarMobile);
+    overlay?.addEventListener('click', closeSidebarMobile);
+    document.addEventListener('keydown', (e)=>{
+      if(e.key === 'Escape') closeSidebarMobile();
+    });
+
+    function applySidebarMode(){
+      if(isDesktop()){
+        // Modo fijo
+        sidebar.classList.remove('open');
+        overlay.classList.remove('open');
+        sidebar.setAttribute('aria-hidden','false');
+        btnOpen?.setAttribute('aria-expanded','false');
+      }else{
+        // Modo drawer cerrado por defecto
+        sidebar.setAttribute('aria-hidden','true');
+      }
+    }
+    mqDesktop.addEventListener?.('change', applySidebarMode);
+    applySidebarMode();
+
     /* ===== Chat IA (drawer) ===== */
     const CHAT_STATE_KEY = 'chatboxState';
     const chatIa = document.getElementById('chatIa');
@@ -603,6 +727,8 @@
     }
     function openChatAndExpand(){ openChatIA(true); }
 
+    window.openChatAndExpand = openChatAndExpand;
+
     chatIaOverlay?.addEventListener('click', closeChatIA);
     chatIaClose?.addEventListener('click', closeChatIA);
     document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeChatIA(); });
@@ -614,7 +740,7 @@
       catch(_){ chatIaBody.scrollTop = chatIaBody.scrollHeight; }
     }
 
-    // ✅ Enter = enviar | Shift+Enter = salto de línea
+    // Enter = enviar | Shift+Enter = salto de línea
     chatIaInput?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
         e.preventDefault(); chatIaForm?.requestSubmit();
@@ -704,7 +830,7 @@
       }
     });
 
-    /* Toast helper (fix de paréntesis) */
+    /* Toast helper */
     function showToast({title='Aviso', body='', icon='info', delay=3200}={}){
       const cont=document.getElementById('toastContainer'); if(!cont) return;
       const esc=(s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

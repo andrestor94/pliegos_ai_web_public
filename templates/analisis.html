@@ -1,0 +1,388 @@
+{% extends "base.html" %}
+{% block title %}Análisis de pliegos – Suizo Argentina{% endblock %}
+
+{% block content %}
+<div class="py-3">
+  <h1 class="hero-title mb-3">
+    <i class="bi bi-file-earmark-text me-2"></i> Análisis de pliegos
+  </h1>
+
+  <!-- En mobile apila; en desktop 2 columnas (1.2fr | .8fr) -->
+  <div class="split">
+    <!-- ======================================= -->
+    <!-- Columna izquierda: Carga + Config + Resultados -->
+    <!-- ======================================= -->
+    <section class="card card-clean">
+      <div class="card-body">
+        <!-- 1) Carga de archivos -->
+        <h2 class="h6 mb-2">1) Cargar archivos (PDF / DOCX / Imágenes)</h2>
+        <div id="dzArea" class="dropzone mb-3">
+          Arrastra y suelta aquí o
+          <label class="btn btn-sm btn-primary ms-1">
+            Seleccionar
+            <input id="filesInput" type="file" name="files" multiple hidden
+                   accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.tiff,.tif"/>
+          </label>
+          <div class="small subtle mt-2">También puedes pegar con <kbd>Ctrl</kbd>+<kbd>V</kbd> imágenes copiados del portapapeles.</div>
+        </div>
+
+        <!-- Lista de archivos seleccionados -->
+        <div class="table-wrap mb-4" id="filesWrap" style="display:none;">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="min-width:220px;">Archivo</th>
+                <th>Peso</th>
+                <th>Tipo</th>
+                <th>Estado</th>
+                <th style="min-width:120px;">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="filesTbody"></tbody>
+          </table>
+        </div>
+
+        <!-- 2) Configuración de análisis -->
+        <h2 class="h6 mb-2">2) Configuración</h2>
+        <form id="cfgForm" class="row g-2 input-compact">
+          <div class="col-md-4">
+            <label class="form-label">Tipo de salida</label>
+            <select id="outType" class="form-select">
+              <option value="resumen">Resumen ejecutivo</option>
+              <option value="exhaustivo" selected>Informe exhaustivo</option>
+              <option value="tabla_requisitos">Tabla de requisitos</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Idioma</label>
+            <select id="lang" class="form-select">
+              <option value="es" selected>Español</option>
+              <option value="en">Inglés</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">OCR / Escaneados</label>
+            <select id="ocrMode" class="form-select">
+              <option value="auto" selected>Automático</option>
+              <option value="forzar">Forzar OCR</option>
+              <option value="off">Sin OCR</option>
+            </select>
+          </div>
+        </form>
+
+        <!-- 3) Controles -->
+        <div class="d-flex flex-wrap gap-2 mt-3">
+          <button id="analyzeBtn" class="btn btn-primary" disabled>
+            <i class="bi bi-cpu me-1"></i> Analizar
+          </button>
+          <button id="exportPdfBtn" class="btn btn-outline-primary" disabled>
+            <i class="bi bi-filetype-pdf me-1"></i> Generar PDF
+          </button>
+          <button id="clearBtn" class="btn btn-outline-secondary">
+            <i class="bi bi-trash3 me-1"></i> Limpiar
+          </button>
+        </div>
+
+        <hr class="my-4"/>
+
+        <!-- 4) Resultados -->
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <h2 class="h6 m-0">Resultados</h2>
+          <div class="segmented">
+            <button class="btn btn-sm btn-light active" data-view="texto">Texto</button>
+            <button class="btn btn-sm btn-light" data-view="estructura">Estructura</button>
+            <button class="btn btn-sm btn-light" data-view="tablas">Tablas</button>
+          </div>
+        </div>
+
+        <!-- Vista: Texto -->
+        <div id="view-texto" class="h-pane-55" style="display:block;">
+          <div id="textoOut" class="small"></div>
+        </div>
+
+        <!-- Vista: Estructura (acordeón) -->
+        <div id="view-estructura" class="h-pane-55" style="display:none;">
+          <div class="accordion" id="accEstructura">
+            <!-- Secciones generadas por JS (fechas, presupuesto, garantías, requisitos, etc.) -->
+          </div>
+        </div>
+
+        <!-- Vista: Tablas -->
+        <div id="view-tablas" class="h-pane-55" style="display:none;">
+          <div class="table-wrap">
+            <table class="table table-sm" id="tablaRequisitos">
+              <thead>
+                <tr>
+                  <th>Ítem</th>
+                  <th>Requisito</th>
+                  <th>Referencia (pág./anexo)</th>
+                  <th>Observaciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                <!-- Filas renderizadas por JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ======================================= -->
+    <!-- Columna derecha: Chat / Log -->
+    <!-- ======================================= -->
+    <aside class="card card-clean">
+      <div class="card-body">
+        <h2 class="h6 mb-2">Chat de análisis</h2>
+        <div id="chatBox" class="border rounded p-2 h-pane-55 bg-body-tertiary">
+          <!-- Mensajes -->
+          <div class="small text-muted">Sin mensajes aún.</div>
+        </div>
+        <div class="mt-2 d-flex gap-2">
+          <input id="chatInput" class="form-control" placeholder="Escribe una consulta sobre los archivos…"/>
+          <button id="chatSend" class="btn btn-primary"><i class="bi bi-send"></i></button>
+        </div>
+
+        <hr class="my-3"/>
+
+        <h2 class="h6 mb-2">Bitácora</h2>
+        <div id="logBox" class="small border rounded p-2 h-pane-50 bg-body-tertiary" style="white-space:pre-wrap;"></div>
+      </div>
+    </aside>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+/* ===== Helpers UI ===== */
+const $ = (s,sc)=> (sc||document).querySelector(s);
+const $$ = (s,sc)=> Array.from((sc||document).querySelectorAll(s));
+const fmtBytes = n=>{
+  if(!Number.isFinite(n)) return '—';
+  const u=['B','KB','MB','GB']; let i=0;
+  while(n>=1024 && i<u.length-1){ n/=1024; i++; }
+  return `${n.toFixed(i?1:0)} ${u[i]}`;
+};
+function log(msg){ const el=$("#logBox"); if(!el) return; const t=new Date().toLocaleTimeString(); el.textContent += `[${t}] ${msg}\n`; el.scrollTop=el.scrollHeight; }
+
+/* ===== Drag & drop / file input ===== */
+const dz = $("#dzArea");
+const filesInput = $("#filesInput");
+const filesWrap = $("#filesWrap");
+const filesTbody = $("#filesTbody");
+const analyzeBtn = $("#analyzeBtn");
+const exportPdfBtn = $("#exportPdfBtn");
+const clearBtn = $("#clearBtn");
+
+let files = []; // {file, id, status}
+
+function refreshFilesUI(){
+  if(!files.length){ filesWrap.style.display='none'; analyzeBtn.disabled=true; exportPdfBtn.disabled=true; filesTbody.innerHTML=''; return; }
+  filesWrap.style.display='';
+  analyzeBtn.disabled=false;
+  filesTbody.innerHTML = files.map((f,i)=>`
+    <tr>
+      <td>${f.file.name}</td>
+      <td>${fmtBytes(f.file.size)}</td>
+      <td>${(f.file.type||'').split('/').pop().toUpperCase() || f.file.name.split('.').pop().toUpperCase()}</td>
+      <td><span class="badge ${f.status==='ok'?'bg-success-subtle text-success': f.status==='processing'?'bg-warning-subtle text-warning':'bg-secondary-subtle text-secondary'}">
+        ${f.status||'pendiente'}</span></td>
+      <td class="d-flex gap-1">
+        <button class="btn btn-sm btn-outline-secondary" data-idx="${i}" data-act="preview"><i class="bi bi-eye"></i></button>
+        <button class="btn btn-sm btn-outline-danger" data-idx="${i}" data-act="remove"><i class="bi bi-x"></i></button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function addFiles(list){
+  for(const f of list){
+    if(!f) continue;
+    files.push({file:f, id:crypto.randomUUID(), status:'pendiente'});
+  }
+  refreshFilesUI();
+}
+
+filesInput?.addEventListener('change', e=> addFiles(e.target.files||[]));
+
+["dragenter","dragover"].forEach(ev=> dz.addEventListener(ev, e=>{
+  e.preventDefault(); e.stopPropagation(); dz.classList.add('border-primary'); 
+}));
+["dragleave","drop"].forEach(ev=> dz.addEventListener(ev, e=>{
+  e.preventDefault(); e.stopPropagation(); dz.classList.remove('border-primary');
+}));
+dz.addEventListener('drop', e=>{ addFiles(e.dataTransfer.files||[]); });
+
+document.addEventListener('paste', e=>{
+  const items = e.clipboardData?.items||[];
+  const imgs = [];
+  for(const it of items){
+    if(it.kind==='file'){ const f=it.getAsFile(); if(f) imgs.push(f); }
+  }
+  if(imgs.length){ addFiles(imgs); log(`Pegaste ${imgs.length} archivo(s) desde el portapapeles.`); }
+});
+
+/* Acciones fila */
+filesTbody?.addEventListener('click', e=>{
+  const btn = e.target.closest('button[data-act]');
+  if(!btn) return;
+  const idx = +btn.dataset.idx;
+  const act = btn.dataset.act;
+  if(Number.isNaN(idx) || !files[idx]) return;
+
+  if(act==='remove'){
+    files.splice(idx,1);
+    refreshFilesUI();
+  }else if(act==='preview'){
+    // Hookea tu visor/endpoint si lo tienes (PDF viewer, etc.)
+    log(`Previsualizar: ${files[idx].file.name}`);
+  }
+});
+
+/* ===== Vistas de resultados (segmented) ===== */
+const viewBtns = $$('[data-view]');
+const views = {
+  texto: $("#view-texto"),
+  estructura: $("#view-estructura"),
+  tablas: $("#view-tablas")
+};
+viewBtns.forEach(b=> b.addEventListener('click', ()=>{
+  viewBtns.forEach(x=> x.classList.remove('active'));
+  b.classList.add('active');
+  const v = b.dataset.view;
+  Object.entries(views).forEach(([k,el])=> el.style.display = (k===v)?'block':'none');
+}));
+
+/* ===== Botones principales ===== */
+clearBtn?.addEventListener('click', ()=>{
+  files = [];
+  $("#textoOut").innerHTML = '';
+  $("#accEstructura").innerHTML = '';
+  $("#tablaRequisitos tbody").innerHTML = '';
+  refreshFilesUI();
+  log('Se limpió la lista y los resultados.');
+});
+
+analyzeBtn?.addEventListener('click', async ()=>{
+  if(!files.length) return;
+  analyzeBtn.disabled = true;
+  exportPdfBtn.disabled = true;
+  log('Iniciando análisis…');
+
+  // Ejemplo: enviar por FormData al backend (ajusta la URL a tu endpoint real)
+  const fd = new FormData();
+  files.forEach(f => fd.append('files', f.file, f.file.name));
+  fd.append('out_type', $("#outType").value);
+  fd.append('lang', $("#lang").value);
+  fd.append('ocr', $("#ocrMode").value);
+
+  // Marca UI como "processing"
+  files = files.map(f => ({...f, status:'processing'}));
+  refreshFilesUI();
+
+  try{
+    const res = await fetch('/analizar', { method:'POST', body: fd }); // <-- ajusta ruta si es necesario
+    if(!res.ok) throw new Error('Error en el análisis');
+    const data = await res.json();
+
+    // Espera una respuesta con:
+    // data.texto_html, data.estructura (array de secciones), data.tabla (array de filas)
+    $("#textoOut").innerHTML = data.texto_html || '<div class="text-muted">Sin contenido.</div>';
+
+    // Estructura → acordeón
+    const acc = $("#accEstructura");
+    acc.innerHTML = (data.estructura||[]).map((sec,i)=>`
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="h${i}">
+          <button class="accordion-button ${i?'collapsed':''}" type="button" data-bs-toggle="collapse" data-bs-target="#c${i}">
+            ${sec.titulo || ('Sección '+(i+1))}
+          </button>
+        </h2>
+        <div id="c${i}" class="accordion-collapse collapse ${i===0?'show':''}" data-bs-parent="#accEstructura">
+          <div class="accordion-body small">${sec.html || ''}</div>
+        </div>
+      </div>
+    `).join('');
+
+    // Tablas → requisitos
+    const tb = $("#tablaRequisitos tbody");
+    tb.innerHTML = (data.tabla||[]).map((row,idx)=>`
+      <tr>
+        <td>${row.item ?? (idx+1)}</td>
+        <td>${row.requisito ?? ''}</td>
+        <td>${row.referencia ?? ''}</td>
+        <td>${row.obs ?? ''}</td>
+      </tr>
+    `).join('');
+
+    // Actualiza estados de archivo
+    files = files.map(f => ({...f, status:'ok'}));
+    refreshFilesUI();
+
+    exportPdfBtn.disabled = false;
+    log('Análisis finalizado correctamente.');
+  }catch(err){
+    files = files.map(f => ({...f, status:'error'}));
+    refreshFilesUI();
+    log('Error: ' + (err?.message || 'desconocido'));
+  }finally{
+    analyzeBtn.disabled = false;
+  }
+});
+
+exportPdfBtn?.addEventListener('click', async ()=>{
+  exportPdfBtn.disabled = true;
+  log('Generando PDF…');
+  try{
+    // Envía ids/resultado si tu backend lo requiere. Aquí ejemplo básico:
+    const payload = {
+      html: $("#textoOut").innerHTML,
+      estructura: $("#accEstructura").innerHTML,
+      tabla_html: $("#view-tablas").innerHTML
+    };
+    const res = await fetch('/generar-pdf', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    if(!res.ok) throw new Error('No se pudo generar el PDF');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download='analisis.pdf'; a.click();
+    URL.revokeObjectURL(url);
+    log('PDF generado.');
+  }catch(err){
+    log('Error al generar PDF: ' + (err?.message||'desconocido'));
+  }finally{
+    exportPdfBtn.disabled = false;
+  }
+});
+
+/* ===== Chat simple (front) ===== */
+const chatBox = $("#chatBox");
+const chatInput = $("#chatInput");
+$("#chatSend")?.addEventListener('click', sendChat);
+chatInput?.addEventListener('keydown', e=>{
+  if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendChat(); }
+});
+function appendMsg(who, text){
+  const wrap = document.createElement('div');
+  wrap.className = 'mb-2';
+  wrap.innerHTML = `<div class="small ${who==='ai'?'text-primary':'text-body'}"><b>${who==='ai'?'IA':'Yo'}:</b> ${escapeHtml(text)}</div>`;
+  chatBox.appendChild(wrap); chatBox.scrollTop = chatBox.scrollHeight;
+}
+function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'":'&#39;' }[m])); }
+async function sendChat(){
+  const txt = (chatInput.value||'').trim(); if(!txt) return;
+  appendMsg('me', txt);
+  chatInput.value='';
+  try{
+    // Conecta a tu endpoint real
+    const r = await fetch('/api/chat-analisis', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: txt }) });
+    const j = await r.json().catch(()=> ({}));
+    const reply = j.reply || j.respuesta || j.text || 'Sin respuesta.';
+    appendMsg('ai', reply);
+  }catch(_){
+    appendMsg('ai', 'Error al contactar el chat.');
+  }
+}
+</script>
+{% endblock %}
