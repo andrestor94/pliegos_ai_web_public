@@ -13,6 +13,14 @@
     .badge-off{ background:#cbd5e1; color:#334155; }
     .table thead{ background:#f6f7fe; }
     .hint{ color:#667085; }
+    /* Métricas */
+    .metric{
+      display:flex; align-items:center; gap:.6rem;
+      padding:.75rem 1rem; border:1px solid #e5e7eb; border-radius:12px;
+      background:#fafafa;
+    }
+    .metric .num{ font-weight:700; font-size:1.25rem; }
+    .metric .label{ color:#4b5563; }
   </style>
 {% endblock %}
 
@@ -24,11 +32,45 @@
           <i class="bi bi-gear"></i> Administración de Usuarios
         </h5>
         <div class="d-flex gap-2">
+          <a href="/auditoria-actividad" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-graph-up"></i> Actividad de usuarios
+          </a>
+          <a href="/usuarios-activos" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-people"></i> Usuarios activos (vivo)
+          </a>
           <a href="/auditoria" class="btn btn-sm btn-outline-secondary">
             <i class="bi bi-clipboard-data"></i> Ver auditoría
           </a>
           <a href="/" class="btn btn-sm btn-outline-secondary">← Volver</a>
         </div>
+      </div>
+    </section>
+
+    <!-- Métricas rápidas de actividad -->
+    <section class="cardx col-12">
+      <h6 class="mb-3">Monitoreo &amp; Auditoría de actividad</h6>
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="metric">
+            <i class="bi bi-activity"></i>
+            <div>
+              <div class="num" id="onlineCount">0</div>
+              <div class="label">en línea (últ. 5&nbsp;min)</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-8 d-flex flex-wrap gap-2">
+          <a href="/auditoria-actividad" class="btn btn-outline-primary">
+            <i class="bi bi-graph-up"></i> Ir a Auditoría de actividad
+          </a>
+          <a href="/usuarios-activos" class="btn btn-outline-primary">
+            <i class="bi bi-people"></i> Ver usuarios activos en vivo
+          </a>
+        </div>
+      </div>
+      <div class="mt-2 hint small">
+        La auditoría de actividad registra inicios/cierres y duración por usuario. La vista de “Usuarios activos” muestra quién
+        está conectado ahora mismo (señalado por los pings del front).
       </div>
     </section>
 
@@ -172,11 +214,11 @@
       box.innerHTML = `<div class="alert alert-success">${escapeHtml(res?.data?.mensaje || 'Usuario creado')}</div>`;
       e.target.reset();
       await cargarUsuarios();
-      showToast({title:'Usuario creado', body: email, icon:'check2-circle'});
+      if (window.showToast) showToast({title:'Usuario creado', body: email, icon:'check2-circle'});
     }catch(err){
       const msg = err?.response?.data?.error || 'Error al crear el usuario';
       box.innerHTML = `<div class="alert alert-danger">${escapeHtml(msg)}</div>`;
-      showToast({title:'Error', body: msg, icon:'exclamation-triangle'});
+      if (window.showToast) showToast({title:'Error', body: msg, icon:'exclamation-triangle'});
     }
   });
 
@@ -184,10 +226,10 @@
     const email = decodeURIComponent(emailEnc);
     try{
       await axios.post('/admin/blanquear-password', { email });
-      showToast({title:'Password blanqueado', body:`Usuario: ${email}`, icon:'key'});
+      if (window.showToast) showToast({title:'Password blanqueado', body:`Usuario: ${email}`, icon:'key'});
       alert('Contraseña blanqueada a 1234');
     }catch(_){
-      showToast({title:'Error', body:'No se pudo blanquear la contraseña', icon:'exclamation-triangle'});
+      if (window.showToast) showToast({title:'Error', body:'No se pudo blanquear la contraseña', icon:'exclamation-triangle'});
     }
   }
 
@@ -196,9 +238,9 @@
     try{
       await axios.post('/admin/desactivar-usuario', { email });
       await cargarUsuarios();
-      showToast({title:'Usuario desactivado', body:email, icon:'person-dash'});
+      if (window.showToast) showToast({title:'Usuario desactivado', body:email, icon:'person-dash'});
     }catch(_){
-      showToast({title:'Error', body:'No se pudo desactivar', icon:'exclamation-triangle'});
+      if (window.showToast) showToast({title:'Error', body:'No se pudo desactivar', icon:'exclamation-triangle'});
     }
   }
 
@@ -207,9 +249,9 @@
     try{
       await axios.post('/admin/activar-usuario', { email });
       await cargarUsuarios();
-      showToast({title:'Usuario activado', body:email, icon:'person-check'});
+      if (window.showToast) showToast({title:'Usuario activado', body:email, icon:'person-check'});
     }catch(_){
-      showToast({title:'Error', body:'No se pudo activar', icon:'exclamation-triangle'});
+      if (window.showToast) showToast({title:'Error', body:'No se pudo activar', icon:'exclamation-triangle'});
     }
   }
 
@@ -219,9 +261,9 @@
     try{
       await axios.post('/admin/eliminar-usuario', { email });
       await cargarUsuarios();
-      showToast({title:'Usuario eliminado', body:email, icon:'trash'});
+      if (window.showToast) showToast({title:'Usuario eliminado', body:email, icon:'trash'});
     }catch(_){
-      showToast({title:'Error', body:'No se pudo eliminar', icon:'exclamation-triangle'});
+      if (window.showToast) showToast({title:'Error', body:'No se pudo eliminar', icon:'exclamation-triangle'});
     }
   }
 
@@ -230,10 +272,21 @@
     const email = decodeURIComponent(emailEnc);
     try{
       await axios.post('/admin/reset-sesion', { email });
-      showToast({title:'Sesión reiniciada', body:email, icon:'arrow-counterclockwise'});
+      if (window.showToast) showToast({title:'Sesión reiniciada', body:email, icon:'arrow-counterclockwise'});
     }catch(_){
-      showToast({title:'Aviso', body:'Endpoint /admin/reset-sesion no disponible', icon:'info'});
+      if (window.showToast) showToast({title:'Aviso', body:'Endpoint /admin/reset-sesion no disponible', icon:'info'});
     }
+  }
+
+  /* Métrica: online últimos 5 min (se actualiza cada 30s) */
+  async function refrescarOnline(){
+    try{
+      const r = await fetch('/presence/online?minutes=5');
+      const j = await r.json();
+      const n = Array.isArray(j.items) ? j.items.length : 0;
+      const el = document.getElementById('onlineCount');
+      if(el) el.textContent = n;
+    }catch(_){}
   }
 
   /* Eventos UI */
@@ -242,5 +295,7 @@
 
   /* Init */
   cargarUsuarios();
+  refrescarOnline();
+  setInterval(refrescarOnline, 30000);
 </script>
 {% endblock %}
