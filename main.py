@@ -10,7 +10,8 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.concurrency import run_in_threadpool
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from sqlalchemy import or_, and_
 
 from utils import (
@@ -41,6 +42,32 @@ from database import (
 # ORM (audit_logs)
 from db_orm import inicializar_bd_orm, SessionLocal, AuditLog
 
+# ================== TZ & helpers ==================
+TZ_AR = ZoneInfo("America/Argentina/Buenos_Aires")
+
+def now_iso_utc() -> str:
+    """UTC en ISO 8601 con Z (para guardar y eventos internos)."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def now_stamp_ar() -> str:
+    """Timestamp local AR para nombres de archivo / IDs visibles por usuarios."""
+    return datetime.now(TZ_AR).strftime("%Y%m%d%H%M%S")
+
+def iso_utc_to_ar_str(iso_utc: str, fmt: str = "%d/%m/%Y %H:%M") -> str:
+    """Convierte 'YYYY-MM-DDTHH:MM:SSZ' (o +00:00) a hora local AR, en formato legible."""
+    if not iso_utc:
+        return ""
+    iso = iso_utc.replace("Z", "+00:00")
+    try:
+        dt_utc = datetime.fromisoformat(iso)
+    except ValueError:
+        # Fallback para formatos 'YYYY-MM-DD HH:MM:SS'
+        try:
+            dt_utc = datetime.strptime(iso_utc, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        except Exception:
+            return iso_utc
+    return dt_utc.astimezone(TZ_AR).strftime(fmt)
+
 # ================== App & Middlewares ==================
 app = FastAPI(middleware=[
     Middleware(SessionMiddleware, secret_key="clave_secreta_super_segura")
@@ -57,6 +84,15 @@ app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="gene
 
 templates = Jinja2Templates(directory="templates")
 templates.env.globals['os'] = os
+
+# Filtro Jinja para mostrar UTC como hora local AR
+def ar_time(value: str) -> str:
+    try:
+        return iso_utc_to_ar_str(value)
+    except Exception:
+        return value
+
+templates.env.filters["ar_time"] = ar_time
 
 # ================== Guardas/Dependencias de auth/roles ==================
 def require_auth(request: Request):
@@ -134,7 +170,7 @@ async def ws_endpoint(websocket: WebSocket):
         while True:
             _ = await websocket.receive_text()
             try:
-                await websocket.send_json({"event": "ws:pong", "ts": datetime.utcnow().isoformat() + "Z"})
+                await websocket.send_json({"event": "ws:pong", "ts": now_iso_utc()})
             except Exception:
                 pass
     except WebSocketDisconnect:
@@ -143,7 +179,7 @@ async def ws_endpoint(websocket: WebSocket):
         manager.disconnect(websocket, email)
 
 async def emit_alert(email: str, title: str, body: str = "", extra: dict = None):
-    payload = {"event": "alert:new", "title": title, "body": body, "ts": datetime.utcnow().isoformat() + "Z"}
+    payload = {"event": "alert:new", "title": title, "body": body, "ts": now_iso_utc()}
     if extra:
         payload["extra"] = extra
     await manager.send_to_user(email, payload)
@@ -154,7 +190,7 @@ async def emit_chat_new_message(para_email: str, de_email: str, msg_id: int, pre
         "from": de_email,
         "id": msg_id,
         "preview": preview[:120],
-        "ts": datetime.utcnow().isoformat() + "Z"
+        "ts": now_iso_utc()
     }
     await manager.send_to_user(para_email, payload)
 
@@ -274,7 +310,7 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
         nombre_s = request.session.get("nombre") or usuario[1] or usuario[2]
         ip_s = request.client.host if request.client else None
         ua_s = request.headers.get("user-agent", "")
-        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = now_iso_utc()
         with cal_conn() as c:
             c.execute("""
                 INSERT INTO sessions(id, user, nombre, ip, ua, login_at, last_seen, logout_at, closed_reason)
@@ -287,7 +323,7 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
 @app.post("/logout")
 async def logout_post(request: Request):
     sid = request.session.get("sid")
-    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_iso = now_iso_utc()
     if sid:
         with cal_conn() as c:
             c.execute("UPDATE sessions SET logout_at=?, closed_reason=? WHERE id=?", (now_iso, "logout", sid))
@@ -297,7 +333,7 @@ async def logout_post(request: Request):
 @app.get("/logout")
 async def logout_get(request: Request):
     sid = request.session.get("sid")
-    now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_iso = now_iso_utc()
     if sid:
         with cal_conn() as c:
             c.execute("UPDATE sessions SET logout_at=?, closed_reason=? WHERE id=?", (now_iso, "logout", sid))
@@ -323,13 +359,15 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         return JSONResponse({"error": f"Fallo en el análisis: {e}"}, status_code=500)
 
     try:
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        # Importante: nombre con hora local AR para que el usuario vea su hora real
+        timestamp = now_stamp_ar()
         nombre_archivo = f"resumen_{timestamp}.pdf"
         await run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo)
     except Exception as e:
         return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
 
     try:
+        # Guardamos el mismo timestamp local (coherente con el nombre)
         guardar_en_historial(timestamp, usuario, nombre_archivo, nombre_archivo, resumen)
     except Exception:
         pass
@@ -443,9 +481,17 @@ async def vista_incidencias(request: Request):
     for t in tickets_raw:
         if len(t) < 7:
             continue
-        fecha_legible = datetime.strptime(t[6], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M")
+        # t[6] suele venir como 'YYYY-MM-DD HH:MM:SS' (asumido UTC si backend guardó así).
+        # Lo mostramos en hora local AR:
+        try:
+            fecha_legible = iso_utc_to_ar_str(t[6], "%d/%m/%Y %H:%M")
+        except Exception:
+            try:
+                fecha_legible = datetime.strptime(t[6], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M")
+            except Exception:
+                fecha_legible = t[6]
         carpeta_adjuntos = os.path.join("static", "adjuntos_incidencias")
-        prefix = f"{t[1]}_{t[6].replace(':','').replace('-','').replace(' ','')[:14]}"
+        prefix = f"{t[1]}_{(t[6] or '').replace(':','').replace('-','').replace(' ','')[:14]}"
         adjuntos = []
         if os.path.exists(carpeta_adjuntos):
             for file in os.listdir(carpeta_adjuntos):
@@ -477,7 +523,8 @@ async def crear_incidencia_form(
     archivos: List[UploadFile] = File(default=[])
 ):
     usuario = request.session.get("usuario", "Anónimo")
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    # Para nombres locales coherentes con lo que ve el usuario:
+    timestamp = now_stamp_ar()
 
     actor_user_id, ip = _actor_info(request)
     crear_ticket(usuario, titulo, descripcion, tipo, actor_user_id=actor_user_id, ip=ip)
@@ -811,7 +858,7 @@ async def chat_enviar_archivos(
         print("❌ Error creando mensaje:", repr(e))
         return JSONResponse({"error": "No se pudo crear el mensaje"}, status_code=500)
 
-    ts = datetime.now().strftime("%Y%m%d%H%M%S")
+    ts = now_stamp_ar()
     total_bytes = 0
 
     for i, archivo in enumerate(files, start=1):
@@ -1032,7 +1079,7 @@ def init_calendar_db():
 init_calendar_db()
 
 def _now_iso():
-    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    return now_iso_utc()
 
 def _event_row_to_dict(r: sqlite3.Row):
     return {
@@ -1170,7 +1217,8 @@ async def list_notifs(request: Request, limit: int = 20):
                 "id": r["id"],
                 "titulo": r["titulo"],
                 "cuerpo": r["cuerpo"],
-                "fecha_legible": r["created_at"],
+                # Mostrar en horario local AR
+                "fecha_legible": iso_utc_to_ar_str(r["created_at"]),
                 "leida": bool(r["leida"])
             })
     return {"total_unread": total_unread, "items": items}
@@ -1231,7 +1279,7 @@ async def presence_ping(request: Request):
 
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent", "")
-    now = _now_iso()
+    now = now_iso_utc()
     sid = request.session.get("sid")
 
     with cal_conn() as c:
@@ -1252,14 +1300,14 @@ async def presence_ping(request: Request):
 
 @app.get("/presence/online")
 async def presence_online(minutes: int = 5):
-    threshold_ts = datetime.utcnow().timestamp() - (minutes * 60)
+    threshold_ts = datetime.now(timezone.utc).timestamp() - (minutes * 60)
 
     items = []
     with cal_conn() as c:
         cur = c.execute("SELECT user, nombre, last_seen, ip, ua FROM presence ORDER BY last_seen DESC")
         for r in cur.fetchall():
             try:
-                dt = datetime.strptime(r["last_seen"], "%Y-%m-%dT%H:%M:%SZ")
+                dt = datetime.strptime(r["last_seen"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
                 ts = dt.timestamp()
             except Exception:
                 ts = 0
@@ -1289,9 +1337,9 @@ def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
         return None
     try:
         if len(ts) == 10:
-            return datetime.strptime(ts, "%Y-%m-%d")
+            return datetime.strptime(ts, "%Y-%m-%d").replace(tzinfo=TZ_AR)
         if ts.endswith("Z"):
-            return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
+            return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
         return datetime.fromisoformat(ts)
     except Exception:
         return None
@@ -1301,7 +1349,7 @@ def _to_dt(s: Optional[str]) -> Optional[datetime]:
         return None
     try:
         if s.endswith("Z"):
-            return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ")
+            return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
         return datetime.fromisoformat(s)
     except Exception:
         return None
@@ -1331,7 +1379,7 @@ async def auditoria_actividad(
       - logout_at NULL y (now-last_seen)>timeout   -> expirada
       - logout_at no NULL                           -> cerrada
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     rows_out = []
 
     q = "SELECT id, user, nombre, ip, ua, login_at, last_seen, logout_at, closed_reason FROM sessions"
@@ -1345,6 +1393,7 @@ async def auditoria_actividad(
     h = _parse_iso(hasta)
     if d:
         conds.append("login_at >= ?")
+        # d ya está con tz, pero exportamos como UTC 00:00Z
         args.append(d.strftime("%Y-%m-%dT00:00:00Z"))
     if h:
         conds.append("login_at <= ?")
