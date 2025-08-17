@@ -12,7 +12,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from fastapi.concurrency import run_in_threadpool
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-from sqlalchemy import or_, and_
+from sqlalchemy import or_
 
 from utils import (
     extraer_texto_de_pdf,
@@ -69,8 +69,10 @@ def iso_utc_to_ar_str(iso_utc: str, fmt: str = "%d/%m/%Y %H:%M") -> str:
     return dt_utc.astimezone(TZ_AR).strftime(fmt)
 
 # ================== App & Middlewares ==================
+# Secret desde ENV (más seguro)
+SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-in-prod")
 app = FastAPI(middleware=[
-    Middleware(SessionMiddleware, secret_key="clave_secreta_super_segura")
+    Middleware(SessionMiddleware, secret_key=SESSION_SECRET)
 ])
 
 # Inicializa BD SQLite (usuarios, historial, tickets, mensajes, hilos_ocultos, adjuntos)
@@ -78,7 +80,10 @@ inicializar_bd()
 # Inicializa ORM (audit_logs) según DATABASE_URL
 inicializar_bd_orm()
 
-# Static
+# Static (garantizamos que existan)
+os.makedirs("static", exist_ok=True)
+os.makedirs("generated_pdfs", exist_ok=True)
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="generated_pdfs")
 
@@ -363,9 +368,8 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         timestamp = now_stamp_ar()
         nombre_archivo = f"resumen_{timestamp}.pdf"
 
-        # NUEVO: fecha legible local para que el PDF no quede corrido +3h
-        fecha_ar_legible = datetime.now(TZ_AR).strftime("%d/%m/%Y %H:%M")
-        await run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo, fecha_ar_legible)
+        # Llamamos a utils con 2 args (firma actual)
+        await run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo)
     except Exception as e:
         return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
 
@@ -394,15 +398,17 @@ async def alias_analisis():
 
 @app.get("/descargar/{archivo}")
 async def descargar_pdf(archivo: str):
+    # Sanitizado: evitamos path traversal
+    archivo = os.path.basename(archivo)
     ruta = os.path.join("generated_pdfs", archivo)
-    if os.path.exists(ruta):
+    if os.path.exists(ruta) and os.path.isfile(ruta):
         return FileResponse(ruta, media_type='application/pdf', filename=archivo)
     return {"error": "Archivo no encontrado"}
 
 @app.delete("/eliminar/{timestamp}")
 async def eliminar_archivo(timestamp: str):
     eliminar_del_historial(timestamp)
-    ruta = os.path.join("generated_pdfs", f"resumen_{timestamp}.pdf")
+    ruta = os.path.join("generated_pdfs", f"resumen_{os.path.basename(timestamp)}.pdf")
     if os.path.exists(ruta):
         os.remove(ruta)
     return {"mensaje": "Eliminado correctamente"}
@@ -494,6 +500,7 @@ async def vista_incidencias(request: Request):
             except Exception:
                 fecha_legible = t[6]
         carpeta_adjuntos = os.path.join("static", "adjuntos_incidencias")
+        os.makedirs(carpeta_adjuntos, exist_ok=True)
         prefix = f"{t[1]}_{(t[6] or '').replace(':','').replace('-','').replace(' ','')[:14]}"
         adjuntos = []
         if os.path.exists(carpeta_adjuntos):
@@ -611,10 +618,10 @@ async def listar_usuarios_api():
 async def crear_usuario_api(request: Request):
     try:
         data = await request.json()
-        nombre = data.get("nombre")
-        email = data.get("email")
-        rol = data.get("rol")
-        if not nombre, or not email, or not rol:  # noqa: E999 (claridad)
+        nombre = (data.get("nombre") or "").strip()
+        email = (data.get("email") or "").strip()
+        rol = (data.get("rol") or "").strip()
+        if not nombre or not email or not rol:  # <-- FIX SyntaxError
             return JSONResponse({"error": "Faltan campos: nombre, email, rol"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
         agregar_usuario(nombre, email, "1234", rol, actor_user_id=actor_user_id, ip=ip)
@@ -627,7 +634,7 @@ async def crear_usuario_api(request: Request):
 async def blanquear_password(request: Request):
     try:
         data = await request.json()
-        email = data.get("email")
+        email = (data.get("email") or "").strip()
         if not email:
             return JSONResponse({"error": "Falta email"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
@@ -640,7 +647,7 @@ async def blanquear_password(request: Request):
 @app.post("/admin/desactivar-usuario", dependencies=[Depends(require_admin)])
 async def desactivar_usuario(request: Request):
     data = await request.json()
-    email = data.get("email")
+    email = (data.get("email") or "").strip()
     if not email:
         return JSONResponse({"error": "Falta email"}, status_code=400)
     actor_user_id, ip = _actor_info(request)
@@ -650,7 +657,7 @@ async def desactivar_usuario(request: Request):
 @app.post("/admin/activar-usuario", dependencies=[Depends(require_admin)])
 async def activar_usuario(request: Request):
     data = await request.json()
-    email = data.get("email")
+    email = (data.get("email") or "").strip()
     if not email:
         return JSONResponse({"error": "Falta email"}, status_code=400)
     actor_user_id, ip = _actor_info(request)
@@ -661,7 +668,7 @@ async def activar_usuario(request: Request):
 async def eliminar_usuario(request: Request):
     try:
         data = await request.json()
-        email = data.get("email")
+        email = (data.get("email") or "").strip()
         if not email:
             return JSONResponse({"error": "Falta email"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
@@ -910,6 +917,7 @@ async def chat_enviar_archivo(
 
 @app.get("/chat/adjunto/{filename}")
 async def chat_adjunto(filename: str):
+    filename = os.path.basename(filename)
     path = os.path.join(CHAT_ATTACH_DIR, filename)
     if not os.path.isfile(path):
         return JSONResponse({"error": "No encontrado"}, status_code=404)
