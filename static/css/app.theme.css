@@ -1,6 +1,7 @@
 /* ===================== app.theme.css =====================
 Place in: /backend/static/css/app.theme.css  (or /static/app.theme.css)
-Link it in base.html with: <link rel="stylesheet" href="{{ url_for('static', path='css/app.theme.css') }}">
+Link it in base.html with:
+<link rel="stylesheet" href="{{ url_for('static', path='css/app.theme.css') }}">
 ========================================================= */
 
 /* ---------- Design tokens ---------- */
@@ -29,7 +30,7 @@ Link it in base.html with: <link rel="stylesheet" href="{{ url_for('static', pat
   --shadow-md: 0 10px 24px rgba(8,30,61,.10);
   --shadow-sm: 0 6px 16px rgba(8,30,61,.08);
 
-  /* Bootstrap color vars (runtime override) */
+  /* Bootstrap overrides */
   --bs-primary: var(--brand-500);
   --bs-body-bg: var(--bg);
   --bs-body-color: var(--text);
@@ -37,6 +38,10 @@ Link it in base.html with: <link rel="stylesheet" href="{{ url_for('static', pat
   /* Layout helpers */
   --header-h: 76px;
   --container-max: 1240px;
+
+  /* Safe areas (iOS notch) */
+  --safe-top: env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
 }
 
 /* Dark theme */
@@ -55,11 +60,17 @@ html[data-theme="dark"]{
 
 /* ---------- Base ---------- */
 html,body{height:100%;}
+/* ❗ Evita “formato PC” en móviles por overflow horizontal */
+html,body{ overflow-x:hidden; }
 body{
   background:var(--bg);
   color:var(--text);
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
   -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
 }
+/* Medios fluidos */
+img, video, canvas, iframe{ max-width:100%; height:auto; }
 
 /* ---------- Topbar (sticky) ---------- */
 .app-topbar{
@@ -71,13 +82,26 @@ body{
 .app-topbar .navbar-brand{font-weight:700; letter-spacing:.2px;}
 .app-topbar .nav-link, .app-topbar .navbar-text{color:var(--text-2);} 
 .app-topbar .btn-chat{ border-radius: 999px; padding:.5rem 1rem; font-weight:600;}
+/* Wrap en acciones para que no “salten” en XS */
+@media (max-width: 575.98px){
+  .app-topbar .navbar-text{ display:none; } /* opcional */
+}
 
 /* ---------- Layout ---------- */
 .app-main{ padding-top: var(--header-h); }
 .container-xxl{ max-width: var(--container-max); }
+/* En móviles, que el contenedor use todo el ancho con padding lateral */
+@media (max-width: 575.98px){
+  .container-xxl{ max-width:100% !important; padding-left:12px; padding-right:12px; }
+}
 
 /* ---------- Cards ---------- */
-.card-clean{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow-sm); }
+.card-clean{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow-sm);
+}
 .card-clean .card-header{ background:transparent; border-bottom:1px solid var(--border); }
 .card-clean .card-body{ padding:1rem 1.25rem; }
 
@@ -91,7 +115,6 @@ body{
 .app-menu a{ color:var(--text-2); border-radius:12px; }
 .app-menu a.active,.app-menu a:hover{ background:var(--muted); color:var(--text); }
 
-/* Tamaños y comportamiento en móviles */
 @media (max-width: 575.98px){
   .offcanvas-start{ width: 88vw; max-width: 420px; }
 }
@@ -107,6 +130,10 @@ body{
 .form-control:focus, .form-select:focus{
   box-shadow:0 0 0 .25rem rgba(13,110,253,.15); border-color:var(--brand-300);
 }
+
+/* Tamaño compacto útil en móvil */
+.input-compact .form-control,
+.input-compact .form-select{ padding:.45rem .6rem; font-size:.95rem; }
 
 /* ---------- Tablas responsivas ---------- */
 .table-wrap{ width:100%; overflow-x:auto; -webkit-overflow-scrolling: touch; }
@@ -177,18 +204,31 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
   padding: 1rem; border-radius: var(--radius); text-align:center;
 }
 
-/* Alturas útiles para paneles con scroll (chat, previsualización) */
+/* Alturas útiles para paneles con scroll */
 .h-pane-50{ height: 50vh; overflow:auto; }
 .h-pane-55{ height: 55vh; overflow:auto; }
 .h-pane-60{ height: 60vh; overflow:auto; }
-
-/* Inputs compactos (útil en móviles) */
-.input-compact .form-control,
-.input-compact .form-select{ padding:.45rem .6rem; font-size:.95rem; }
+/* Altura real en móviles (evita saltos por barra navegador) */
+.h-100dvh{ height: 100dvh; }
 
 /* ---------- Sticky helpers ---------- */
 .sticky-topbar{ position: sticky; top: 0; z-index: 10; background: var(--surface); border-bottom: 1px solid var(--border); }
 .sticky-footer{ position: sticky; bottom: 0; z-index: 5; background: var(--surface); border-top: 1px solid var(--border); }
+
+/* ---------- MOBILE FIXES EXTRA ---------- */
+/* Fuerza apilado si algún CSS externo impone anchos fijos */
+@media (max-width: 575.98px){
+  .row > [class*="col-"]{
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+  /* Botones/pills compactos */
+  .btn, .btn-chat{ padding:.5rem .9rem; }
+  /* Evita que cualquier componente “crezca” más que el viewport */
+  .card, .card-clean, .brand, .pill, .icon-btn{ max-width:100%; }
+}
+/* Cualquier contenedor inesperado con min-width fijo quedará neutralizado */
+[class*="container"], [class*="Container"]{ min-width: 0; }
 
 /* ---------- Reduced motion ---------- */
 @media (prefers-reduced-motion: reduce){
