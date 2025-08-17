@@ -1306,10 +1306,15 @@ def _to_dt(s: Optional[str]) -> Optional[datetime]:
     except Exception:
         return None
 
-# --- Vista HTML (usa templates/auditoria_actividad.html) ---
-@app.get("/auditoria-actividad", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+# --- VISTA HTML principal (coincide con admin.html) ---
+@app.get("/auditoria/actividad/vista", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def auditoria_actividad_view(request: Request):
     return templates.TemplateResponse("auditoria_actividad.html", {"request": request})
+
+# --- Alias legacy (por si quedó algún link viejo) ---
+@app.get("/auditoria-actividad", dependencies=[Depends(require_admin)])
+async def auditoria_actividad_legacy():
+    return RedirectResponse("/auditoria/actividad/vista", status_code=307)
 
 # --- API JSON con datos de sesiones ---
 @app.get("/auditoria/actividad", dependencies=[Depends(require_admin)])
@@ -1321,11 +1326,10 @@ async def auditoria_actividad(
     limit: int = Query(default=500, ge=1, le=5000)
 ):
     """
-    Devuelve sesiones de usuario con duración (en segundos) y estado.
-    Reglas:
-      - Si logout_at es NULL y (now - last_seen) <= SESSION_TIMEOUT_MIN => 'activa'
-      - Si logout_at es NULL y (now - last_seen) >  SESSION_TIMEOUT_MIN => 'expirada'
-      - Si logout_at no es NULL => 'cerrada'
+    Devuelve sesiones con duración y estado:
+      - logout_at NULL y (now-last_seen)<=timeout  -> activa
+      - logout_at NULL y (now-last_seen)>timeout   -> expirada
+      - logout_at no NULL                           -> cerrada
     """
     now = datetime.utcnow()
     rows_out = []
@@ -1381,9 +1385,47 @@ async def auditoria_actividad(
                 "login_at": r["login_at"],
                 "last_seen": r["last_seen"],
                 "logout_at": r["logout_at"],
-                "estado": estado,               # activa | expirada | cerrada
+                "estado": estado,
                 "closed_reason": r["closed_reason"] or "",
                 "duracion_seg": dur_sec
             })
 
     return {"items": rows_out, "timeout_min": SESSION_TIMEOUT_MIN, "now_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+# --- Exportar CSV con mismos filtros ---
+@app.get("/auditoria/actividad.csv", dependencies=[Depends(require_admin)])
+async def auditoria_actividad_csv(
+    request: Request,
+    usuario: Optional[str] = Query(default=None),
+    desde: Optional[str] = Query(default=None),
+    hasta: Optional[str] = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=5000)
+):
+    data = await auditoria_actividad(request, usuario=usuario, desde=desde, hasta=hasta, limit=limit)
+    items = data.get("items", [])
+
+    headers = ["estado","usuario","nombre","login_at","last_seen","logout_at","duracion_seg","ip","ua","sid","closed_reason"]
+    lines = [",".join(headers)]
+    for it in items:
+        row = [
+            it.get("estado",""),
+            it.get("usuario",""),
+            it.get("nombre",""),
+            it.get("login_at",""),
+            it.get("last_seen",""),
+            it.get("logout_at","") or "",
+            str(it.get("duracion_seg") or 0),
+            it.get("ip",""),
+            (it.get("ua","") or "").replace(",", " "),
+            it.get("id",""),
+            it.get("closed_reason","").replace(",", " ")
+        ]
+        lines.append(",".join(row))
+
+    csv_body = "\n".join(lines)
+    filename = "auditoria_actividad.csv"
+    return Response(
+        content=csv_body,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
