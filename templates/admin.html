@@ -11,13 +11,8 @@
     .badge-off{ background:#cbd5e1; color:#334155; }
     .table thead{ background:#f6f7fe; }
     .hint{ color:#667085; }
-
-    /* KPI compacto en “Monitoreo & Auditoría de actividad” */
-    .kpi-box{
-      display:flex; align-items:center; gap:10px;
-      padding:10px 14px; border:1px solid var(--border); border-radius:12px;
-      background:var(--card); min-width:140px;
-    }
+    .kpi-box{ display:flex; align-items:center; gap:10px; padding:10px 14px; border:1px solid var(--border);
+      border-radius:12px; background:var(--card); min-width:140px; }
     .kpi-num{ font-size:20px; font-weight:700; line-height:1; }
     .kpi-sub{ font-size:12px; color:#64748b; }
   </style>
@@ -25,14 +20,13 @@
 
 {% block content %}
   <div class="grid">
-    <!-- Encabezado + acciones (SOLO AQUÍ los botones) -->
+    <!-- Encabezado + acciones -->
     <section class="cardx col-12">
       <div class="d-flex align-items-center justify-content-between">
         <h5 class="title mb-0">
           <i class="bi bi-gear"></i> Administración de Usuarios
         </h5>
         <div class="d-flex gap-2">
-          <!-- 👉 apunta a la vista con plantilla, no al JSON -->
           <a href="/auditoria/actividad/vista" class="btn btn-sm btn-outline-primary">
             <i class="bi bi-graph-up"></i> Actividad de usuarios
           </a>
@@ -47,7 +41,7 @@
       </div>
     </section>
 
-    <!-- Monitoreo (SIN botones repetidos) -->
+    <!-- Monitoreo -->
     <section class="cardx col-12">
       <h6 class="mb-3">Monitoreo & Auditoría de actividad</h6>
       <div class="d-flex align-items-center gap-3">
@@ -59,8 +53,7 @@
           </div>
         </div>
         <div class="hint ms-1">
-          La auditoría de actividad registra inicios/cierres y duración por usuario. La vista de “Usuarios activos”
-          muestra quién está conectado ahora mismo (señalado por los pings del front).
+          La auditoría de actividad registra inicios/cierres y duración por usuario. “Usuarios activos” muestra quién está conectado ahora mismo.
         </div>
       </div>
     </section>
@@ -91,7 +84,7 @@
           </button>
         </div>
       </form>
-      <div class="mt-2 hint small">El usuario recibirá acceso inmediato. Podés blanquearle la contraseña desde la tabla.</div>
+      <div class="mt-2 hint small">El usuario se crea con contraseña inicial por defecto (podes blanquearla desde la tabla).</div>
       <div id="mensaje" class="mt-3"></div>
     </section>
 
@@ -115,10 +108,10 @@
               <th>Email</th>
               <th>Rol</th>
               <th>Estado</th>
-              <th style="min-width:300px">Acciones</th>
+              <th style="min-width:340px">Acciones</th>
             </tr>
           </thead>
-          <tbody id="tablaUsuarios"><!-- se llena por JS --></tbody>
+          <tbody id="tablaUsuarios"><!-- JS --></tbody>
         </table>
       </div>
     </section>
@@ -127,8 +120,13 @@
 
 {% block extra_scripts %}
 <script>
+  const DEFAULT_RESET_PASSWORD = '1234'; // ajustá si usás otra por defecto en backend/env
+
   /* Util */
   function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function toastOk(t,b){ if(window.showToast) showToast({title:t, body:b||'', icon:'check2-circle'}); }
+  function toastWarn(t,b){ if(window.showToast) showToast({title:t, body:b||'', icon:'exclamation-triangle'}); }
+  function toastInfo(t,b){ if(window.showToast) showToast({title:t, body:b||'', icon:'info'}); }
 
   /* KPI en línea */
   async function refreshOnline(){
@@ -150,8 +148,9 @@
         <div class="spinner-border spinner-border-sm me-2" role="status"></div> Cargando…
       </td></tr>`;
     try{
-      const res = await axios.get('/admin/usuarios');
-      usuariosCache = Array.isArray(res.data) ? res.data : [];
+      // ✅ usar API correcta y forma {items:[...]}
+      const res = await axios.get('/api/admin/users');
+      usuariosCache = Array.isArray(res?.data?.items) ? res.data.items : [];
       renderUsuarios(usuariosCache);
     }catch(e){
       tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-danger">No se pudieron cargar los usuarios.</td></tr>`;
@@ -188,8 +187,8 @@
         </td>
         <td class="admin-actions d-flex flex-wrap gap-2">
           ${activo
-            ? `<button class="btn btn-sm btn-outline-danger" onclick="desactivarUsuario('${encodeURIComponent(u.email)}')">⛔ Desactivar</button>`
-            : `<button class="btn btn-sm btn-outline-success" onclick="activarUsuario('${encodeURIComponent(u.email)}')">🟢 Activar</button>`
+            ? `<button class="btn btn-sm btn-outline-danger" onclick="toggleUsuario('${encodeURIComponent(u.email)}', false)">⛔ Desactivar</button>`
+            : `<button class="btn btn-sm btn-outline-success" onclick="toggleUsuario('${encodeURIComponent(u.email)}', true)">🟢 Activar</button>`
           }
           <button class="btn btn-sm btn-outline-dark" onclick="blanquearPassword('${encodeURIComponent(u.email)}')">🔑 Blanquear contraseña</button>
           <button class="btn btn-sm btn-outline-secondary" onclick="reiniciarSesion('${encodeURIComponent(u.email)}')">🔄 Reset sesión</button>
@@ -209,67 +208,60 @@
     const box = document.getElementById('mensaje'); box.innerHTML = '';
 
     try{
-      const res = await axios.post('/admin/crear-usuario', { nombre, email, rol });
-      box.innerHTML = `<div class="alert alert-success">${escapeHtml(res?.data?.mensaje || 'Usuario creado')}</div>`;
+      const res = await axios.post('/api/admin/users', { nombre, email, rol });
+      if(res?.data?.ok){
+        box.innerHTML = `<div class="alert alert-success">Usuario creado</div>`;
+      }else{
+        box.innerHTML = `<div class="alert alert-success">Usuario creado</div>`;
+      }
       e.target.reset();
       await cargarUsuarios();
-      showToast({title:'Usuario creado', body: email, icon:'check2-circle'});
+      toastOk('Usuario creado', email);
     }catch(err){
       const msg = err?.response?.data?.error || 'Error al crear el usuario';
       box.innerHTML = `<div class="alert alert-danger">${escapeHtml(msg)}</div>`;
-      showToast({title:'Error', body: msg, icon:'exclamation-triangle'});
+      toastWarn('Error', msg);
     }
   });
 
   async function blanquearPassword(emailEnc){
     const email = decodeURIComponent(emailEnc);
     try{
-      await axios.post('/admin/blanquear-password', { email });
-      showToast({title:'Password blanqueado', body:`Usuario: ${email}`, icon:'key'});
-      alert('Contraseña blanqueada a 1234');
+      await axios.post('/api/admin/users/password', { email, password: DEFAULT_RESET_PASSWORD });
+      toastOk('Password blanqueado', `Usuario: ${email}`);
+      alert(`Contraseña blanqueada a ${DEFAULT_RESET_PASSWORD}`);
     }catch(_){
-      showToast({title:'Error', body:'No se pudo blanquear la contraseña', icon:'exclamation-triangle'});
+      toastWarn('Error', 'No se pudo blanquear la contraseña');
     }
   }
-  async function desactivarUsuario(emailEnc){
+
+  async function toggleUsuario(emailEnc, activar){
     const email = decodeURIComponent(emailEnc);
     try{
-      await axios.post('/admin/desactivar-usuario', { email });
+      await axios.post('/api/admin/users/toggle', { email, activo: !!activar });
       await cargarUsuarios();
-      showToast({title:'Usuario desactivado', body:email, icon:'person-dash'});
+      toastOk(activar?'Usuario activado':'Usuario desactivado', email);
     }catch(_){
-      showToast({title:'Error', body:'No se pudo desactivar', icon:'exclamation-triangle'});
+      toastWarn('Error', activar?'No se pudo activar':'No se pudo desactivar');
     }
   }
-  async function activarUsuario(emailEnc){
-    const email = decodeURIComponent(emailEnc);
-    try{
-      await axios.post('/admin/activar-usuario', { email });
-      await cargarUsuarios();
-      showToast({title:'Usuario activado', body:email, icon:'person-check'});
-    }catch(_){
-      showToast({title:'Error', body:'No se pudo activar', icon:'exclamation-triangle'});
-    }
-  }
+
   async function eliminarUsuario(emailEnc){
     const email = decodeURIComponent(emailEnc);
     if(!confirm(`¿Eliminar definitivamente a ${email}?`)) return;
     try{
-      await axios.post('/admin/eliminar-usuario', { email });
+      await axios.delete(`/api/admin/users/${encodeURIComponent(email)}`); // soft delete por defecto
       await cargarUsuarios();
-      showToast({title:'Usuario eliminado', body:email, icon:'trash'});
+      toastOk('Usuario eliminado', email);
     }catch(_){
-      showToast({title:'Error', body:'No se pudo eliminar', icon:'exclamation-triangle'});
+      toastWarn('Error', 'No se pudo eliminar');
     }
   }
-  async function reiniciarSesion(emailEnc){
+
+  function reiniciarSesion(emailEnc){
     const email = decodeURIComponent(emailEnc);
-    try{
-      await axios.post('/admin/reset-sesion', { email });
-      showToast({title:'Sesión reiniciada', body:email, icon:'arrow-counterclockwise'});
-    }catch(_){
-      showToast({title:'Aviso', body:'Endpoint /admin/reset-sesion no disponible', icon:'info'});
-    }
+    // No hay endpoint en backend. Dejamos aviso para no confundir.
+    toastInfo('Aviso', `Reset de sesión no implementado para ${email}`);
   }
 
   /* Eventos UI */
