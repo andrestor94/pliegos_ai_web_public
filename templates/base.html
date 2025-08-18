@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>{% block title %}Suizo Argentina – Licitaciones IA{% endblock %}</title>
 
-  <!-- Aplica tema ANTES de pintar para evitar FOUC -->
   <script>
     (function(){
       try{
@@ -19,13 +18,9 @@
     })();
   </script>
 
-  <!-- Inter -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <!-- Bootstrap & Icons -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
-
-  <!-- Theme global (mobile-first) -->
   <link rel="stylesheet" href="{{ url_for('static', path='css/app.theme.css') }}">
 
   <style>
@@ -53,7 +48,7 @@
 
     html, body { height:100%; }
     html{ scroll-behavior:smooth; }
-    html, body{ overflow-x:hidden; } /* evita desbordes en iOS */
+    html, body{ overflow-x:hidden; }
     body{
       margin:0;
       font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
@@ -63,7 +58,6 @@
       padding-bottom: var(--safe-bottom);
     }
 
-    /* ===== Shell / Layout ===== */
     .shell{ width:100vw; height:100vh; margin:0; background:var(--panel); overflow:hidden; display:block; }
     .app{
       height:100%;
@@ -135,12 +129,34 @@
     .pill-icon{ display:inline-flex; align-items:center; gap:.5rem; }
     .icon-btn{
       position:relative; width:44px; height:44px; display:grid; place-items:center;
-      border-radius:14px; border:1px solid var(--border); background:#fff; color:var(--ink); /* FIX */
+      border-radius:14px; border:1px solid var(--border); background:#fff; color:var(--ink);
     }
     [data-theme="dark"] .icon-btn{ background:#0b1220; color:#e5e7eb; border-color:var(--border); }
     .icon-badge, .chat-badge{
       position:absolute; top:-6px; right:-6px; min-width:18px; height:18px; padding:0 4px; border-radius:999px; background:#ef4444; color:#fff; font-size:11px; line-height:18px; text-align:center; display:none;
     }
+
+    /* ===== Usuario ===== */
+    .user-box{
+      display:flex; align-items:center; gap:10px; margin-left:6px;
+      white-space:nowrap;        /* evita salto de línea */
+      flex:0 0 auto;             /* no se estira ni se corta */
+    }
+    .user-name{
+      font-weight:600; color:var(--ink); line-height:1.1;
+      max-width: 14ch;           /* evita que empuje todo */
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    }
+    .user-avatar{
+      width:40px; height:40px; border-radius:999px; overflow:hidden;
+      position:relative; border:1px solid var(--border);
+      background:#e2e8f0; display:grid; place-items:center;
+      cursor:pointer; user-select:none;
+    }
+    .user-avatar img{ width:100%; height:100%; object-fit:cover; display:block; }
+    .user-avatar .initials{ font-weight:700; color:#334155; }
+    [data-theme="dark"] .user-avatar{ background:#111827; }
+    .user-avatar:hover{ box-shadow:0 8px 20px rgba(0,0,0,.12); }
 
     /* ===== Content ===== */
     .content{
@@ -192,15 +208,14 @@
       }
       .sidebar-overlay.open{ opacity: 1; pointer-events: auto; }
 
-      /* Mobile tweaks */
       .content{ padding:16px; }
       .brand{ padding:6px 10px; gap:10px; }
       .brand img{ height:28px; }
       .pill, .icon-btn{ padding:.5rem .75rem; }
     }
-    /* Drawer un poco más angosto en teléfonos chicos + header-actions scrollable */
     @media (max-width:575.98px){
       .sidebar{ width:78vw; }
+      /* Header: acciones en una fila desplazable */
       .header{ align-items:flex-start; gap:8px; padding:10px 12px; }
       .brand{ flex:0 0 auto; }
       .header-actions{
@@ -211,6 +226,8 @@
       }
       .header-actions::-webkit-scrollbar{ display:none; }
       .header-actions > *{ flex:0 0 auto; }
+      /* nombre más corto en teléfonos */
+      .user-name{ max-width: 10ch; }
     }
 
     /* Inputs / tablas / toasts */
@@ -268,7 +285,6 @@
     [data-theme="dark"] .chat-ia__composer textarea{ background:#0b1220; color:#e5e7eb; }
     .chat-ia__send{ border:none; border-radius:999px; padding:0 16px; min-width:120px; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); color:#fff; box-shadow:0 12px 26px rgba(139,92,246,.22); }
 
-    /* FullCalendar overrides base (colores) */
     .fc { --fc-border-color: var(--border); --fc-page-bg-color: transparent; }
   </style>
 
@@ -288,7 +304,7 @@
 
   <div class="shell">
     <div class="app">
-      <!-- Sidebar -->
+      <!-- ===== Sidebar ===== -->
       <aside class="sidebar" id="sidebar" aria-hidden="false" aria-label="Navegación lateral">
         <button class="close-drawer d-none d-lg-none" id="btnCloseDrawer" aria-label="Cerrar menú">
           <i class="bi bi-x-lg"></i>
@@ -319,7 +335,7 @@
 
       <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
 
-      <!-- Header -->
+      <!-- ===== Header ===== -->
       <header class="header">
         <button class="menu-btn" id="btnOpenDrawer" aria-label="Abrir menú" aria-controls="sidebar" aria-expanded="false">
           <i class="bi bi-list"></i>
@@ -360,6 +376,7 @@
         </div>
       </header>
 
+      <!-- ===== Content ===== -->
       <main class="content">
         {% block content %}{% endblock %}
       </main>
@@ -394,7 +411,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    /* Fallback rol (oculta admin-only si no sos admin) */
+    /* Fallback rol */
     (function(){
       try{
         var role = "{{ request.session.get('rol', 'usuario') }}";
@@ -517,7 +534,6 @@
       btnOpen?.setAttribute('aria-expanded','true');
       const first = sidebar.querySelector('a,button,[tabindex]:not([tabindex="-1"])');
       if(first) try{ first.focus(); }catch(_){}
-      /* recálculo del calendario tras la animación */
       setTimeout(()=> window.dispatchEvent(new Event('resize')), 280);
     }
     function closeSidebarMobile(){
@@ -550,12 +566,12 @@
       }else{
         sidebar.setAttribute('aria-hidden','true');
       }
-      window.dispatchEvent(new Event('resize')); /* recálculo UI */
+      window.dispatchEvent(new Event('resize'));
     }
     mqDesktop.addEventListener?.('change', applySidebarMode);
     applySidebarMode();
 
-    /* ===== Chat IA (drawer) ===== */
+    /* ===== Chat IA ===== */
     const CHAT_STATE_KEY = 'chatboxState';
     const chatIa = document.getElementById('chatIa');
     const chatIaOverlay = document.getElementById('chatIaOverlay');
@@ -593,7 +609,6 @@
       catch(_){ chatIaBody.scrollTop = chatIaBody.scrollHeight; }
     }
 
-    // Enter = enviar | Shift+Enter = salto de línea
     chatIaInput?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
         e.preventDefault(); chatIaForm?.requestSubmit();
@@ -695,7 +710,7 @@
       cont.appendChild(el); const t=new bootstrap.Toast(el,{delay}); t.show(); el.addEventListener('hidden.bs.toast',()=> el.remove());
     }
 
-    /* Tema global */
+    /* Tema */
     const btnTheme = document.getElementById('btnTheme');
     const icoTheme = document.getElementById('icoTheme');
     function getTheme(){ try{ return localStorage.getItem('theme'); }catch(_){ return null; } }
@@ -748,7 +763,7 @@
       setInterval(refreshPresence, 15000);
     }
 
-    /* No leídos chat */
+    /* Chat no leídos */
     const chatBadge = document.getElementById('chatBadge');
     async function refreshChatUnread(){
       try{
@@ -762,11 +777,11 @@
     refreshChatUnread();
     setInterval(refreshChatUnread, 15000);
 
-    // Kill-switch FAB externo
+    /* Limpia FAB externo si existiera */
     document.querySelectorAll('#chatOpenAiFab, .chat-openai-fab, [data-chat-fab]')
       .forEach(el => { try{ el.remove(); }catch(_){ el.style.display='none'; } });
 
-    /* ✅ Cargar datos iniciales */
+    /* Carga inicial */
     getUsuario();
     refreshNotif();
   </script>
