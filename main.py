@@ -14,7 +14,7 @@ from fastapi.concurrency import run_in_threadpool
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from sqlalchemy import or_
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 from utils import (
     extraer_texto_de_pdf,
@@ -28,7 +28,7 @@ from database import (
     DB_PATH,
     inicializar_bd,
     obtener_usuario_por_email, agregar_usuario, listar_usuarios,
-    actualizar_password, cambiar_estado_usuario, borrar_usuario,
+    actualizar_password, cambiar_estado_usuario, borrar_usuario, cambiar_rol,
     buscar_usuarios,
     guardar_en_historial, obtener_historial, eliminar_del_historial,
     obtener_historial_completo,
@@ -1310,6 +1310,119 @@ async def auditoria_purgar_disabled(request: Request):
 async def admin_panel(request: Request):
     # Renderiza el panel de administración (botón del topbar apunta aquí)
     return templates.TemplateResponse("admin.html", {"request": request})
+
+# ========= Admin: API de usuarios (para admin.html) =========
+DEFAULT_NEW_USER_PASSWORD = os.getenv("DEFAULT_NEW_USER_PASSWORD", "1234")
+
+class AdminUserCreate(BaseModel):
+    nombre: str
+    email: EmailStr
+    rol: str = "usuario"   # acepta "Administrador"/"Usuario"
+
+class AdminPasswordIn(BaseModel):
+    email: EmailStr
+    password: str
+
+class AdminToggleIn(BaseModel):
+    email: EmailStr
+    activo: bool
+
+class AdminRoleIn(BaseModel):
+    email: EmailStr
+    rol: str  # "admin" | "usuario" | "Administrador" | "Usuario" | "borrado"
+
+def _norm_rol(s: str) -> str:
+    s = (s or "").strip().lower()
+    if s.startswith("admin"): return "admin"
+    if s.startswith("usuar"): return "usuario"
+    if s == "borrado": return "borrado"
+    return "usuario"
+
+@app.get("/api/admin/users")
+async def admin_users_list(request: Request, q: str = "", limit: int = 500):
+    require_admin(request)
+    items = listar_usuarios()  # [{'id','nombre','email','rol','activo'}]
+    q = (q or "").strip().lower()
+    if q:
+        items = [u for u in items if q in (u.get("email","").lower() + " " + (u.get("nombre","") or "").lower())]
+    return {"items": items[:limit]}
+
+# alias de compatibilidad
+@app.get("/api/usuarios/list")
+async def admin_users_list_alias(request: Request, q: str = "", limit: int = 500):
+    return await admin_users_list(request, q=q, limit=limit)
+
+@app.post("/api/admin/users")
+async def admin_users_create(request: Request, payload: AdminUserCreate):
+    require_admin(request)
+    actor_user_id, ip = _actor_info(request)
+    email = payload.email.lower()
+    if obtener_usuario_por_email(email):
+        return JSONResponse({"error": "El email ya existe"}, status_code=409)
+    try:
+        agregar_usuario(
+            nombre=payload.nombre.strip(),
+            email=email,
+            password=DEFAULT_NEW_USER_PASSWORD,
+            rol=_norm_rol(payload.rol),
+            actor_user_id=actor_user_id,
+            ip=ip
+        )
+        return {"ok": True}
+    except Exception as e:
+        print("❌ admin_users_create:", repr(e))
+        return JSONResponse({"error": "No se pudo crear el usuario"}, status_code=500)
+
+# alias de compatibilidad
+@app.post("/api/usuarios/crear")
+async def admin_users_create_alias(request: Request, payload: AdminUserCreate):
+    return await admin_users_create(request, payload)
+
+@app.post("/api/admin/users/password")
+async def admin_users_password(request: Request, payload: AdminPasswordIn):
+    require_admin(request)
+    actor_user_id, ip = _actor_info(request)
+    try:
+        actualizar_password(payload.email.lower(), payload.password, actor_user_id=actor_user_id, ip=ip)
+        return {"ok": True}
+    except Exception as e:
+        print("❌ admin_users_password:", repr(e))
+        return JSONResponse({"error": "No se pudo actualizar la contraseña"}, status_code=500)
+
+@app.post("/api/admin/users/toggle")
+async def admin_users_toggle(request: Request, payload: AdminToggleIn):
+    require_admin(request)
+    actor_user_id, ip = _actor_info(request)
+    try:
+        cambiar_estado_usuario(payload.email.lower(), 1 if payload.activo else 0, actor_user_id=actor_user_id, ip=ip)
+        return {"ok": True}
+    except Exception as e:
+        print("❌ admin_users_toggle:", repr(e))
+        return JSONResponse({"error": "No se pudo cambiar el estado"}, status_code=500)
+
+@app.post("/api/admin/users/role")
+async def admin_users_role(request: Request, payload: AdminRoleIn):
+    require_admin(request)
+    actor_user_id, ip = _actor_info(request)
+    try:
+        ok = cambiar_rol(payload.email.lower(), _norm_rol(payload.rol), actor_user_id=actor_user_id, ip=ip)
+        if not ok:
+            return JSONResponse({"error": "Usuario no encontrado"}, status_code=404)
+        return {"ok": True}
+    except Exception as e:
+        print("❌ admin_users_role:", repr(e))
+        return JSONResponse({"error": "No se pudo cambiar el rol"}, status_code=500)
+
+@app.delete("/api/admin/users/{email:path}")
+async def admin_users_delete(request: Request, email: str, hard: bool = Query(default=False)):
+    require_admin(request)
+    actor_user_id, ip = _actor_info(request)
+    try:
+        borrar_usuario(email.lower(), actor_user_id=actor_user_id, ip=ip, soft=(not hard))
+        return {"ok": True}
+    except Exception as e:
+        print("❌ admin_users_delete:", repr(e))
+        return JSONResponse({"error": "No se pudo eliminar el usuario"}, status_code=500)
 
 # =====================================================================
 # ========================== CALENDARIO (endpoints) ===================
