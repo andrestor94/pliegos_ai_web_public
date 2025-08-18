@@ -136,7 +136,7 @@
     .pill-icon{ display:inline-flex; align-items:center; gap:.5rem; }
     .icon-btn{
       position:relative; width:44px; height:44px; display:grid; place-items:center;
-      border-radius:14px; border:1px solid var(--border); background:#fff; color:#ink;
+      border-radius:14px; border:1px solid var(--border); background:#fff; color:var(--ink); /* fix */
     }
     [data-theme="dark"] .icon-btn{ background:#0b1220; color:#e5e7eb; border-color:var(--border); }
     .icon-badge, .chat-badge{
@@ -461,7 +461,8 @@
         </div>
         <div class="modal-footer">
           <button type="button" id="ratingSubmit" class="btn btn-primary">
-            <i class="bi bi-send"></i> Enviar valoración
+            <span class="spinner-border spinner-border-sm me-1 d-none" id="ratingSpinner" role="status" aria-hidden="true"></span>
+            <i class="bi bi-send" id="ratingSendIcon"></i> Enviar valoración
           </button>
         </div>
       </div>
@@ -669,6 +670,7 @@
       catch(_){ chatIaBody.scrollTop = chatIaBody.scrollHeight; }
     }
 
+    // Enter = enviar | Shift+Enter = salto de línea
     chatIaInput?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
         e.preventDefault(); chatIaForm?.requestSubmit();
@@ -764,7 +766,7 @@
         <i class="bi bi-${esc(icon)} me-1"></i><strong class="me-auto">${esc(title)}</strong>
         <small>Ahora</small><button class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
       </div><div class="toast-body">${esc(body)}</div>`;
-      cont.appendChild(el); const t=new bootstrap.Toast(el,{delay}); t.show(); el.addEventListener('hidden.bs.toast',()=> el.remove());
+      cont.appendChild(el); const t=new bootstrap.Toast(el,{delay}); t.show(); el.addEventListener('hidden-bs.toast',()=> el.remove());
     }
 
     const btnTheme = document.getElementById('btnTheme');
@@ -859,6 +861,8 @@
       const info = document.getElementById('ratingFileInfo');
       const commentEl = document.getElementById('ratingComment');
       const submitBtn = document.getElementById('ratingSubmit');
+      const spinner = document.getElementById('ratingSpinner');
+      const sendIcon = document.getElementById('ratingSendIcon');
 
       const state = { score: 0, timestamp: '', nombre_pdf: '' };
 
@@ -886,7 +890,10 @@
         setTimeout(()=> starsWrap.querySelector('.star')?.focus(), 150);
       }
 
-      // Accesibles: click o Enter/Espacio
+      // Exponer para uso manual si lo necesitás desde otras vistas
+      window.promptRatingFor = openFor;
+
+      // Accesibles: click o Enter/Espacio y flechas
       starsWrap.addEventListener('click', (e)=>{
         const st = e.target.closest('.star'); if(!st) return;
         state.score = Number(st.getAttribute('data-val'))||0;
@@ -902,11 +909,14 @@
         paintStars(e.key===' '||e.key==='Enter' ? state.score : val);
       });
 
-      submitBtn.addEventListener('click', async ()=>{
+      async function sendRating(){
         if(!state.score){
           showToast({title:'Valoración', body:'Seleccioná entre 1 y 5 estrellas.', icon:'exclamation-triangle'});
           return;
         }
+        submitBtn.disabled = true;
+        spinner.classList.remove('d-none');
+        sendIcon.classList.add('d-none');
         try{
           const res = await fetch('/api/rating', {
             method:'POST',
@@ -924,15 +934,16 @@
           }
           modal.hide();
           showToast({title:'¡Gracias!', body:'Tu valoración fue registrada.', icon:'star-fill'});
-          // Refrescar notificaciones por si el backend creó una
           refreshNotif();
         }catch(err){
           showToast({title:'Valoración', body:String(err?.message||'Error'), icon:'exclamation-triangle'});
+        }finally{
+          submitBtn.disabled = false;
+          spinner.classList.add('d-none');
+          sendIcon.classList.remove('d-none');
         }
-      });
-
-      // Exponer para uso manual si lo necesitás desde otras vistas
-      window.promptRatingFor = openFor;
+      }
+      submitBtn.addEventListener('click', sendRating);
 
       // 1) Abrir luego de descargar un PDF (detecta /descargar/resumen_*.pdf)
       document.addEventListener('click', (e)=>{
@@ -942,18 +953,18 @@
         const fname = href.split('/').pop() || '';
         const m = fname.match(/resumen_(\d{14})\.pdf$/i);
         const ts = m ? m[1] : '';
-        // Abrimos modal tras breve delay para no interferir con el download
-        setTimeout(()=> openFor(ts, fname), 500);
+        setTimeout(()=> openFor(ts, fname), 750); // pequeño delay para no interferir con la descarga
       });
 
       // 2) Si hay valoración pendiente, abrir automáticamente
       async function checkPending(){
         try{
-          const r = await fetch('/api/rating/pending');
+          const r = await fetch('/api/rating/pending', { headers:{'Accept':'application/json'} });
           if(!r.ok) return;
           const j = await r.json().catch(()=> ({}));
-          if(j?.pending && j?.last){
-            openFor(j.last.timestamp || '', j.last.nombre_pdf || '');
+          if(j?.pending){
+            const last = j.last || j.pending;
+            openFor(last?.timestamp || '', last?.nombre_pdf || '');
             showToast({title:'Valoración pendiente', body:'Antes de continuar, calificá el último análisis.', icon:'exclamation-circle'});
           }
         }catch(_){}
@@ -971,12 +982,40 @@
             const j = await r.json().catch(()=> ({}));
             if(j?.pending){
               e.preventDefault();
-              openFor(j.last?.timestamp || '', j.last?.nombre_pdf || '');
+              const last = j.last || j.pending;
+              openFor(last?.timestamp || '', last?.nombre_pdf || '');
               showToast({title:'Valoración requerida', body:'Debés valorar el análisis anterior para continuar.', icon:'exclamation-circle'});
             }
           }
         }catch(_){}
       });
+
+      // 4) Interceptor global de fetch para capturar respuestas de /analizar-pliego
+      const _origFetch = window.fetch;
+      window.fetch = async function(input, init){
+        const res = await _origFetch(input, init);
+        try{
+          const url = (typeof input === 'string') ? input : (input?.url || '');
+          if(/\/analizar-pliego$/.test(url)){
+            if(res.status === 409 || res.headers.get('X-Require-Rating') === '1'){
+              const clone = res.clone();
+              const j = await clone.json().catch(()=> ({}));
+              const last = j?.last || j?.pending || {};
+              openFor(last.timestamp || '', last.nombre_pdf || '');
+              showToast({title:'Valoración requerida', body:'Calificá el análisis anterior para continuar.', icon:'star'});
+            }else{
+              // Si el backend devuelve info del PDF generado, abrimos el modal en éxito
+              const clone = res.clone();
+              const j = await clone.json().catch(()=> ({}));
+              if(j && j.pdf && j.timestamp){
+                // Éxito normal: mostrar rating también (opcional)
+                setTimeout(()=> openFor(j.timestamp, j.pdf), 600);
+              }
+            }
+          }
+        }catch(_){}
+        return res;
+      };
     })();
 
   </script>
