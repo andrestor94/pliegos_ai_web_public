@@ -4,6 +4,7 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>{% block title %}Suizo Argentina – Licitaciones IA{% endblock %}</title>
+  <meta name="color-scheme" content="light dark"/>
 
   <!-- Aplica tema ANTES de pintar para evitar FOUC -->
   <script>
@@ -18,6 +19,10 @@
       }catch(_){}
     })();
   </script>
+
+  <!-- Rendimiento -->
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 
   <!-- Inter -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -65,6 +70,11 @@
       padding-bottom: var(--safe-bottom);
     }
     img, iframe, canvas, video{ max-width:100%; height:auto; }
+
+    /* Respeta reduced motion */
+    @media (prefers-reduced-motion: reduce){
+      * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+    }
 
     .shell{ width:100vw; height:100vh; margin:0; background:var(--panel); overflow:hidden; display:block; }
     .app{
@@ -335,24 +345,24 @@
         </button>
 
         <div class="side-logo" title="Suizo Argentina">
-          <img src="/static/logo-suizo.png" alt="Suizo"/>
+          <img src="/static/logo-suizo.png" alt="Suizo" loading="lazy"/>
         </div>
 
         <nav class="side-nav">
-          <a class="side-btn" data-match="/"               href="/"               title="Inicio"><i class="bi bi-house"></i></a>
-          <a class="side-btn" data-match="/chat"           href="/chat"           title="Chat interno"><i class="bi bi-chat-dots"></i></a>
-          <a class="side-btn" data-match="/incidencias"    href="/incidencias"    title="Incidencias"><i class="bi bi-bug"></i></a>
-          <a class="side-btn" data-match="/calendario"     href="/calendario"     title="Calendario"><i class="bi bi-calendar-event"></i></a>
+          <a class="side-btn" data-match="/"               href="/"               title="Inicio" aria-label="Inicio"><i class="bi bi-house"></i></a>
+          <a class="side-btn" data-match="/chat"           href="/chat"           title="Chat interno" aria-label="Chat interno"><i class="bi bi-chat-dots"></i></a>
+          <a class="side-btn" data-match="/incidencias"    href="/incidencias"    title="Incidencias" aria-label="Incidencias"><i class="bi bi-bug"></i></a>
+          <a class="side-btn" data-match="/calendario"     href="/calendario"     title="Calendario" aria-label="Calendario"><i class="bi bi-calendar-event"></i></a>
 
-          <a class="side-btn" id="btnHistorial" href="/historia" title="Historial">
+          <a class="side-btn" id="btnHistorial" href="/historia" title="Historial" aria-label="Historial">
             <i class="bi bi-clock-history"></i>
           </a>
 
           {% if request.session.get('rol', 'usuario') == 'admin' %}
-            <a class="side-btn" data-match="/auditoria" href="/auditoria" title="Auditoría" data-admin-only>
+            <a class="side-btn" data-match="/auditoria" href="/auditoria" title="Auditoría" data-admin-only aria-label="Auditoría">
               <i class="bi bi-clipboard-data"></i>
             </a>
-            <a class="side-btn" data-match="/admin" href="/admin" title="Admin" data-admin-only>
+            <a class="side-btn" data-match="/admin" href="/admin" title="Admin" data-admin-only aria-label="Administración">
               <i class="bi bi-gear"></i>
             </a>
           {% endif %}
@@ -360,8 +370,8 @@
 
         <div class="side-spacer"></div>
 
-        <a class="side-btn" data-match="/cambiar-password" href="/cambiar-password" title="Cambiar contraseña"><i class="bi bi-key"></i></a>
-        <a class="side-btn" href="#" id="btnSalir" title="Salir"><i class="bi bi-box-arrow-right"></i></a>
+        <a class="side-btn" data-match="/cambiar-password" href="/cambiar-password" title="Cambiar contraseña" aria-label="Cambiar contraseña"><i class="bi bi-key"></i></a>
+        <a class="side-btn" href="#" id="btnSalir" title="Salir" aria-label="Cerrar sesión"><i class="bi bi-box-arrow-right"></i></a>
         <div class="side-small">v1</div>
       </aside>
 
@@ -375,36 +385,36 @@
         </button>
 
         <div class="brand">
-          <img src="/static/logo-suizo.png" alt="Logo Suizo">
+          <img src="/static/logo-suizo.png" alt="Logo Suizo" loading="lazy">
           <div class="brand-title">Licitaciones IA</div>
         </div>
 
         <div class="header-actions">
-          <button class="icon-btn" id="btnTheme" title="Tema: Sistema">
+          <button class="icon-btn" id="btnTheme" title="Tema: Sistema" aria-label="Cambiar tema">
             <i id="icoTheme" class="bi bi-circle-half"></i>
           </button>
 
-          <button class="icon-btn" id="btnPresence" title="Usuarios activos">
+          <button class="icon-btn" id="btnPresence" title="Usuarios activos" aria-label="Usuarios activos">
             <i class="bi bi-people"></i>
             <span id="presenceBadge" class="icon-badge">0</span>
           </button>
 
-          <button class="icon-btn" id="btnNotif" title="Notificaciones">
+          <button class="icon-btn" id="btnNotif" title="Notificaciones" aria-label="Notificaciones" aria-haspopup="true" aria-expanded="false">
             <i class="bi bi-bell"></i>
             <span id="notifBadge" class="icon-badge">0</span>
           </button>
 
-          <a class="pill pill-icon" href="/chat" id="btnChat">
+          <a class="pill pill-icon" href="/chat" id="btnChat" aria-label="Ir al chat interno">
             <i class="bi bi-chat-dots"></i> Chat interno
             <span id="chatBadge" class="chat-badge">0</span>
           </a>
 
-          <button class="pill pill-grad pill-icon" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Chat OpenAI</button>
+          <button class="pill pill-grad pill-icon" onclick="openChatAndExpand()" aria-label="Abrir chat con IA"><i class="bi bi-robot"></i> Chat OpenAI</button>
 
           <!-- Usuario -->
           <div class="user-box">
             <div class="user-name" id="userName">—</div>
-            <div class="user-avatar" id="avatarBtn" title="Cambiar foto de perfil">
+            <div class="user-avatar" id="avatarBtn" title="Cambiar foto de perfil" role="button" tabindex="0" aria-label="Cambiar foto de perfil">
               <span class="initials" id="avatarInitials">?</span>
               <img id="avatarImg" alt="Avatar" style="display:none;">
             </div>
@@ -414,38 +424,39 @@
       </header>
 
       <!-- ===== Área de contenido ===== -->
-      <main class="content">
+      <main class="content" id="mainContent">
         {% block content %}{% endblock %}
       </main>
     </div>
   </div>
 
   <!-- Panel notificaciones -->
-  <div id="notif-panel" class="cardx position-fixed" style="right:22px; top:22px; width:340px; display:none; z-index:999;">
+  <div id="notif-panel" class="cardx position-fixed" style="right:22px; top:22px; width:340px; display:none; z-index:999;" role="dialog" aria-modal="false" aria-labelledby="notifTitle">
     <div class="d-flex align-items-center justify-content-between mb-2">
-      <strong>Notificaciones</strong>
+      <strong id="notifTitle">Notificaciones</strong>
       <button class="btn btn-sm btn-outline-secondary" id="btnMarkRead">Marcar leídas</button>
     </div>
     <div id="notif-list" class="small muted">Sin notificaciones</div>
-    <!-- 👇 ahora va a la página UI, no al endpoint JSON -->
-    <div class="text-end mt-2"><a href="/notificaciones/ui" class="small">Ver todas</a></div>
+    <!-- 👉 a la vista HTML correcta -->
+    <div class="text-end mt-2"><a href="/notificaciones/todas" class="small">Ver todas</a></div>
   </div>
 
   <!-- Toasts -->
-  <div class="toast-container" id="toastContainer"></div>
+  <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
 
   <!-- ===== Drawer Chat IA ===== -->
   <div id="chatIaOverlay" class="chat-ia-overlay"></div>
-  <aside id="chatIa" class="chat-ia" aria-hidden="true">
+  <aside id="chatIa" class="chat-ia" aria-hidden="true" aria-label="Chat OpenAI">
     <div class="chat-ia__header">
       <div class="chat-ia__title"><i class="bi bi-robot"></i> Chat OpenAI</div>
-      <button id="chatIaClose" class="chat-ia__close" title="Cerrar"><i class="bi bi-x-lg"></i></button>
+      <button id="chatIaClose" class="chat-ia__close" title="Cerrar" aria-label="Cerrar chat IA"><i class="bi bi-x-lg"></i></button>
     </div>
     <div id="chatIaBody" class="chat-ia__body">
       <div class="msg ai"><b>IA:</b> ¿En qué te ayudo con licitaciones?</div>
     </div>
     <form id="chatIaForm" class="chat-ia__composer">
-      <textarea id="chatIaInput" placeholder="Escribe tu mensaje…" enterkeyhint="send"></textarea>
+      <label for="chatIaInput" class="visually-hidden">Escribe tu mensaje</label>
+      <textarea id="chatIaInput" placeholder="Escribe tu mensaje…" enterkeyhint="send" aria-label="Escribe tu mensaje al asistente"></textarea>
       <button class="chat-ia__send" type="submit"><i class="bi bi-send"></i> Enviar</button>
     </form>
   </aside>
@@ -467,7 +478,7 @@
             <i class="bi bi-star star" data-val="5" role="radio" aria-label="5 estrellas" aria-checked="false" tabindex="0"></i>
           </div>
           <div class="rating-hint mb-3" id="ratingHint">Seleccioná una puntuación.</div>
-          <label class="form-label">Comentario (opcional)</label>
+          <label class="form-label" for="ratingComment">Comentario (opcional)</label>
           <textarea id="ratingComment" class="form-control" rows="3" placeholder="¿Qué te gustó o qué mejorarías?"></textarea>
         </div>
         <div class="modal-footer">
@@ -481,9 +492,9 @@
   </div>
 
   <!-- Banner Valoración pendiente -->
-  <div id="ratingBanner" class="rating-banner">
+  <div id="ratingBanner" class="rating-banner" role="region" aria-label="Valoración pendiente">
     <div class="d-flex align-items-center gap-2">
-      <i class="bi bi-star-fill text-warning"></i>
+      <i class="bi bi-star-fill text-warning" aria-hidden="true"></i>
       <span class="small">Tenés una valoración pendiente.</span>
       <button id="ratingBannerBtn" class="btn btn-sm btn-primary">Valorar ahora</button>
       <button id="ratingBannerClose" class="btn btn-sm btn-outline-secondary">Cerrar</button>
@@ -536,6 +547,7 @@
     const avatarBtn   = document.getElementById('avatarBtn');
     const avatarInput = document.getElementById('avatarInput');
     avatarBtn?.addEventListener('click', ()=> avatarInput?.click());
+    avatarBtn?.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); avatarInput?.click(); }});
     avatarInput?.addEventListener('change', async (e)=>{
       const f = e.target.files?.[0];
       if(!f) return;
@@ -574,24 +586,29 @@
         const n = Number(j?.total_unread||0);
         if(notifBadge){
           notifBadge.textContent = n>99 ? '99+' : String(n);
-        notifBadge.style.display = n>0 ? 'inline-block' : 'none';
+          notifBadge.style.display = n>0 ? 'inline-block' : 'none';
         }
         const list = document.getElementById('notif-list');
         if(Array.isArray(j.items) && list){
           list.innerHTML = j.items.length
-            ? j.items.map(it => `<div class="mb-2"><b>${it.titulo}</b><div class="text-muted">${it.cuerpo||''}</div><div class="small text-muted">${it.fecha_legible||''}</div></div>`).join('')
+            ? j.items.map(it => `<div class="mb-2"><b>${escapeHTML(it.titulo||'')}</b><div class="text-muted">${escapeHTML(it.cuerpo||'')}</div><div class="small text-muted">${escapeHTML(it.fecha_legible||'')}</div></div>`).join('')
             : 'Sin notificaciones';
         }
       }catch(_){}
     }
     notifBtn?.addEventListener('click', ()=>{
       if(!notifPanel) return;
-      notifPanel.style.display = (notifPanel.style.display==='block'?'none':'block');
-      if(notifPanel.style.display==='block') refreshNotif();
+      const open = notifPanel.style.display==='block';
+      notifPanel.style.display = open ? 'none' : 'block';
+      notifBtn.setAttribute('aria-expanded', String(!open));
+      if(!open) refreshNotif();
     });
     document.addEventListener('click', (e)=>{
       if(!notifPanel) return;
-      if(!e.target.closest('#notif-panel') && !e.target.closest('#btnNotif')) notifPanel.style.display='none';
+      if(!e.target.closest('#notif-panel') && !e.target.closest('#btnNotif')){
+        notifPanel.style.display='none';
+        notifBtn?.setAttribute('aria-expanded','false');
+      }
     });
     document.getElementById('btnMarkRead')?.addEventListener('click', async ()=>{
       try{
@@ -789,7 +806,7 @@
         <i class="bi bi-${esc(icon)} me-1"></i><strong class="me-auto">${esc(title)}</strong>
         <small>Ahora</small><button class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
       </div><div class="toast-body">${esc(body)}</div>`;
-      cont.appendChild(el); const t=new bootstrap.Toast(el,{delay}); t.show(); el.addEventListener('hidden-bs.toast',()=> el.remove());
+      cont.appendChild(el); const t=new bootstrap.Toast(el,{delay}); t.show(); el.addEventListener('hidden.bs.toast',()=> el.remove());
     }
 
     const btnTheme = document.getElementById('btnTheme');
@@ -801,6 +818,13 @@
         else{ localStorage.removeItem('theme'); document.documentElement.removeAttribute('data-theme'); }
       }catch(_){}
       updateThemeBtn();
+      // Actualiza meta theme-color para móviles
+      try{
+        const meta = document.querySelector('meta[name="theme-color"]') || (function(){ const m=document.createElement('meta'); m.name='theme-color'; document.head.appendChild(m); return m; })();
+        const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const isDark = val ? (val==='dark') : dark;
+        meta.setAttribute('content', isDark ? '#0b1220' : '#ffffff');
+      }catch(_){}
     }
     function updateThemeBtn(){
       const t = getTheme();
@@ -845,6 +869,7 @@
       refreshPresence();
       setInterval(presencePing, 30000);
       setInterval(refreshPresence, 15000);
+      document.addEventListener('visibilitychange', ()=>{ if(!document.hidden){ presencePing(); refreshPresence(); }});
     }
 
     /* ===== NO LEÍDOS CHAT ===== */
@@ -882,7 +907,7 @@
       };
       const LS_KEYS = {
         last: 'lastAnalysisInfo',         // { ts, pdf, createdAt, viewed, downloaded }
-        done: 'ratingDone:'               // ratingDone:20250818153905 => "1"
+        done: 'ratingDone:'               // ratingDone:YYYYMMDDHHMMSS => "1"
       };
 
       const modalEl = document.getElementById('ratingModal');
@@ -1133,6 +1158,91 @@
           showToast({title:'Prueba', body:'No hay análisis pendiente para valorar.', icon:'info-circle'});
         }
       };
+    })();
+
+    /* =========================
+       === WebSocket realtime ===
+       ========================= */
+    (function setupRealtime(){
+      if(document.body.getAttribute('data-auth') === '1') return; // no WS en login
+      let ws, retry = 0, pingTimer = null, reconnectTimer = null;
+
+      function wsUrl(){
+        const proto = (location.protocol === 'https:') ? 'wss:' : 'ws:';
+        return proto + '//' + location.host + '/ws';
+      }
+
+      function connect(){
+        clearTimeout(reconnectTimer);
+        try{
+          ws = new WebSocket(wsUrl());
+        }catch(_){
+          scheduleReconnect();
+          return;
+        }
+
+        ws.addEventListener('open', ()=>{
+          retry = 0;
+          startPing();
+        });
+
+        ws.addEventListener('message', (ev)=>{
+          let data = null;
+          try{ data = JSON.parse(ev.data); }catch(_){ return; }
+          if(!data || !data.event) return;
+
+          if(data.event === 'ws:pong'){ /* noop */ return; }
+
+          if(data.event === 'alert:new'){
+            // Refresca badge/lista y muestra toast
+            refreshNotif();
+            showToast({ title: data.title || 'Notificación', body: data.body || '', icon:'bell' });
+          }
+
+          if(data.event === 'chat:new_message'){
+            // Aumenta badge al vuelo, muestra toast si no estás en /chat
+            try{
+              const nEl = document.getElementById('chatBadge');
+              const cur = parseInt(nEl?.textContent||'0',10) || 0;
+              const next = Math.min(cur + 1, 999);
+              if(nEl){
+                nEl.textContent = next > 99 ? '99+' : String(next);
+                nEl.style.display = 'inline-block';
+              }
+            }catch(_){}
+            if(!location.pathname.startsWith('/chat')){
+              const from = data.from || 'Nuevo mensaje';
+              const prev = data.preview || '';
+              showToast({ title: `Mensaje de ${from}`, body: prev, icon: 'chat-dots' });
+            }
+          }
+        });
+
+        ws.addEventListener('close', ()=>{
+          stopPing();
+          scheduleReconnect();
+        });
+        ws.addEventListener('error', ()=>{
+          try{ ws.close(); }catch(_){}
+        });
+      }
+
+      function scheduleReconnect(){
+        stopPing();
+        clearTimeout(reconnectTimer);
+        const backoff = Math.min(30000, 1000 * Math.pow(2, retry++)); // 1s,2s,4s,... máx 30s
+        reconnectTimer = setTimeout(connect, backoff);
+      }
+      function startPing(){
+        stopPing();
+        pingTimer = setInterval(()=>{ try{ ws?.readyState===1 && ws.send('ping'); }catch(_){} }, 25000);
+      }
+      function stopPing(){
+        clearInterval(pingTimer); pingTimer = null;
+      }
+
+      connect();
+      window.addEventListener('beforeunload', ()=>{ try{ ws?.close(); }catch(_){} });
     })();
 
   </script>

@@ -117,7 +117,7 @@ def ensure_chat_tables():
                 )
             """)
     except Exception as e:
-        print(⚠️ ensure_chat_tables() no pudo crear tablas:", repr(e))
+        print("⚠️ ensure_chat_tables() no pudo crear tablas:", repr(e))
     finally:
         try:
             conn.close()
@@ -1788,11 +1788,28 @@ async def notificaciones_vista(request: Request):
 def notificaciones_redirect():
     return RedirectResponse("/notificaciones/vista", status_code=307)
 
+# NUEVO: alias exacto que te estaba dando 404
+@app.get("/notificaciones/ui", response_class=HTMLResponse)
+async def notificaciones_ui_alias(request: Request):
+    if not request.session.get("usuario"):
+        return RedirectResponse("/login")
+    return templates.TemplateResponse("notificaciones.html", {"request": request})
+
 @app.post("/notificaciones/marcar-leidas")
 async def mark_read(request: Request):
     user = request.session.get("usuario", "Desconocido")
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    ids = data.get("ids")
+
     with cal_conn() as c:
-        c.execute("UPDATE notificaciones SET leida=1 WHERE user=?", (user,))
+        if isinstance(ids, list) and ids:
+            placeholders = ",".join("?" for _ in ids)
+            c.execute(f"UPDATE notificaciones SET leida=1 WHERE user=? AND id IN ({placeholders})", (user, *ids))
+        else:
+            c.execute("UPDATE notificaciones SET leida=1 WHERE user=?", (user,))
     return {"ok": True}
 
 @app.post("/notificaciones/eliminar")
@@ -1916,7 +1933,7 @@ def _parse_iso(ts: Optional[str]):
     except Exception:
         return None
 
-def _to_dt(s: Optional:str):
+def _to_dt(s: Optional[str]):
     if not s:
         return None
     try:
