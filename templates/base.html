@@ -2,28 +2,40 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8"/>
+  <!-- Viewport correcto (soporta notch y pantallas dinámicas) -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>{% block title %}Suizo Argentina – Licitaciones IA{% endblock %}</title>
 
+  <!-- Aplica tema ANTES de pintar para evitar FOUC -->
   <script>
     (function(){
       try{
-        const t = localStorage.getItem('theme');
+        const t = localStorage.getItem('theme'); // 'light' | 'dark' | null(sistema)
         if(t === 'light' || t === 'dark'){
           document.documentElement.setAttribute('data-theme', t);
         }else{
-          document.documentElement.removeAttribute('data-theme');
+          document.documentElement.removeAttribute('data-theme'); // sistema
         }
       }catch(_){}
     })();
   </script>
 
+  <!-- Inter -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Bootstrap & Icons -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
+
+  <!-- Theme global (mobile-first y fixes multi-dispositivo) -->
   <link rel="stylesheet" href="{{ url_for('static', path='css/app.theme.css') }}">
 
   <style>
+    /* ===== Normalizaciones cross-device ===== */
+    *,*::before,*::after{ box-sizing:border-box; }
+    html{ scroll-behavior:smooth; -webkit-text-size-adjust:100%; text-size-adjust:100%; }
+    html, body{ height:100%; overflow-x:hidden; } /* evita pan lateral en iOS/Android */
+    img,svg,video,canvas,iframe{ max-width:100%; height:auto; }
+
     :root{
       --grad-a:#7c3aed; --grad-b:#ec4899; --grad-c:#2563eb;
       --panel:#ffffff; --ink:#0f1222; --muted:#667085; --border:#e7e9f2;
@@ -46,9 +58,6 @@
       --chip-bg:#0f172a;
     }
 
-    html, body { height:100%; }
-    html{ scroll-behavior:smooth; }
-    html, body{ overflow-x:hidden; }
     body{
       margin:0;
       font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
@@ -58,7 +67,17 @@
       padding-bottom: var(--safe-bottom);
     }
 
-    .shell{ width:100vw; height:100vh; margin:0; background:var(--panel); overflow:hidden; display:block; }
+    /* ===== Shell / Layout ===== */
+    /* width:100% evita el bug de 100vw en iOS que suma barras laterales */
+    .shell{
+      width:100%;
+      min-height:100vh;
+      min-height:100dvh;
+      margin:0;
+      background:var(--panel);
+      overflow:hidden;
+      display:block;
+    }
     .app{
       height:100%;
       display:grid;
@@ -91,9 +110,7 @@
     .side-btn{
       width:44px; height:44px; border-radius:12px; display:grid; place-items:center;
       color:#cbd5e1; font-size:18px; border:1px solid rgba(255,255,255,.08);
-      background:rgba(255,255,255,.03);
-      transition: transform .06s ease, box-shadow .2s ease, background .2s ease, color .2s ease;
-      text-decoration:none;
+      background:rgba(255,255,255,.03); transition: transform .06s ease, box-shadow .2s, background .2s, color .2s; text-decoration:none;
     }
     .side-btn:hover{ transform:translateY(-2px); color:#fff; box-shadow:0 12px 22px rgba(0,0,0,.28); background:rgba(255,255,255,.08); }
     .side-btn.active{ color:#fff; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); border-color:transparent; box-shadow:0 10px 22px rgba(139,92,246,.35); }
@@ -112,10 +129,12 @@
     }
     [data-theme="dark"] .header{ background:linear-gradient(0deg, rgba(11,18,32,.92), rgba(11,18,32,.92)); }
 
+    /* Botón hamburguesa */
     .menu-btn{ display:none; width:42px; height:42px; border-radius:12px; border:1px solid var(--border); background:#fff; color:var(--ink); align-items:center; justify-content:center; }
     [data-theme="dark"] .menu-btn{ background:#0b1220; color:#e5e7eb; }
     @media (max-width: 992px){ .menu-btn{ display:inline-flex; } }
 
+    /* Brand */
     .brand{ display:flex; align-items:center; gap:14px; padding:8px 14px; border-radius:16px; border:1px solid var(--border); background:#fff; }
     .brand img{ height:34px; width:auto; object-fit:contain; }
     .brand .brand-title{ font-weight:700; letter-spacing:.2px; }
@@ -136,23 +155,10 @@
       position:absolute; top:-6px; right:-6px; min-width:18px; height:18px; padding:0 4px; border-radius:999px; background:#ef4444; color:#fff; font-size:11px; line-height:18px; text-align:center; display:none;
     }
 
-    /* ===== Usuario ===== */
-    .user-box{
-      display:flex; align-items:center; gap:10px; margin-left:6px;
-      white-space:nowrap;        /* evita salto de línea */
-      flex:0 0 auto;             /* no se estira ni se corta */
-    }
-    .user-name{
-      font-weight:600; color:var(--ink); line-height:1.1;
-      max-width: 14ch;           /* evita que empuje todo */
-      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-    }
-    .user-avatar{
-      width:40px; height:40px; border-radius:999px; overflow:hidden;
-      position:relative; border:1px solid var(--border);
-      background:#e2e8f0; display:grid; place-items:center;
-      cursor:pointer; user-select:none;
-    }
+    /* Usuario (nombre + avatar) */
+    .user-box{ display:flex; align-items:center; gap:10px; margin-left:6px; flex:0 0 auto; }
+    .user-name{ font-weight:600; color:var(--ink); max-width:28ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .user-avatar{ width:40px; height:40px; border-radius:999px; overflow:hidden; position:relative; border:1px solid var(--border); background:#e2e8f0; display:grid; place-items:center; cursor:pointer; user-select:none; }
     .user-avatar img{ width:100%; height:100%; object-fit:cover; display:block; }
     .user-avatar .initials{ font-weight:700; color:#334155; }
     [data-theme="dark"] .user-avatar{ background:#111827; }
@@ -176,13 +182,16 @@
         var(--bg-body);
     }
 
-    .cardx{ background:#fff; border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow); padding:16px; position:relative; }
+    .cardx{ background:#fff; border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow); padding:16px; position:relative; max-width:100%; }
     .cardx .title{ font-weight:700; display:flex; align-items:center; gap:8px; }
     [data-theme="dark"] .cardx{ background:#0b1220; }
 
+    /* Importante: neutraliza márgenes negativos de Bootstrap en el área con padding */
+    .content .row{ margin-left:0 !important; margin-right:0 !important; }
+
     /* ===== Drawer Mobile/Tablet ===== */
     @media (max-width: 991.98px){
-      .shell{ height: 100dvh; }
+      .shell{ min-height:100dvh; }
       .app{
         grid-template-columns: 1fr;
         grid-template-rows: var(--header-h) 1fr;
@@ -208,14 +217,15 @@
       }
       .sidebar-overlay.open{ opacity: 1; pointer-events: auto; }
 
+      /* Mobile tweaks */
       .content{ padding:16px; }
       .brand{ padding:6px 10px; gap:10px; }
       .brand img{ height:28px; }
       .pill, .icon-btn{ padding:.5rem .75rem; }
     }
+    /* Teléfonos chicos: header actions en carrusel y drawer más angosto */
     @media (max-width:575.98px){
       .sidebar{ width:78vw; }
-      /* Header: acciones en una fila desplazable */
       .header{ align-items:flex-start; gap:8px; padding:10px 12px; }
       .brand{ flex:0 0 auto; }
       .header-actions{
@@ -226,11 +236,11 @@
       }
       .header-actions::-webkit-scrollbar{ display:none; }
       .header-actions > *{ flex:0 0 auto; }
-      /* nombre más corto en teléfonos */
-      .user-name{ max-width: 10ch; }
+      /* Evita zoom automático al enfocar inputs en iOS/Android */
+      input, select, textarea{ font-size:16px; }
     }
 
-    /* Inputs / tablas / toasts */
+    /* Inputs y tablas */
     input.form-control, select.form-select, textarea.form-control{
       background:#fff; color:#111827; border:1px solid var(--border); border-radius:12px;
     }
@@ -242,11 +252,12 @@
     .table thead{ background:#f6f7fe; }
     [data-theme="dark"] .table thead{ background:#0f172a; }
 
+    /* Toasts */
     .toast-container{ position:fixed; right:16px; bottom:16px; z-index:1200; }
     .toast{ border-radius:12px; box-shadow:var(--shadow); }
     .toast-header{ border-bottom:none; }
 
-    /* Login */
+    /* ===== LOGIN / AUTH MODE ===== */
     body[data-auth="1"] .app{ grid-template-columns: 1fr; grid-template-rows: 1fr; grid-template-areas: "content"; }
     body[data-auth="1"] .sidebar, body[data-auth="1"] .header{ display:none !important; }
     body[data-auth="1"] .content{
@@ -257,19 +268,38 @@
       body[data-auth="1"] .content{ background: linear-gradient(180deg,#0b1020 0%, #0b1328 100%); }
     }
 
-    /* Chat IA */
-    .chat-ia-overlay{ position:fixed; inset:0; background:rgba(15,18,34,.28); backdrop-filter: blur(2px); opacity:0; pointer-events:none; transition:opacity .2s ease; z-index:1200; }
-    .chat-ia{ position:fixed; top:0; right:-480px; height:100%; width:480px; max-width:100%; background:#fff; border-left:1px solid var(--border); box-shadow: var(--shadow); display:flex; flex-direction:column; transition:right .28s ease; z-index:1201; }
+    /* ===== Chat IA (drawer derecho) ===== */
+    .chat-ia-overlay{
+      position:fixed; inset:0; background:rgba(15,18,34,.28); backdrop-filter: blur(2px);
+      opacity:0; pointer-events:none; transition:opacity .2s ease; z-index:1200;
+    }
+    .chat-ia{
+      position:fixed; top:0; right:-480px; height:100%; width:480px; max-width:100%;
+      background:#fff; border-left:1px solid var(--border); box-shadow: var(--shadow);
+      display:flex; flex-direction:column; transition:right .28s ease; z-index:1201;
+    }
     [data-theme="dark"] .chat-ia{ background:#0b1220; }
     .chat-ia.open{ right:0; }
     .chat-ia-overlay.open{ opacity:1; pointer-events:auto; }
-    .chat-ia__header{ display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--border); background:linear-gradient(0deg, rgba(255,255,255,.96), rgba(255,255,255,.96)); }
+    .chat-ia__header{ display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--border);
+      background:linear-gradient(0deg, rgba(255,255,255,.96), rgba(255,255,255,.96)); }
     [data-theme="dark"] .chat-ia__header{ background:linear-gradient(0deg, rgba(11,18,32,.96), rgba(11,18,32,.96)); }
     .chat-ia__title{ font-weight:700; display:flex; align-items:center; gap:8px; }
     .chat-ia__close{ border:1px solid var(--border); background:#fff; border-radius:10px; width:36px; height:36px; display:grid; place-items:center; }
     [data-theme="dark"] .chat-ia__close{ background:#0b1220; color:#e5e7eb; }
-    .chat-ia__body{ flex:1; overflow:auto; padding:14px; background: radial-gradient(700px 520px at 84% 12%, rgba(236,72,153,.10), transparent 60%), radial-gradient(600px 420px at 8% 88%, rgba(37,99,235,.10), transparent 60%), #f8f9ff; scroll-behavior: smooth; }
-    [data-theme="dark"] .chat-ia__body{ background: radial-gradient(700px 520px at 84% 12%, rgba(236,72,153,.12), transparent 60%), radial-gradient(600px 420px at 8% 88%, rgba(37,99,235,.12), transparent 60%), #0b1328; }
+    .chat-ia__body{
+      flex:1; overflow:auto; padding:14px; background:
+      radial-gradient(700px 520px at 84% 12%, rgba(236,72,153,.10), transparent 60%),
+      radial-gradient(600px 420px at 8% 88%, rgba(37,99,235,.10), transparent 60%),
+      #f8f9ff;
+      scroll-behavior: smooth;
+    }
+    [data-theme="dark"] .chat-ia__body{
+      background:
+      radial-gradient(700px 520px at 84% 12%, rgba(236,72,153,.12), transparent 60%),
+      radial-gradient(600px 420px at 8% 88%, rgba(37,99,235,.12), transparent 60%),
+      #0b1328;
+    }
     .msg{ background:#fff; border:1px solid var(--border); border-radius:14px; padding:10px 12px; margin-bottom:10px; }
     .msg.ai{ background:linear-gradient(180deg,#ffffff,#fbfdff); }
     .msg.me{ background:#eff4ff; border-color:#dfe6ff; }
@@ -285,7 +315,10 @@
     [data-theme="dark"] .chat-ia__composer textarea{ background:#0b1220; color:#e5e7eb; }
     .chat-ia__send{ border:none; border-radius:999px; padding:0 16px; min-width:120px; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); color:#fff; box-shadow:0 12px 26px rgba(139,92,246,.22); }
 
+    /* ===== FullCalendar (colores base) ===== */
     .fc { --fc-border-color: var(--border); --fc-page-bg-color: transparent; }
+    /* Garantiza ancho/alto correctos y evita recorte en móviles */
+    #chatOpenAiFab, .chat-openai-fab, [data-chat-fab]{ display:none !important; }
   </style>
 
   {% block extra_head %}{% endblock %}
@@ -304,7 +337,7 @@
 
   <div class="shell">
     <div class="app">
-      <!-- ===== Sidebar ===== -->
+      <!-- ===== Sidebar (drawer en mobile) ===== -->
       <aside class="sidebar" id="sidebar" aria-hidden="false" aria-label="Navegación lateral">
         <button class="close-drawer d-none d-lg-none" id="btnCloseDrawer" aria-label="Cerrar menú">
           <i class="bi bi-x-lg"></i>
@@ -315,24 +348,33 @@
         </div>
 
         <nav class="side-nav">
-          <a class="side-btn" data-match="/" href="/" title="Inicio"><i class="bi bi-house"></i></a>
-          <a class="side-btn" data-match="/chat" href="/chat" title="Chat interno"><i class="bi bi-chat-dots"></i></a>
-          <a class="side-btn" data-match="/incidencias" href="/incidencias" title="Incidencias"><i class="bi bi-bug"></i></a>
-          <a class="side-btn" data-match="/calendario" href="/calendario" title="Calendario"><i class="bi bi-calendar-event"></i></a>
-          <a class="side-btn" id="btnHistorial" href="/historia" title="Historial"><i class="bi bi-clock-history"></i></a>
+          <a class="side-btn" data-match="/"               href="/"               title="Inicio"><i class="bi bi-house"></i></a>
+          <a class="side-btn" data-match="/chat"           href="/chat"           title="Chat interno"><i class="bi bi-chat-dots"></i></a>
+          <a class="side-btn" data-match="/incidencias"    href="/incidencias"    title="Incidencias"><i class="bi bi-bug"></i></a>
+          <a class="side-btn" data-match="/calendario"     href="/calendario"     title="Calendario"><i class="bi bi-calendar-event"></i></a>
+
+          <a class="side-btn" id="btnHistorial" href="/historia" title="Historial">
+            <i class="bi bi-clock-history"></i>
+          </a>
 
           {% if request.session.get('rol', 'usuario') == 'admin' %}
-            <a class="side-btn" data-match="/auditoria" href="/auditoria" title="Auditoría" data-admin-only><i class="bi bi-clipboard-data"></i></a>
-            <a class="side-btn" data-match="/admin" href="/admin" title="Admin" data-admin-only><i class="bi bi-gear"></i></a>
+            <a class="side-btn" data-match="/auditoria" href="/auditoria" title="Auditoría" data-admin-only>
+              <i class="bi bi-clipboard-data"></i>
+            </a>
+            <a class="side-btn" data-match="/admin" href="/admin" title="Admin" data-admin-only>
+              <i class="bi bi-gear"></i>
+            </a>
           {% endif %}
         </nav>
 
         <div class="side-spacer"></div>
+
         <a class="side-btn" data-match="/cambiar-password" href="/cambiar-password" title="Cambiar contraseña"><i class="bi bi-key"></i></a>
         <a class="side-btn" href="#" id="btnSalir" title="Salir"><i class="bi bi-box-arrow-right"></i></a>
         <div class="side-small">v1</div>
       </aside>
 
+      <!-- Overlay del drawer (solo mobile) -->
       <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
 
       <!-- ===== Header ===== -->
@@ -347,14 +389,18 @@
         </div>
 
         <div class="header-actions">
-          <button class="icon-btn" id="btnTheme" title="Tema: Sistema"><i id="icoTheme" class="bi bi-circle-half"></i></button>
+          <button class="icon-btn" id="btnTheme" title="Tema: Sistema">
+            <i id="icoTheme" class="bi bi-circle-half"></i>
+          </button>
 
           <button class="icon-btn" id="btnPresence" title="Usuarios activos">
-            <i class="bi bi-people"></i><span id="presenceBadge" class="icon-badge">0</span>
+            <i class="bi bi-people"></i>
+            <span id="presenceBadge" class="icon-badge">0</span>
           </button>
 
           <button class="icon-btn" id="btnNotif" title="Notificaciones">
-            <i class="bi bi-bell"></i><span id="notifBadge" class="icon-badge">0</span>
+            <i class="bi bi-bell"></i>
+            <span id="notifBadge" class="icon-badge">0</span>
           </button>
 
           <a class="pill pill-icon" href="/chat" id="btnChat">
@@ -364,7 +410,6 @@
 
           <button class="pill pill-grad pill-icon" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Chat OpenAI</button>
 
-          <!-- Usuario -->
           <div class="user-box">
             <div class="user-name" id="userName">—</div>
             <div class="user-avatar" id="avatarBtn" title="Cambiar foto de perfil">
@@ -376,7 +421,7 @@
         </div>
       </header>
 
-      <!-- ===== Content ===== -->
+      <!-- ===== Área de contenido ===== -->
       <main class="content">
         {% block content %}{% endblock %}
       </main>
@@ -393,7 +438,7 @@
     <div class="text-end mt-2"><a href="/notificaciones" class="small">Ver todas</a></div>
   </div>
 
-  <!-- Drawer Chat IA -->
+  <!-- ===== Drawer Chat IA ===== -->
   <div id="chatIaOverlay" class="chat-ia-overlay"></div>
   <aside id="chatIa" class="chat-ia" aria-hidden="true">
     <div class="chat-ia__header">
@@ -411,7 +456,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    /* Fallback rol */
+    /* Fallback rol: oculta admin-only si no sos admin */
     (function(){
       try{
         var role = "{{ request.session.get('rol', 'usuario') }}";
@@ -421,7 +466,7 @@
       }catch(_){}
     })();
 
-    /* Usuario header */
+    /* Usuario (nombre + avatar) */
     function initialsFromName(n){
       n = (n||'').trim();
       if(!n) return '?';
@@ -472,7 +517,9 @@
         if(iniEl){ iniEl.style.display='none'; }
       }catch(err){
         showToast({title:'Perfil', body:String(err?.message||'Error'), icon:'exclamation-triangle'});
-      }finally{ try{ avatarInput.value=''; }catch(_){ } }
+      }finally{
+        try{ avatarInput.value=''; }catch(_){}
+      }
     });
 
     /* Logout */
@@ -525,7 +572,6 @@
     const btnClose = document.getElementById('btnCloseDrawer');
 
     function isDesktop(){ return mqDesktop.matches; }
-
     function openSidebarMobile(){
       if(isDesktop()) return;
       sidebar.classList.add('open');
@@ -534,7 +580,7 @@
       btnOpen?.setAttribute('aria-expanded','true');
       const first = sidebar.querySelector('a,button,[tabindex]:not([tabindex="-1"])');
       if(first) try{ first.focus(); }catch(_){}
-      setTimeout(()=> window.dispatchEvent(new Event('resize')), 280);
+      setTimeout(()=> window.dispatchEvent(new Event('resize')), 280); // reflow calendario
     }
     function closeSidebarMobile(){
       if(isDesktop()){
@@ -551,7 +597,6 @@
       btnOpen?.focus?.();
       setTimeout(()=> window.dispatchEvent(new Event('resize')), 280);
     }
-
     btnOpen?.addEventListener('click', openSidebarMobile);
     btnClose?.addEventListener('click', closeSidebarMobile);
     overlay?.addEventListener('click', closeSidebarMobile);
@@ -566,12 +611,12 @@
       }else{
         sidebar.setAttribute('aria-hidden','true');
       }
-      window.dispatchEvent(new Event('resize'));
+      window.dispatchEvent(new Event('resize')); /* recálculo UI */
     }
     mqDesktop.addEventListener?.('change', applySidebarMode);
     applySidebarMode();
 
-    /* ===== Chat IA ===== */
+    /* ===== Chat IA (drawer) ===== */
     const CHAT_STATE_KEY = 'chatboxState';
     const chatIa = document.getElementById('chatIa');
     const chatIaOverlay = document.getElementById('chatIaOverlay');
@@ -609,6 +654,7 @@
       catch(_){ chatIaBody.scrollTop = chatIaBody.scrollHeight; }
     }
 
+    // Enter = enviar | Shift+Enter = salto de línea
     chatIaInput?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
         e.preventDefault(); chatIaForm?.requestSubmit();
@@ -710,7 +756,7 @@
       cont.appendChild(el); const t=new bootstrap.Toast(el,{delay}); t.show(); el.addEventListener('hidden.bs.toast',()=> el.remove());
     }
 
-    /* Tema */
+    /* ===== Tema global ===== */
     const btnTheme = document.getElementById('btnTheme');
     const icoTheme = document.getElementById('icoTheme');
     function getTheme(){ try{ return localStorage.getItem('theme'); }catch(_){ return null; } }
@@ -739,12 +785,17 @@
     }catch(_){}
     updateThemeBtn();
 
-    /* Presencia */
+    /* ===== PRESENCIA ===== */
     const presenceBtn   = document.getElementById('btnPresence');
     const presenceBadge = document.getElementById('presenceBadge');
     const isAuthScreen  = document.body.getAttribute('data-auth') === '1';
+
     presenceBtn?.addEventListener('click', ()=>{ location.href = '/usuarios-activos'; });
-    async function presencePing(){ if(isAuthScreen) return; try{ await fetch('/presence/ping', { method:'POST' }); }catch(_){} }
+
+    async function presencePing(){
+      if(isAuthScreen) return;
+      try{ await fetch('/presence/ping', { method:'POST' }); }catch(_){}
+    }
     async function refreshPresence(){
       if(isAuthScreen) return;
       try{
@@ -758,30 +809,42 @@
       }catch(_){}
     }
     if(!isAuthScreen){
-      presencePing(); refreshPresence();
+      presencePing();
+      refreshPresence();
       setInterval(presencePing, 30000);
       setInterval(refreshPresence, 15000);
     }
 
-    /* Chat no leídos */
+    /* ===== NO LEÍDOS CHAT ===== */
     const chatBadge = document.getElementById('chatBadge');
     async function refreshChatUnread(){
       try{
-        const r = await fetch('/chat/no-leidos'); if(!r.ok) throw 0;
+        const r = await fetch('/chat/no-leidos');
+        if(!r.ok) throw 0;
         const j = await r.json();
         const n = Number(j?.no_leidos||0);
         chatBadge.textContent = n>99 ? '99+' : String(n);
         chatBadge.style.display = n>0 ? 'inline-block' : 'none';
-      }catch(_){ chatBadge.style.display='none'; }
+      }catch(_){
+        chatBadge.style.display='none';
+      }
     }
     refreshChatUnread();
     setInterval(refreshChatUnread, 15000);
 
-    /* Limpia FAB externo si existiera */
+    // Kill-switch FAB externo
     document.querySelectorAll('#chatOpenAiFab, .chat-openai-fab, [data-chat-fab]')
       .forEach(el => { try{ el.remove(); }catch(_){ el.style.display='none'; } });
 
-    /* Carga inicial */
+    // Reflow general en cambios de orientación / reentrada (iOS/Android)
+    window.addEventListener('orientationchange', ()=> {
+      setTimeout(()=> window.dispatchEvent(new Event('resize')), 200);
+    });
+    window.addEventListener('pageshow', (e)=> {
+      if (e.persisted) setTimeout(()=> window.dispatchEvent(new Event('resize')), 60);
+    });
+
+    // Inicializaciones
     getUsuario();
     refreshNotif();
   </script>
