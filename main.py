@@ -31,7 +31,7 @@ from database import (
     buscar_usuarios,
     guardar_en_historial, obtener_historial, eliminar_del_historial,
     obtener_historial_completo,
-    crear_tabla_tickets, crear_ticket, obtener_todos_los_tickets, obtener_tickets_por_usuario,
+    crear_ticket, obtener_todos_los_tickets, obtener_tickets_por_usuario,
     actualizar_estado_ticket, eliminar_ticket,
     obtener_auditoria,
     enviar_mensaje, obtener_hilos_para, obtener_mensajes_entre,
