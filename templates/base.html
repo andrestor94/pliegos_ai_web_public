@@ -2,7 +2,6 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8"/>
-  <!-- ✅ Viewport correcto para móviles (incluye notch iOS) -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>{% block title %}Suizo Argentina – Licitaciones IA{% endblock %}</title>
 
@@ -10,11 +9,11 @@
   <script>
     (function(){
       try{
-        const t = localStorage.getItem('theme'); // 'light' | 'dark' | null(sistema)
+        const t = localStorage.getItem('theme');
         if(t === 'light' || t === 'dark'){
           document.documentElement.setAttribute('data-theme', t);
         }else{
-          document.documentElement.removeAttribute('data-theme'); // sistema
+          document.documentElement.removeAttribute('data-theme');
         }
       }catch(_){}
     })();
@@ -26,7 +25,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
 
-  <!-- ✅ Tu theme global en archivo (mobile-first y fixes iOS) -->
+  <!-- Theme global (mobile-first) -->
   <link rel="stylesheet" href="{{ url_for('static', path='css/app.theme.css') }}">
 
   <style>
@@ -53,13 +52,8 @@
     }
 
     html, body { height:100%; }
-    html{
-      scroll-behavior:smooth;
-      /* ✅ Evita zoom raro en iOS al focusear inputs */
-      -webkit-text-size-adjust: 100%;
-    }
-    /* ✅ MOBILE FIX: sin scroll lateral + respeta safe areas */
-    html, body{ overflow-x:hidden; }
+    html{ scroll-behavior:smooth; }
+    html, body{ overflow-x:hidden; } /* evita desbordes en iOS */
     body{
       margin:0;
       font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
@@ -67,7 +61,6 @@
       background:var(--panel);
       padding-top: var(--safe-top);
       padding-bottom: var(--safe-bottom);
-      font-size: 16px; /* evita zoom de iOS en inputs */
     }
 
     /* ===== Shell / Layout ===== */
@@ -80,8 +73,6 @@
       grid-template-areas:
         "sidebar header"
         "sidebar content";
-      /* ✅ que los hijos de la grid puedan encogerse en iOS */
-      min-width:0;
     }
 
     /* ===== Sidebar ===== */
@@ -96,7 +87,6 @@
       height: calc(100% - 10vh);
       margin: auto 0;
       z-index: 1020;
-      min-width:0; /* ✅ */
     }
     [data-theme="dark"] .sidebar{
       box-shadow: 0 10px 26px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.04);
@@ -107,7 +97,9 @@
     .side-btn{
       width:44px; height:44px; border-radius:12px; display:grid; place-items:center;
       color:#cbd5e1; font-size:18px; border:1px solid rgba(255,255,255,.08);
-      background:rgba(255,255,255,.03); transition: transform .06s ease, box-shadow .2s, background .2s, color .2s; text-decoration:none;
+      background:rgba(255,255,255,.03);
+      transition: transform .06s ease, box-shadow .2s ease, background .2s ease, color .2s ease;
+      text-decoration:none;
     }
     .side-btn:hover{ transform:translateY(-2px); color:#fff; box-shadow:0 12px 22px rgba(0,0,0,.28); background:rgba(255,255,255,.08); }
     .side-btn.active{ color:#fff; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); border-color:transparent; box-shadow:0 10px 22px rgba(139,92,246,.35); }
@@ -123,44 +115,37 @@
       background:linear-gradient(0deg, rgba(255,255,255,.92), rgba(255,255,255,.92));
       backdrop-filter: blur(6px);
       position: sticky; top: 0; z-index: 1030;
-      min-width:0; /* ✅ */
     }
     [data-theme="dark"] .header{ background:linear-gradient(0deg, rgba(11,18,32,.92), rgba(11,18,32,.92)); }
 
-    /* Botón hamburguesa en móviles/tablets */
     .menu-btn{ display:none; width:42px; height:42px; border-radius:12px; border:1px solid var(--border); background:#fff; color:var(--ink); align-items:center; justify-content:center; }
     [data-theme="dark"] .menu-btn{ background:#0b1220; color:#e5e7eb; }
     @media (max-width: 992px){ .menu-btn{ display:inline-flex; } }
 
-    /* Brand */
     .brand{ display:flex; align-items:center; gap:14px; padding:8px 14px; border-radius:16px; border:1px solid var(--border); background:#fff; }
     .brand img{ height:34px; width:auto; object-fit:contain; }
     .brand .brand-title{ font-weight:700; letter-spacing:.2px; }
     [data-theme="dark"] .brand{ background:#0b1220; }
 
-    .header-actions{ margin-left:auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap; min-width:0; }
+    .header-actions{
+      margin-left:auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    }
     .pill{ position:relative; border-radius:999px; padding:.55rem 1rem; border:1px solid var(--border); background:var(--pill); color:var(--ink); font-weight:500; text-decoration:none; }
     .pill-grad{ border:none; color:#fff; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); box-shadow:0 12px 26px rgba(139,92,246,.32); }
     .pill-icon{ display:inline-flex; align-items:center; gap:.5rem; }
-    .icon-btn{ position:relative; width:44px; height:44px; display:grid; place-items:center; border-radius:14px; border:1px solid var(--border); background:#fff; color:var(--ink); } /* ← fix var */
+    .icon-btn{
+      position:relative; width:44px; height:44px; display:grid; place-items:center;
+      border-radius:14px; border:1px solid var(--border); background:#fff; color:var(--ink); /* FIX */
+    }
     [data-theme="dark"] .icon-btn{ background:#0b1220; color:#e5e7eb; border-color:var(--border); }
     .icon-badge, .chat-badge{
       position:absolute; top:-6px; right:-6px; min-width:18px; height:18px; padding:0 4px; border-radius:999px; background:#ef4444; color:#fff; font-size:11px; line-height:18px; text-align:center; display:none;
     }
 
-    /* Usuario */
-    .user-box{ display:flex; align-items:center; gap:10px; margin-left:6px; }
-    .user-name{ font-weight:600; color:var(--ink); }
-    .user-avatar{ width:40px; height:40px; border-radius:999px; overflow:hidden; position:relative; border:1px solid var(--border); background:#e2e8f0; display:grid; place-items:center; cursor:pointer; user-select:none; }
-    .user-avatar img{ width:100%; height:100%; object-fit:cover; display:block; }
-    .user-avatar .initials{ font-weight:700; color:#334155; }
-    [data-theme="dark"] .user-avatar{ background:#111827; }
-    .user-avatar:hover{ box-shadow:0 8px 20px rgba(0,0,0,.12); }
-
     /* ===== Content ===== */
     .content{
       grid-area:content; position:relative; padding:24px; min-height:0;
-      height:100%; overflow:auto; min-width:0; /* ✅ */
+      height:100%; overflow:auto;
       background:
         radial-gradient(900px 660px at 16% 16%, rgba(37,99,235,.10), transparent 60%),
         radial-gradient(1000px 720px at 84% 80%, rgba(236,72,153,.12), transparent 60%),
@@ -175,19 +160,9 @@
         var(--bg-body);
     }
 
-    /* ✅ Los hijos directos del header/content no deben forzar overflow */
-    .header > *, .content > * { min-width:0; }
-
     .cardx{ background:#fff; border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow); padding:16px; position:relative; }
     .cardx .title{ font-weight:700; display:flex; align-items:center; gap:8px; }
     [data-theme="dark"] .cardx{ background:#0b1220; }
-
-    .muted{ color:var(--muted); }
-    .grid{ display:grid; gap:14px; grid-template-columns: repeat(12, 1fr); }
-    .col-3{ grid-column: span 3; } .col-4{ grid-column: span 4; } .col-5{ grid-column: span 5; }
-    .col-6{ grid-column: span 6; } .col-7{ grid-column: span 7; } .col-8{ grid-column: span 8; } .col-12{ grid-column: span 12; }
-
-    @media (max-width: 1200px){ .col-5,.col-4,.col-3{ grid-column: span 6; } }
 
     /* ===== Drawer Mobile/Tablet ===== */
     @media (max-width: 991.98px){
@@ -217,22 +192,31 @@
       }
       .sidebar-overlay.open{ opacity: 1; pointer-events: auto; }
 
-      /* ✅ mobile tweaks */
+      /* Mobile tweaks */
       .content{ padding:16px; }
-      .header-actions{ gap:8px; }
       .brand{ padding:6px 10px; gap:10px; }
       .brand img{ height:28px; }
       .pill, .icon-btn{ padding:.5rem .75rem; }
-      .grid{ grid-template-columns: repeat(6, 1fr); }
-      .col-8,.col-7,.col-6,.col-5,.col-4,.col-3{ grid-column: span 6; }
-      /* Nada supera el ancho */
-      img, svg, video, canvas, iframe, table, .cardx, .brand, .pill, .icon-btn{ max-width:100%; }
+    }
+    /* Drawer un poco más angosto en teléfonos chicos */
+    @media (max-width:575.98px){
+      .sidebar{ width:78vw; }
+      /* Header actions: una fila desplazable (no se rompen) */
+      .header{ align-items:flex-start; gap:8px; padding:10px 12px; }
+      .brand{ flex:0 0 auto; }
+      .header-actions{
+        flex:1 1 auto; min-width:0; margin-left:auto;
+        display:flex; gap:8px; flex-wrap:nowrap;
+        overflow-x:auto; white-space:nowrap; -webkit-overflow-scrolling:touch;
+        scrollbar-width: none;
+      }
+      .header-actions::-webkit-scrollbar{ display:none; }
+      .header-actions > *{ flex:0 0 auto; }
     }
 
-    /* Inputs y tablas */
+    /* Inputs / tablas / toasts… (igual que antes) */
     input.form-control, select.form-select, textarea.form-control{
       background:#fff; color:#111827; border:1px solid var(--border); border-radius:12px;
-      font-size:16px; /* evita zoom iOS */
     }
     [data-theme="dark"] input.form-control,
     [data-theme="dark"] select.form-select,
@@ -242,12 +226,11 @@
     .table thead{ background:#f6f7fe; }
     [data-theme="dark"] .table thead{ background:#0f172a; }
 
-    /* Toasts */
     .toast-container{ position:fixed; right:16px; bottom:16px; z-index:1200; }
     .toast{ border-radius:12px; box-shadow:var(--shadow); }
     .toast-header{ border-bottom:none; }
 
-    /* ===== LOGIN / AUTH MODE ===== */
+    /* Login */
     body[data-auth="1"] .app{ grid-template-columns: 1fr; grid-template-rows: 1fr; grid-template-areas: "content"; }
     body[data-auth="1"] .sidebar, body[data-auth="1"] .header{ display:none !important; }
     body[data-auth="1"] .content{
@@ -258,38 +241,19 @@
       body[data-auth="1"] .content{ background: linear-gradient(180deg,#0b1020 0%, #0b1328 100%); }
     }
 
-    /* ===== Chat IA (drawer derecho) ===== */
-    .chat-ia-overlay{
-      position:fixed; inset:0; background:rgba(15,18,34,.28); backdrop-filter: blur(2px);
-      opacity:0; pointer-events:none; transition:opacity .2s ease; z-index:1200;
-    }
-    .chat-ia{
-      position:fixed; top:0; right:-480px; height:100%; width:480px; max-width:100%;
-      background:#fff; border-left:1px solid var(--border); box-shadow: var(--shadow);
-      display:flex; flex-direction:column; transition:right .28s ease; z-index:1201;
-    }
+    /* Chat IA (igual que tenías) */
+    .chat-ia-overlay{ position:fixed; inset:0; background:rgba(15,18,34,.28); backdrop-filter: blur(2px); opacity:0; pointer-events:none; transition:opacity .2s ease; z-index:1200; }
+    .chat-ia{ position:fixed; top:0; right:-480px; height:100%; width:480px; max-width:100%; background:#fff; border-left:1px solid var(--border); box-shadow: var(--shadow); display:flex; flex-direction:column; transition:right .28s ease; z-index:1201; }
     [data-theme="dark"] .chat-ia{ background:#0b1220; }
     .chat-ia.open{ right:0; }
     .chat-ia-overlay.open{ opacity:1; pointer-events:auto; }
-    .chat-ia__header{ display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--border);
-      background:linear-gradient(0deg, rgba(255,255,255,.96), rgba(255,255,255,.96)); }
+    .chat-ia__header{ display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--border); background:linear-gradient(0deg, rgba(255,255,255,.96), rgba(255,255,255,.96)); }
     [data-theme="dark"] .chat-ia__header{ background:linear-gradient(0deg, rgba(11,18,32,.96), rgba(11,18,32,.96)); }
     .chat-ia__title{ font-weight:700; display:flex; align-items:center; gap:8px; }
     .chat-ia__close{ border:1px solid var(--border); background:#fff; border-radius:10px; width:36px; height:36px; display:grid; place-items:center; }
     [data-theme="dark"] .chat-ia__close{ background:#0b1220; color:#e5e7eb; }
-    .chat-ia__body{
-      flex:1; overflow:auto; padding:14px; background:
-      radial-gradient(700px 520px at 84% 12%, rgba(236,72,153,.10), transparent 60%),
-      radial-gradient(600px 420px at 8% 88%, rgba(37,99,235,.10), transparent 60%),
-      #f8f9ff;
-      scroll-behavior: smooth;
-    }
-    [data-theme="dark"] .chat-ia__body{
-      background:
-      radial-gradient(700px 520px at 84% 12%, rgba(236,72,153,.12), transparent 60%),
-      radial-gradient(600px 420px at 8% 88%, rgba(37,99,235,.12), transparent 60%),
-      #0b1328;
-    }
+    .chat-ia__body{ flex:1; overflow:auto; padding:14px; background: radial-gradient(700px 520px at 84% 12%, rgba(236,72,153,.10), transparent 60%), radial-gradient(600px 420px at 8% 88%, rgba(37,99,235,.10), transparent 60%), #f8f9ff; scroll-behavior: smooth; }
+    [data-theme="dark"] .chat-ia__body{ background: radial-gradient(700px 520px at 84% 12%, rgba(236,72,153,.12), transparent 60%), radial-gradient(600px 420px at 8% 88%, rgba(37,99,235,.12), transparent 60%), #0b1328; }
     .msg{ background:#fff; border:1px solid var(--border); border-radius:14px; padding:10px 12px; margin-bottom:10px; }
     .msg.ai{ background:linear-gradient(180deg,#ffffff,#fbfdff); }
     .msg.me{ background:#eff4ff; border-color:#dfe6ff; }
@@ -301,41 +265,12 @@
     @keyframes blink{ 0%, 60%, 100%{ transform: translateY(0); opacity:.35; } 30%{ transform: translateY(-3px); opacity:.9; } }
     .chat-ia__composer{ padding:12px; border-top:1px solid var(--border); display:flex; gap:8px; background:#fff; }
     [data-theme="dark"] .chat-ia__composer{ background:#0b1220; }
-    .chat-ia__composer textarea{ resize:none; height:46px; flex:1; border:1px solid var(--border); border-radius:12px; padding:10px 12px; background:#fff; color:#111827; font-size:16px; }
+    .chat-ia__composer textarea{ resize:none; height:46px; flex:1; border:1px solid var(--border); border-radius:12px; padding:10px 12px; background:#fff; color:#111827; }
     [data-theme="dark"] .chat-ia__composer textarea{ background:#0b1220; color:#e5e7eb; }
     .chat-ia__send{ border:none; border-radius:999px; padding:0 16px; min-width:120px; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); color:#fff; box-shadow:0 12px 26px rgba(139,92,246,.22); }
 
-    /* ===== FullCalendar (si se usa) ===== */
+    /* FullCalendar overrides base (colores) */
     .fc { --fc-border-color: var(--border); --fc-page-bg-color: transparent; }
-    .fc .fc-toolbar-title{ font-weight:700; color:#111827; }
-    [data-theme="dark"] .fc .fc-toolbar-title{ color:#e5e7eb; }
-    .fc .fc-button{
-      background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
-      border-color: transparent; color:#fff; box-shadow: 0 6px 16px rgba(139,92,246,.22);
-    }
-    .fc .fc-button:disabled{ opacity:.55; }
-    .fc .fc-button-primary:not(:disabled).fc-button-active,
-    .fc .fc-button-primary:not(:disabled):active{
-      background: linear-gradient(135deg, var(--accent-b), var(--accent-a)); border-color: transparent;
-    }
-    .fc .fc-daygrid-day-number{ color:#475569; font-weight:600; }
-    [data-theme="dark"] .fc .fc-daygrid-day-number{ color:#cbd5e1; }
-    .fc .fc-daygrid-day.fc-day-today{
-      background: linear-gradient(180deg, #fff, #fbfdff); box-shadow: inset 0 0 0 1px var(--border);
-    }
-    [data-theme="dark"] .fc .fc-daygrid-day.fc-day-today{
-      background: linear-gradient(180deg, #0b1220, #0f172a);
-    }
-    .fc .fc-highlight{ background: rgba(139,92,246,.16); }
-
-    /* ✅ Impedir que FullCalendar o su contenedor fuercen overflow */
-    #calendar, .fc, .fc .fc-view-harness, .fc .fc-scroller{
-      min-width:0 !important;
-      max-width:100% !important;
-    }
-
-    /* Ocultar FAB externo si existe */
-    #chatOpenAiFab, .chat-openai-fab, [data-chat-fab]{ display:none !important; }
   </style>
 
   {% block extra_head %}{% endblock %}
@@ -354,7 +289,7 @@
 
   <div class="shell">
     <div class="app">
-      <!-- ===== Sidebar (drawer en mobile) ===== -->
+      <!-- Sidebar -->
       <aside class="sidebar" id="sidebar" aria-hidden="false" aria-label="Navegación lateral">
         <button class="close-drawer d-none d-lg-none" id="btnCloseDrawer" aria-label="Cerrar menú">
           <i class="bi bi-x-lg"></i>
@@ -365,36 +300,27 @@
         </div>
 
         <nav class="side-nav">
-          <a class="side-btn" data-match="/"               href="/"               title="Inicio"><i class="bi bi-house"></i></a>
-          <a class="side-btn" data-match="/chat"           href="/chat"           title="Chat interno"><i class="bi bi-chat-dots"></i></a>
-          <a class="side-btn" data-match="/incidencias"    href="/incidencias"    title="Incidencias"><i class="bi bi-bug"></i></a>
-          <a class="side-btn" data-match="/calendario"     href="/calendario"     title="Calendario"><i class="bi bi-calendar-event"></i></a>
-
-          <a class="side-btn" id="btnHistorial" href="/historia" title="Historial">
-            <i class="bi bi-clock-history"></i>
-          </a>
+          <a class="side-btn" data-match="/" href="/" title="Inicio"><i class="bi bi-house"></i></a>
+          <a class="side-btn" data-match="/chat" href="/chat" title="Chat interno"><i class="bi bi-chat-dots"></i></a>
+          <a class="side-btn" data-match="/incidencias" href="/incidencias" title="Incidencias"><i class="bi bi-bug"></i></a>
+          <a class="side-btn" data-match="/calendario" href="/calendario" title="Calendario"><i class="bi bi-calendar-event"></i></a>
+          <a class="side-btn" id="btnHistorial" href="/historia" title="Historial"><i class="bi bi-clock-history"></i></a>
 
           {% if request.session.get('rol', 'usuario') == 'admin' %}
-            <a class="side-btn" data-match="/auditoria" href="/auditoria" title="Auditoría" data-admin-only>
-              <i class="bi bi-clipboard-data"></i>
-            </a>
-            <a class="side-btn" data-match="/admin" href="/admin" title="Admin" data-admin-only>
-              <i class="bi bi-gear"></i>
-            </a>
+            <a class="side-btn" data-match="/auditoria" href="/auditoria" title="Auditoría" data-admin-only><i class="bi bi-clipboard-data"></i></a>
+            <a class="side-btn" data-match="/admin" href="/admin" title="Admin" data-admin-only><i class="bi bi-gear"></i></a>
           {% endif %}
         </nav>
 
         <div class="side-spacer"></div>
-
         <a class="side-btn" data-match="/cambiar-password" href="/cambiar-password" title="Cambiar contraseña"><i class="bi bi-key"></i></a>
         <a class="side-btn" href="#" id="btnSalir" title="Salir"><i class="bi bi-box-arrow-right"></i></a>
         <div class="side-small">v1</div>
       </aside>
 
-      <!-- Overlay del drawer (solo mobile) -->
       <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
 
-      <!-- ===== Header ===== -->
+      <!-- Header -->
       <header class="header">
         <button class="menu-btn" id="btnOpenDrawer" aria-label="Abrir menú" aria-controls="sidebar" aria-expanded="false">
           <i class="bi bi-list"></i>
@@ -406,18 +332,14 @@
         </div>
 
         <div class="header-actions">
-          <button class="icon-btn" id="btnTheme" title="Tema: Sistema">
-            <i id="icoTheme" class="bi bi-circle-half"></i>
-          </button>
+          <button class="icon-btn" id="btnTheme" title="Tema: Sistema"><i id="icoTheme" class="bi bi-circle-half"></i></button>
 
           <button class="icon-btn" id="btnPresence" title="Usuarios activos">
-            <i class="bi bi-people"></i>
-            <span id="presenceBadge" class="icon-badge">0</span>
+            <i class="bi bi-people"></i><span id="presenceBadge" class="icon-badge">0</span>
           </button>
 
           <button class="icon-btn" id="btnNotif" title="Notificaciones">
-            <i class="bi bi-bell"></i>
-            <span id="notifBadge" class="icon-badge">0</span>
+            <i class="bi bi-bell"></i><span id="notifBadge" class="icon-badge">0</span>
           </button>
 
           <a class="pill pill-icon" href="/chat" id="btnChat">
@@ -438,7 +360,6 @@
         </div>
       </header>
 
-      <!-- ===== Área de contenido ===== -->
       <main class="content">
         {% block content %}{% endblock %}
       </main>
@@ -455,10 +376,7 @@
     <div class="text-end mt-2"><a href="/notificaciones" class="small">Ver todas</a></div>
   </div>
 
-  <!-- Toasts -->
-  <div class="toast-container" id="toastContainer"></div>
-
-  <!-- ===== Drawer Chat IA ===== -->
+  <!-- Drawer Chat IA -->
   <div id="chatIaOverlay" class="chat-ia-overlay"></div>
   <aside id="chatIa" class="chat-ia" aria-hidden="true">
     <div class="chat-ia__header">
@@ -476,7 +394,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    /* Fallback rol: oculta admin-only si no sos admin */
+    /* Fallback rol (oculta admin-only si no sos admin) */
     (function(){
       try{
         var role = "{{ request.session.get('rol', 'usuario') }}";
@@ -486,7 +404,7 @@
       }catch(_){}
     })();
 
-    /* Usuario (nombre + avatar) */
+    /* Usuario header */
     function initialsFromName(n){
       n = (n||'').trim();
       if(!n) return '?';
@@ -500,21 +418,20 @@
         const r=await fetch('/usuario-actual'); if(!r.ok) return;
         const d=await r.json();
         const name = d?.nombre || d?.usuario || 'Usuario';
-        theAvatar(d?.avatar_url||'', name);
+        const avatar = d?.avatar_url || '';
+        const nameEl = document.getElementById('userName');
+        const imgEl  = document.getElementById('avatarImg');
+        const iniEl  = document.getElementById('avatarInitials');
+
+        if(nameEl) nameEl.textContent = name;
+        if(avatar){
+          imgEl.src = avatar; imgEl.style.display = 'block';
+          if(iniEl) iniEl.style.display = 'none';
+        }else{
+          if(imgEl){ imgEl.removeAttribute('src'); imgEl.style.display='none'; }
+          if(iniEl){ iniEl.textContent = initialsFromName(name); iniEl.style.display='block'; }
+        }
       }catch(_){}
-    }
-    function theAvatar(avatar, name){
-      const nameEl = document.getElementById('userName');
-      const imgEl  = document.getElementById('avatarImg');
-      const iniEl  = document.getElementById('avatarInitials');
-      if(nameEl) nameEl.textContent = name || 'Usuario';
-      if(avatar){
-        imgEl.src = avatar; imgEl.style.display = 'block';
-        if(iniEl) iniEl.style.display = 'none';
-      }else{
-        if(imgEl){ imgEl.removeAttribute('src'); imgEl.style.display='none'; }
-        if(iniEl){ iniEl.textContent = initialsFromName(name); iniEl.style.display='block'; }
-      }
     }
 
     /* Subida de avatar */
@@ -525,7 +442,6 @@
       const f = e.target.files?.[0];
       if(!f) return;
       if(f.size > 2*1024*1024){ showToast({title:'Avatar', body:'Máximo 2 MB', icon:'exclamation-triangle'}); return; }
-
       const fd = new FormData(); fd.append('avatar', f);
       try{
         const r = await fetch('/perfil/avatar', { method:'POST', body: fd });
@@ -533,12 +449,13 @@
         if(!r.ok || !j.ok){ throw new Error(j?.error || 'No se pudo actualizar el avatar'); }
         showToast({title:'Perfil', body:'Avatar actualizado', icon:'person-check'});
         const url = j.avatar_url + '?t=' + Date.now();
-        theAvatar(url, document.getElementById('userName')?.textContent || 'Usuario');
+        const imgEl  = document.getElementById('avatarImg');
+        const iniEl  = document.getElementById('avatarInitials');
+        if(imgEl){ imgEl.src = url; imgEl.style.display='block'; }
+        if(iniEl){ iniEl.style.display='none'; }
       }catch(err){
         showToast({title:'Perfil', body:String(err?.message||'Error'), icon:'exclamation-triangle'});
-      }finally{
-        try{ avatarInput.value=''; }catch(_){}
-      }
+      }finally{ try{ avatarInput.value=''; }catch(_){ } }
     });
 
     /* Logout */
@@ -591,6 +508,7 @@
     const btnClose = document.getElementById('btnCloseDrawer');
 
     function isDesktop(){ return mqDesktop.matches; }
+
     function openSidebarMobile(){
       if(isDesktop()) return;
       sidebar.classList.add('open');
@@ -599,6 +517,8 @@
       btnOpen?.setAttribute('aria-expanded','true');
       const first = sidebar.querySelector('a,button,[tabindex]:not([tabindex="-1"])');
       if(first) try{ first.focus(); }catch(_){}
+      /* ⚠️ fuerza recálculo del calendario tras la animación */
+      setTimeout(()=> window.dispatchEvent(new Event('resize')), 280);
     }
     function closeSidebarMobile(){
       if(isDesktop()){
@@ -613,7 +533,9 @@
       sidebar.setAttribute('aria-hidden','true');
       btnOpen?.setAttribute('aria-expanded','false');
       btnOpen?.focus?.();
+      setTimeout(()=> window.dispatchEvent(new Event('resize')), 280);
     }
+
     btnOpen?.addEventListener('click', openSidebarMobile);
     btnClose?.addEventListener('click', closeSidebarMobile);
     overlay?.addEventListener('click', closeSidebarMobile);
@@ -628,11 +550,12 @@
       }else{
         sidebar.setAttribute('aria-hidden','true');
       }
+      window.dispatchEvent(new Event('resize')); /* recálculo UI */
     }
     mqDesktop.addEventListener?.('change', applySidebarMode);
     applySidebarMode();
 
-    /* ===== Chat IA (drawer) ===== */
+    /* Chat IA drawer (igual que antes) */
     const CHAT_STATE_KEY = 'chatboxState';
     const chatIa = document.getElementById('chatIa');
     const chatIaOverlay = document.getElementById('chatIaOverlay');
@@ -670,39 +593,27 @@
       catch(_){ chatIaBody.scrollTop = chatIaBody.scrollHeight; }
     }
 
-    // Enter = enviar | Shift+Enter = salto de línea
+    /* Chat IA envío */
     chatIaInput?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
         e.preventDefault(); chatIaForm?.requestSubmit();
       }
     });
-
     chatIaForm?.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const text = (chatIaInput?.value || '').trim();
       if(!text) return;
-
       appendMsg('me', text);
       chatIaInput.value = '';
-
       const thinkingNode = addTyping();
-
       try{
-        const r = await fetch('/api/chat-openai', {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ message: text })
-        });
-
+        const r = await fetch('/api/chat-openai',{method:'POST',headers:{'Content-Type':'application/json'},body: JSON.stringify({ message: text })});
         let data = null, bodyText = '';
         try { data = await r.json(); } catch { bodyText = await r.text(); }
         const reply = pickReply(data, bodyText) || 'No recibí respuesta del servidor.';
         replaceMsg(thinkingNode, 'ai', reply);
-      }catch(err){
-        replaceMsg(thinkingNode, 'ai', 'Hubo un error al contactar la IA.');
-      }
+      }catch(err){ replaceMsg(thinkingNode, 'ai', 'Hubo un error al contactar la IA.'); }
     });
-
     function pickReply(json, fallbackText){
       if(json){
         if(typeof json.reply === 'string') return json.reply;
@@ -719,20 +630,13 @@
       const el = document.createElement('div');
       el.className = 'msg ' + (who==='ai'?'ai':'me');
       el.innerHTML = (who==='ai' ? '<b>IA:</b> ' : '<b>Yo:</b> ') + escapeHTML(text);
-      document.getElementById('chatIaBody').appendChild(el);
-      scrollToBottom(true);
-      return el;
+      chatIaBody.appendChild(el); scrollToBottom(true); return el;
     }
     function addTyping(){
       const el = document.createElement('div');
       el.className = 'msg ai typing';
-      el.innerHTML = '<b>IA:</b> ' +
-        '<span class="typing-dot"></span>' +
-        '<span class="typing-dot"></span>' +
-        '<span class="typing-dot"></span>';
-      document.getElementById('chatIaBody').appendChild(el);
-      scrollToBottom(true);
-      return el;
+      el.innerHTML = '<b>IA:</b> <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
+      chatIaBody.appendChild(el); scrollToBottom(true); return el;
     }
     function replaceMsg(node, who, text){
       if(!node) return appendMsg(who, text);
@@ -752,7 +656,7 @@
       });
     })();
 
-    /* Historial en home */
+    /* Historial en home (scroll suave) */
     document.getElementById('btnHistorial')?.addEventListener('click', (e)=>{
       if(location.pathname === '/'){
         e.preventDefault();
@@ -772,14 +676,7 @@
       cont.appendChild(el); const t=new bootstrap.Toast(el,{delay}); t.show(); el.addEventListener('hidden.bs.toast',()=> el.remove());
     }
 
-    // Kill-switch FAB externo
-    document.querySelectorAll('#chatOpenAiFab, .chat-openai-fab, [data-chat-fab]')
-      .forEach(el => { try{ el.remove(); }catch(_){ el.style.display='none'; } });
-
-    getUsuario();
-    refreshNotif();
-
-    /* ===== Tema global ===== */
+    /* Tema global */
     const btnTheme = document.getElementById('btnTheme');
     const icoTheme = document.getElementById('icoTheme');
     function getTheme(){ try{ return localStorage.getItem('theme'); }catch(_){ return null; } }
@@ -808,17 +705,12 @@
     }catch(_){}
     updateThemeBtn();
 
-    /* ===== PRESENCIA ===== */
+    /* Presencia */
     const presenceBtn   = document.getElementById('btnPresence');
     const presenceBadge = document.getElementById('presenceBadge');
     const isAuthScreen  = document.body.getAttribute('data-auth') === '1';
-
     presenceBtn?.addEventListener('click', ()=>{ location.href = '/usuarios-activos'; });
-
-    async function presencePing(){
-      if(isAuthScreen) return;
-      try{ await fetch('/presence/ping', { method:'POST' }); }catch(_){}
-    }
+    async function presencePing(){ if(isAuthScreen) return; try{ await fetch('/presence/ping', { method:'POST' }); }catch(_){} }
     async function refreshPresence(){
       if(isAuthScreen) return;
       try{
@@ -832,28 +724,28 @@
       }catch(_){}
     }
     if(!isAuthScreen){
-      presencePing();
-      refreshPresence();
+      presencePing(); refreshPresence();
       setInterval(presencePing, 30000);
       setInterval(refreshPresence, 15000);
     }
 
-    /* ===== NO LEÍDOS CHAT ===== */
+    /* No leídos chat */
     const chatBadge = document.getElementById('chatBadge');
     async function refreshChatUnread(){
       try{
-        const r = await fetch('/chat/no-leidos');
-        if(!r.ok) throw 0;
+        const r = await fetch('/chat/no-leidos'); if(!r.ok) throw 0;
         const j = await r.json();
         const n = Number(j?.no_leidos||0);
         chatBadge.textContent = n>99 ? '99+' : String(n);
         chatBadge.style.display = n>0 ? 'inline-block' : 'none';
-      }catch(_){
-        chatBadge.style.display='none';
-      }
+      }catch(_){ chatBadge.style.display='none'; }
     }
     refreshChatUnread();
     setInterval(refreshChatUnread, 15000);
+
+    // Kill-switch FAB externo
+    document.querySelectorAll('#chatOpenAiFab, .chat-openai-fab, [data-chat-fab]')
+      .forEach(el => { try{ el.remove(); }catch(_){ el.style.display='none'; } });
   </script>
 
   {% block extra_scripts %}{% endblock %}

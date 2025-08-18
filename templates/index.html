@@ -8,88 +8,73 @@
     .segmented .btn{ border-radius:999px; }
     .segmented .btn.active{ background:var(--pill); border-color:var(--accent-a); color:var(--accent-a); }
 
-    /* ====== Layout local de esta vista (mobile-first) ====== */
-    .cardx, #calendar, .calendar-card, #historial-list { min-width:0; }
-    /* Evitar desbordes por textos largos (nombres de archivo) */
-    #lista-archivos .list-group-item{ display:flex; gap:.5rem; align-items:center; }
-    #lista-archivos .list-group-item .name{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    /* Calendario compacto dentro de una card (apoya los estilos globales del base) */
-    #calendar.calendar-compact .fc .fc-view-harness{ min-height: 520px; }
-    #calendar.calendar-compact .fc .fc-toolbar{ margin:8px 0 12px; }
+    /* ✅ asegura altura visible del calendario en todas las vistas */
+    #calendar{ min-height:360px; }
+    #calendar .fc .fc-view-harness{ min-height:420px !important; }
 
-    /* Controles táctiles más grandes en móviles */
-    @media (max-width: 575.98px){
-      .segmented .btn{ padding:.4rem .7rem; }
-      #prevBtn,#nextBtn,#todayBtn{ padding:.4rem .7rem; }
-    }
+    /* Compactado de la toolbar interna */
+    #calendar.calendar-compact .fc .fc-toolbar{ margin:8px 0 12px; }
   </style>
 {% endblock %}
 
 {% block content %}
 <div class="py-3">
-  <!-- Encabezado -->
   <div class="d-flex align-items-center justify-content-between mb-3 px-1">
     <div>
       <h1 class="hero-title mb-1">Panel principal</h1>
-      <div class="subtle" id="todayLabel" aria-live="polite"></div>
+      <div class="subtle" id="todayLabel"></div>
     </div>
   </div>
 
   <div class="row g-3 px-1">
 
-    <!-- ===== 1) ANALIZAR (PRIMERO) ===== -->
+    <!-- 1) Analizar -->
     <div class="col-12" id="analisis">
       <div class="cardx">
         <div class="title mb-2"><i class="bi bi-upload me-2"></i> Subir pliegos para análisis</div>
-        <form id="form-analyze" class="mb-2" aria-label="Formulario de análisis de pliegos">
+        <form id="form-analyze" class="mb-2">
           <input type="file" id="file-hidden" class="form-control d-none" multiple>
-          <div class="mb-2 d-flex flex-wrap gap-2">
-            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="agregarArchivos()">
-              + Agregar archivo
-            </button>
-            <span class="small text-muted">Tamaño máximo recomendado por archivo: 25 MB</span>
+          <div class="mb-2">
+            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="agregarArchivos()">+ Agregar archivo</button>
           </div>
+          <small class="text-muted d-block mb-2">Tamaño máximo recomendado por archivo: 25 MB</small>
           <ul id="lista-archivos" class="list-group mb-3"></ul>
           <div class="d-flex flex-wrap gap-2">
-            <button type="button" id="analyze-btn" class="btn btn-primary">
-              <i class="bi bi-rocket-takeoff me-1"></i> Analizar
-            </button>
-            <button type="button" id="generate-btn" class="btn btn-outline-primary">
-              <i class="bi bi-file-earmark-arrow-down me-1"></i> Descargar último PDF
-            </button>
+            <button type="button" id="analyze-btn" class="btn btn-primary"><i class="bi bi-rocket-takeoff me-1"></i> Analizar</button>
+            <button type="button" id="generate-btn" class="btn btn-outline-primary"><i class="bi bi-file-earmark-arrow-down me-1"></i> Descargar último PDF</button>
             <button type="button" class="btn btn-outline-secondary" onclick="limpiar()">Limpiar</button>
           </div>
         </form>
-        <div id="result" role="status" aria-live="polite"></div>
+        <div id="result"></div>
       </div>
     </div>
 
-    <!-- ===== 2) HISTORIAL (INMEDIATAMENTE DEBAJO) ===== -->
+    <!-- 2) Historial -->
     <div class="col-12" id="historial">
       <div class="cardx">
-        <div class="d-flex align-items-center justify-content-between mb-2" style="gap:.5rem;">
+        <div class="d-flex align-items-center justify-content-between mb-2">
           <div class="title"><i class="bi bi-clock-history me-2"></i> Historial de análisis</div>
-          <input type="text" id="search-input" class="form-control form-control-sm" placeholder="Buscar en el historial..." style="max-width:260px" aria-label="Buscar en el historial"/>
+          <input type="text" id="search-input" class="form-control form-control-sm" placeholder="Buscar en el historial..." style="max-width:260px"/>
         </div>
         <div id="historial-list"></div>
       </div>
     </div>
 
-    <!-- ===== 3) SECCIÓN SECUNDARIA: CALENDARIO + ACCIONES / RESUMEN ===== -->
+    <!-- 3) Calendario + Acciones -->
     <div class="col-12 col-xl-8">
       <div class="cardx calendar-card">
         <div class="title mb-2"><i class="bi bi-calendar3 me-2"></i> Calendario</div>
-        <div id="calendar" class="calendar-compact" aria-label="Calendario de eventos"></div>
+        <div id="calendar" class="calendar-compact"></div>
         <div class="d-flex align-items-center gap-2 mt-2">
-          <div class="segmented" role="tablist" aria-label="Vistas de calendario">
-            <button class="btn btn-sm btn-light active" data-calview="dayGridMonth" role="tab" aria-selected="true">Mes</button>
-            <button class="btn btn-sm btn-light" data-calview="timeGridWeek" role="tab" aria-selected="false">Semana</button>
-            <button class="btn btn-sm btn-light" data-calview="listWeek" role="tab" aria-selected="false">Lista</button>
+          <div class="segmented">
+            <button class="btn btn-sm btn-light active" data-calview="dayGridMonth">Mes</button>
+            <button class="btn btn-sm btn-light" data-calview="timeGridWeek">Semana</button>
+            <button class="btn btn-sm btn-light" data-calview="listWeek">Lista</button>
           </div>
           <div class="ms-auto d-flex align-items-center gap-2">
-            <button class="btn btn-sm btn-outline-secondary" id="prevBtn" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></button>
+            <button class="btn btn-sm btn-outline-secondary" id="prevBtn"><i class="bi bi-chevron-left"></i></button>
             <button class="btn btn-sm btn-outline-secondary" id="todayBtn">Hoy</button>
-            <button class="btn btn-sm btn-outline-secondary" id="nextBtn" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></button>
+            <button class="btn btn-sm btn-outline-secondary" id="nextBtn"><i class="bi bi-chevron-right"></i></button>
           </div>
         </div>
       </div>
@@ -109,15 +94,9 @@
       <div class="cardx mb-3">
         <div class="title mb-2"><i class="bi bi-graph-up me-2"></i> Auditoría & actividad</div>
         <div class="d-grid gap-2">
-          <a class="btn btn-outline-primary" href="/auditoria-actividad">
-            <i class="bi bi-activity me-1"></i> Auditoría de actividad
-          </a>
-          <a class="btn btn-outline-primary" href="/usuarios-activos">
-            <i class="bi bi-people me-1"></i> Usuarios activos (vivo)
-          </a>
-          <a class="btn btn-outline-secondary" href="/auditoria">
-            <i class="bi bi-clipboard-data me-1"></i> Auditoría de eventos
-          </a>
+          <a class="btn btn-outline-primary" href="/auditoria-actividad"><i class="bi bi-activity me-1"></i> Auditoría de actividad</a>
+          <a class="btn btn-outline-primary" href="/usuarios-activos"><i class="bi bi-people me-1"></i> Usuarios activos (vivo)</a>
+          <a class="btn btn-outline-secondary" href="/auditoria"><i class="bi bi-clipboard-data me-1"></i> Auditoría de eventos</a>
         </div>
       </div>
       {% endif %}
@@ -146,24 +125,19 @@
     if(el) el.textContent = fmt.format(new Date());
   })();
 
-  // ===== FullCalendar (compacto; colores se heredan del base) =====
+  // ===== FullCalendar =====
   let calendar;
   (function(){
     const el=document.getElementById('calendar');
     if(!el) return;
-
     calendar = new FullCalendar.Calendar(el, {
       height:'auto',
-      contentHeight:'auto',
-      expandRows:true,
       initialView:'dayGridMonth',
       headerToolbar:false,
-      locales: FullCalendar.allLocales,
       locale:'es',
       nowIndicator:true,
       firstDay:1,
       navLinks:true,
-      handleWindowResize:true,
       events: async (info, successCallback) => {
         try{
           const r = await fetch('/api/calendar/events');
@@ -174,49 +148,26 @@
           const cnt=(j.events||[]).filter(e=>{
             const d=new Date(e.start||e.date); return d>=start && d<=end;
           }).length;
-          const kpi = document.getElementById('kpiSemana');
-          if(kpi) kpi.textContent = cnt;
+          document.getElementById('kpiSemana').textContent = cnt;
         }catch(e){
-          successCallback([]);
-          const kpi = document.getElementById('kpiSemana');
-          if(kpi) kpi.textContent='0';
+          successCallback([]); document.getElementById('kpiSemana').textContent='0';
         }
       },
       eventTimeFormat:{hour:'2-digit',minute:'2-digit',meridiem:false},
     });
     calendar.render();
-
-    // Recalcular al cambiar tamaño (drawer, rotación, etc.)
-    const ro = new ResizeObserver(()=>{ try{ calendar.updateSize(); }catch(_){} });
-    ro.observe(el);
-    window.addEventListener('orientationchange', ()=>{ setTimeout(()=>calendar.updateSize(), 250); });
-
-    // Controles y vistas
-    document.querySelectorAll('[data-calview]').forEach(btn=>{
-      btn.addEventListener('click',()=>{
-        document.querySelectorAll('[data-calview]').forEach(b=>{
-          b.classList.remove('active'); b.setAttribute('aria-selected','false');
-        });
-        btn.classList.add('active'); btn.setAttribute('aria-selected','true');
-        calendar.changeView(btn.getAttribute('data-calview'));
-        setTimeout(()=>calendar.updateSize(), 80);
-      });
-    });
-    document.getElementById('prevBtn')?.addEventListener('click',()=>{ calendar.prev(); setTimeout(()=>calendar.updateSize(), 50); });
-    document.getElementById('nextBtn')?.addEventListener('click',()=>{ calendar.next(); setTimeout(()=>calendar.updateSize(), 50); });
-    document.getElementById('todayBtn')?.addEventListener('click',()=>{ calendar.today(); setTimeout(()=>calendar.updateSize(), 50); });
+    // fuerza recálculo inicial y en cambios de tamaño
+    setTimeout(()=>{ try{ calendar.updateSize(); }catch(_){} }, 80);
+    window.addEventListener('resize', ()=>{ try{ calendar.updateSize(); }catch(_){} });
   })();
 
-  // ====== Módulo análisis ======
+  // ===== Módulo análisis =====
   let resumenGlobal="", ultimoPDF="", archivosSeleccionados=[];
 
   function agregarArchivos(){
     const input=document.getElementById("file-hidden");
     input.value="";
-    input.onchange=()=>{
-      for(const a of input.files) archivosSeleccionados.push(a);
-      actualizarListaArchivos();
-    };
+    input.onchange=()=>{ for(const a of input.files) archivosSeleccionados.push(a); actualizarListaArchivos(); };
     input.click();
   }
   function actualizarListaArchivos(){
@@ -224,14 +175,13 @@
     lista.innerHTML="";
     archivosSeleccionados.forEach((archivo, idx)=>{
       const li=document.createElement("li");
-      li.className="list-group-item";
-      li.innerHTML = `<span class="name" title="${archivo.name}">${archivo.name}</span>`;
+      li.className="list-group-item d-flex justify-content-between align-items-center";
+      li.textContent=archivo.name;
       const btn=document.createElement("button");
       btn.className="btn btn-sm btn-outline-danger";
       btn.textContent="Eliminar";
       btn.onclick=()=>{ archivosSeleccionados.splice(idx,1); actualizarListaArchivos(); };
-      li.appendChild(btn);
-      lista.appendChild(li);
+      li.appendChild(btn); lista.appendChild(li);
     });
   }
 
@@ -242,21 +192,15 @@
     }
     const fd=new FormData(); archivosSeleccionados.forEach(f=>fd.append("archivos",f));
     document.getElementById("result").innerHTML='<div class="alert alert-info">⏳ Analizando pliegos...</div>';
-    let r, j;
-    try{
-      r = await fetch("/analizar-pliego",{method:"POST", body:fd});
-      j = await r.json();
-    }catch(e){
-      document.getElementById("result").innerHTML = `<div class="alert alert-danger">❌ Error de red. Intenta nuevamente.</div>`;
-      return;
-    }
+    const r = await fetch("/analizar-pliego",{method:"POST", body:fd});
+    const j = await r.json();
     if(r.ok){
       resumenGlobal=j.resumen; ultimoPDF=j.pdf;
-      document.getElementById("result").innerHTML = `<div class="alert alert-success"><strong>✅ Análisis completo.</strong><br><br>${resumenGlobal||''}</div>`;
-      await loadHistorial(); // refresca historial justo debajo
+      document.getElementById("result").innerHTML = `<div class="alert alert-success"><strong>✅ Análisis completo.</strong><br><br>${resumenGlobal}</div>`;
+      await loadHistorial();
       document.getElementById('historial')?.scrollIntoView({behavior:'smooth', block:'start'});
     }else{
-      document.getElementById("result").innerHTML = `<div class="alert alert-danger">❌ ${j?.error||'No se pudo analizar.'}</div>`;
+      document.getElementById("result").innerHTML = `<div class="alert alert-danger">❌ ${j.error||'No se pudo analizar.'}</div>`;
     }
   });
 
@@ -265,18 +209,12 @@
       document.getElementById("result").innerHTML='<div class="alert alert-danger">❌ Primero analizá un pliego.</div>';
       return;
     }
-    location.href = `/descargar/${ultimoPDF}`;
+    window.location.href = `/descargar/${ultimoPDF}`;
   });
 
   async function loadHistorial(){
-    let r, hist;
-    try{
-      r = await fetch("/historial");
-      hist = await r.json();
-    }catch(e){
-      document.getElementById("historial-list").innerHTML = '<div class="text-danger">No se pudo cargar el historial.</div>';
-      return;
-    }
+    const r = await fetch("/historial");
+    const hist = await r.json();
     const cont = document.getElementById("historial-list");
     cont.innerHTML="";
     if(!Array.isArray(hist) || !hist.length){
@@ -292,21 +230,17 @@
       div.innerHTML = `
         <div><strong>📄 Archivo:</strong> ${entry.nombre_archivo}</div>
         <div><strong>🕓 Fecha:</strong> ${fecha}</div>
-        <div><strong>👤 Usuario:</strong> ${entry.usuario||'—'}</div>
-        <div class="d-flex flex-wrap gap-2 mt-2">
+        <div><strong>👤 Usuario:</strong> ${entry.usuario}</div>
+        <div class="d-flex gap-2 mt-2">
           <a href="/descargar/${pdfName}" class="btn btn-sm btn-primary">Descargar PDF</a>
-          <button class="btn btn-sm btn-outline-danger" data-ts="${entry.timestamp}">Eliminar</button>
+          <button class="btn btn-sm btn-outline-danger" onclick="eliminarHist('${entry.timestamp}')">Eliminar</button>
         </div>`;
       cont.appendChild(div);
     });
-    // Delegación para eliminar
-    cont.querySelectorAll('button[data-ts]').forEach(b=>{
-      b.addEventListener('click', async ()=>{
-        const ts = b.getAttribute('data-ts');
-        try{ await fetch(`/eliminar/${ts}`,{method:"DELETE"}); }catch(_){}
-        await loadHistorial();
-      });
-    });
+  }
+  async function eliminarHist(ts){
+    await fetch(`/eliminar/${ts}`,{method:"DELETE"});
+    await loadHistorial();
   }
   function limpiar(){
     archivosSeleccionados=[]; document.getElementById("lista-archivos").innerHTML="";
@@ -322,19 +256,16 @@
     });
   });
 
-  // ----- Scroll automático por hash o query param (?goto=seccion) -----
+  // Scroll por hash / query
   function scrollByAnchorOrQuery(){
     const params = new URLSearchParams(location.search);
-    const goto = params.get('goto');                       // ej: ?goto=historial
-    const fromHash = (location.hash || '').replace('#',''); // ej: #historial
+    const goto = params.get('goto');
+    const fromHash = (location.hash || '').replace('#','');
     const targetId = goto || fromHash;
     if(!targetId) return;
-
     const el = document.getElementById(targetId);
     if(!el) return;
-
     setTimeout(()=> el.scrollIntoView({behavior:'smooth', block:'start'}), 60);
-
     if(goto){
       const url = new URL(location.href);
       url.searchParams.delete('goto');
@@ -342,23 +273,23 @@
     }
   }
 
-  // ====== Ping de presencia (auditoría de uso) ======
+  // Presencia (ping)
   (async function(){
     try{
       const r = await fetch('/usuario-actual');
       const u = await r.json();
       if (u && u.usuario){
         const ping = () => fetch('/presence/ping', { method:'POST' }).catch(()=>{});
-        ping();                 // ping inicial
-        setInterval(ping, 30000); // cada 30s
+        ping(); setInterval(ping, 30000);
       }
     }catch(_){}
   })();
 
-  // Init
   window.addEventListener('load', ()=>{
     loadHistorial();
     scrollByAnchorOrQuery();
+    // por si el CSS tarda en aplicar alturas, recalcula calendario
+    setTimeout(()=>{ try{ calendar && calendar.updateSize(); }catch(_){} }, 200);
   });
 </script>
 {% endblock %}
