@@ -977,7 +977,9 @@
         }
       });
 
-      // C) Si el backend dejó info en <body data-last-*>
+      // C) Si el backend dejó info en <body data-last-*>: DESACTIVADO para no abrir de inmediato
+      // [CAMBIO] No abrir modal automáticamente con data-last-*
+      /*
       (function tryOpenFromBodyData(){
         const b = document.body;
         if(!b) return;
@@ -987,17 +989,21 @@
           setTimeout(()=> openFor(ts, fname), 600);
         }
       })();
+      */
 
-      // D) Si hay valoración pendiente, abrir automáticamente
+      // D) Valoración pendiente: solo aviso, no abrir modal
+      // [CAMBIO] Antes abría el modal; ahora muestra toast informativo.
       async function checkPending(){
         try{
           const r = await fetch('/api/rating/pending', { headers:{'Accept':'application/json'} });
           if(!r.ok) return;
           const j = await r.json().catch(()=> ({}));
           if(j?.pending){
-            const last = j.last || j.pending;
-            openFor(last?.timestamp || '', last?.nombre_pdf || '');
-            showToast({title:'Valoración pendiente', body:'Antes de continuar, calificá el último análisis.', icon:'exclamation-circle'});
+            showToast({
+              title:'Valoración pendiente',
+              body:'Podés valorarlo al descargar el PDF o antes de iniciar un nuevo análisis.',
+              icon:'star'
+            });
           }
         }catch(_){}
       }
@@ -1023,6 +1029,7 @@
       });
 
       // F) Interceptor global de fetch para respuestas de /analizar-pliego
+      // [CAMBIO] Quitamos la rama que abría el modal tras éxito (solo abrimos si el backend exige valorar).
       const _origFetch = window.fetch;
       window.fetch = async function(input, init){
         const res = await _origFetch(input, init);
@@ -1035,13 +1042,6 @@
               const last = j?.last || j?.pending || {};
               openFor(last.timestamp || '', last.nombre_pdf || '');
               showToast({title:'Valoración requerida', body:'Calificá el análisis anterior para continuar.', icon:'star'});
-            }else{
-              // Si el backend devuelve info del PDF generado, abrir modal también
-              const clone = res.clone();
-              const j = await clone.json().catch(()=> ({}));
-              if(j && j.pdf && j.timestamp){
-                setTimeout(()=> openFor(j.timestamp, j.pdf), 600);
-              }
             }
           }
         }catch(_){}
