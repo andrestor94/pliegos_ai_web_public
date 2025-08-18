@@ -25,6 +25,7 @@ from utils import (
 )
 
 from database import (
+    DB_PATH,
     inicializar_bd,
     obtener_usuario_por_email, agregar_usuario, listar_usuarios,
     actualizar_password, cambiar_estado_usuario, borrar_usuario,
@@ -39,7 +40,6 @@ from database import (
     ocultar_hilo, restaurar_hilo,
     guardar_adjunto,
     es_admin,
-    # 👇 rating obligatorio en tu DB principal
     iniciar_analisis_historial, marcar_valoracion_historial, tiene_valoracion_pendiente
 )
 
@@ -50,15 +50,12 @@ from db_orm import inicializar_bd_orm, SessionLocal, AuditLog
 TZ_AR = ZoneInfo("America/Argentina/Buenos_Aires")
 
 def now_iso_utc() -> str:
-    """UTC en ISO 8601 con Z (para guardar y eventos internos)."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def now_stamp_ar() -> str:
-    """Timestamp local AR para nombres de archivo / IDs visibles por usuarios."""
     return datetime.now(TZ_AR).strftime("%Y%m%d%H%M%S")
 
 def iso_utc_to_ar_str(iso_utc: str, fmt: str = "%d/%m/%Y %H:%M") -> str:
-    """Convierte 'YYYY-MM-DDTHH:MM:SSZ' (o +00:00) a hora local AR, en formato legible."""
     if not iso_utc:
         return ""
     iso = iso_utc.replace("Z", "+00:00")
@@ -77,9 +74,61 @@ app = FastAPI(middleware=[
     Middleware(SessionMiddleware, secret_key=SESSION_SECRET)
 ])
 
+# ---------- Garantizar tablas de chat si faltan (fix 'no such table: mensajes') ----------
+def ensure_chat_tables():
+    """Crea tablas de chat si no existen en usuarios.db (robustez en Render)."""
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        with conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA foreign_keys=ON;")
+            # mensajes
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS mensajes(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    de_email   TEXT NOT NULL,
+                    para_email TEXT NOT NULL,
+                    texto      TEXT,
+                    leido      INTEGER NOT NULL DEFAULT 0,
+                    fecha      TEXT NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_mensajes_para_leido ON mensajes(para_email, leido)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_mensajes_de_para ON mensajes(de_email, para_email)")
+            # hilos ocultos
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS hilos_ocultos(
+                    owner_email TEXT NOT NULL,
+                    otro_email  TEXT NOT NULL,
+                    hidden_at   TEXT NOT NULL,
+                    PRIMARY KEY(owner_email, otro_email)
+                )
+            """)
+            # adjuntos
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS mensajes_adjuntos(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mensaje_id INTEGER NOT NULL,
+                    filename   TEXT NOT NULL,
+                    original   TEXT,
+                    mime       TEXT,
+                    size       INTEGER,
+                    created_at TEXT NOT NULL
+                )
+            """)
+    except Exception as e:
+        print("⚠️ ensure_chat_tables() no pudo crear tablas:", repr(e))
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
 # Inicializa BD SQLite (usuarios, historial, tickets, mensajes, hilos_ocultos, adjuntos)
 inicializar_bd()
-# Inicializa ORM (audit_logs) según DATABASE_URL
+# Asegurar explícitamente las tablas de chat (por si el módulo de DB venía sin creadoras)
+ensure_chat_tables()
+# Inicializa ORM (audit_logs)
 inicializar_bd_orm()
 
 # Static
@@ -259,12 +308,12 @@ def _build_audit_filters(q, filtros):
     h   = (filtros.get("hasta")  or "").strip()
     term= (filtros.get("term")   or "").strip()
 
-    if acc:
+    if acc and hasattr(AuditLog, "accion"):
         q = q.filter(AuditLog.accion == acc)
 
-    if d:
+    if d and hasattr(AuditLog, "fecha"):
         q = q.filter(AuditLog.fecha >= f"{d} 00:00:00")
-    if h:
+    if h and hasattr(AuditLog, "fecha"):
         q = q.filter(AuditLog.fecha <= f"{h} 23:59:59")
 
     if term:
@@ -281,7 +330,6 @@ def _build_audit_filters(q, filtros):
 _TS_RE = re.compile(r'(\d{14})')
 
 def _extraer_ts_de_nombre(nombre_pdf: str) -> str:
-    """Devuelve el timestamp (YYYYMMDDHHMMSS) si está embebido en 'resumen_*.pdf'."""
     if not nombre_pdf:
         return ""
     m = _TS_RE.search(nombre_pdf)
@@ -292,10 +340,6 @@ def _buscar_historial_usuario(
     timestamp: Optional[str] = None,
     nombre_pdf: Optional[str] = None
 ) -> Optional[dict]:
-    """
-    Busca el item de historial del usuario actual. Si se provee 'timestamp' o 'nombre_pdf',
-    intenta matchear por esos campos; si no, devuelve el último del usuario.
-    """
     try:
         items = obtener_historial_completo()
     except Exception:
@@ -306,26 +350,22 @@ def _buscar_historial_usuario(
     nombre_pdf = (nombre_pdf or "").strip()
     timestamp = (timestamp or "").strip()
 
-    # 1) match exacto por timestamp si el historial lo expone
     if timestamp:
         for h in user_items:
             if str(h.get("timestamp") or "") == timestamp:
                 return h
 
-    # 2) match por nombre_pdf
     if nombre_pdf:
         for h in user_items:
             if (h.get("nombre_archivo") or "") == nombre_pdf:
                 return h
 
-    # 3) si vino timestamp pero el historial no lo expone, intento extraer del nombre
     if timestamp:
         for h in user_items:
             ts_h = _extraer_ts_de_nombre(h.get("nombre_archivo") or "")
             if ts_h == timestamp:
                 return h
 
-    # 4) fallback: último del usuario
     if user_items:
         try:
             user_items.sort(key=lambda x: x.get("fecha",""), reverse=True)
@@ -439,7 +479,6 @@ def init_rating_pending_db():
 init_rating_pending_db()
 
 def _pr_add(user: str, historial_id: Optional[str], timestamp: str, nombre_pdf: str):
-    # Un solo pendiente por usuario
     with cal_conn() as c:
         c.execute("DELETE FROM pending_ratings WHERE user=?", (user,))
         c.execute(
@@ -471,7 +510,6 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
         request.session["rol"] = usuario[4]
         request.session["nombre"] = usuario[1] or usuario[2]
 
-        # Auditoría de sesiones (login)
         sid = uuid.uuid4().hex
         request.session["sid"] = sid
         nombre_s = request.session.get("nombre") or usuario[1] or usuario[2]
@@ -479,6 +517,19 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
         ua_s = request.headers.get("user-agent", "")
         now_iso = now_iso_utc()
         with cal_conn() as c:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS sessions(
+                    id TEXT PRIMARY KEY,
+                    user TEXT NOT NULL,
+                    nombre TEXT,
+                    ip TEXT,
+                    ua TEXT,
+                    login_at TEXT NOT NULL,
+                    last_seen TEXT NOT NULL,
+                    logout_at TEXT,
+                    closed_reason TEXT
+                )
+            """)
             c.execute("""
                 INSERT INTO sessions(id, user, nombre, ip, ua, login_at, last_seen, logout_at, closed_reason)
                 VALUES(?,?,?,?,?,?,?,?,?)
@@ -509,9 +560,6 @@ async def logout_get(request: Request):
 
 # ================== Rating/Análisis ==================
 class RatingIn(BaseModel):
-    # Soportamos dos formatos:
-    # 1) nuevo front: timestamp/nombre_pdf/estrellas/comentario
-    # 2) legacy: historial_id/rating
     historial_id: Optional[int] = None
     rating: Optional[int] = None
     timestamp: Optional[str] = None
@@ -521,11 +569,6 @@ class RatingIn(BaseModel):
 
 @app.get("/api/rating/pending")
 async def rating_pending(request: Request):
-    """
-    Devuelve si el usuario tiene una valoración pendiente y, si es posible,
-    info del último análisis (timestamp/nombre_pdf/historial_id) para que
-    el front pueda abrir el modal.
-    """
     user = request.session.get("usuario", "")
     if not user:
         return {"pending": False}
@@ -537,9 +580,8 @@ async def rating_pending(request: Request):
     except Exception:
         pass
 
-    if pr:  # preferimos nuestra info persistida
+    if pr:
         last = pr
-        # intentar castear historial_id a int si es numérico
         try:
             last["historial_id"] = int(last.get("historial_id")) if last.get("historial_id") else None
         except Exception:
@@ -562,7 +604,6 @@ async def rating_pending(request: Request):
 
     return {"pending": False, "last": None}
 
-# Alias legacy
 @app.get("/api/rating/pendiente")
 async def rating_pendiente_alias(request: Request):
     data = await rating_pending(request)
@@ -570,16 +611,10 @@ async def rating_pendiente_alias(request: Request):
 
 @app.post("/api/rating")
 async def enviar_rating(request: Request, payload: RatingIn):
-    """
-    Registra la valoración. Acepta:
-      - Formato nuevo: { timestamp, nombre_pdf, estrellas, comentario }
-      - Formato legacy: { historial_id, rating }
-    """
     user = request.session.get("usuario")
     if not user:
         return JSONResponse({"error": "No autenticado"}, status_code=401)
 
-    # normalizo rating:
     rating = None
     if isinstance(payload.estrellas, int):
         rating = payload.estrellas
@@ -589,7 +624,6 @@ async def enviar_rating(request: Request, payload: RatingIn):
     if not rating or rating < 1 or rating > 5:
         return JSONResponse({"error": "Rating inválido. Use un entero 1..5."}, status_code=400)
 
-    # resolvemos el historial_id:
     historial_id = payload.historial_id
     if not historial_id:
         h = _buscar_historial_usuario(user, timestamp=payload.timestamp, nombre_pdf=payload.nombre_pdf)
@@ -610,7 +644,6 @@ async def enviar_rating(request: Request, payload: RatingIn):
         print("❌ Error enviar_rating:", repr(e))
         return JSONResponse({"error": "No se pudo registrar la valoración"}, status_code=500)
 
-    # limpiar pendiente y notificar
     try:
         _pr_clear(user)
     except Exception:
@@ -630,7 +663,6 @@ async def enviar_rating(request: Request, payload: RatingIn):
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
     usuario = request.session.get("usuario", "Anónimo")
 
-    # BLOQUEO: si hay una valoración pendiente, no permitir nuevo análisis
     try:
         pr = _pr_get(usuario)
         if pr or tiene_valoracion_pendiente(usuario):
@@ -642,7 +674,6 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             resp.headers["X-Require-Rating"] = "1"
             return resp
     except Exception as e:
-        # Si falla la verificación por algún motivo, preferimos no bloquear
         print("⚠️ Warning al chequear pendiente:", repr(e))
 
     if not archivos:
@@ -659,35 +690,29 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         return JSONResponse({"error": f"Fallo en el análisis: {e}"}, status_code=500)
 
     try:
-        # Importante: nombre con hora local AR para que el usuario vea su hora real
         timestamp = now_stamp_ar()
         nombre_archivo_pdf = f"resumen_{timestamp}.pdf"
-
-        # Generar PDF del análisis
         await run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo_pdf)
     except Exception as e:
         return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
 
-    # Registrar análisis en historial con "rating_required=1"
     analisis_id = uuid.uuid4().hex
     try:
         historial_id = iniciar_analisis_historial(
             usuario=usuario,
             nombre_archivo=nombre_archivo_pdf,
-            ruta_pdf=nombre_archivo_pdf,   # guardamos el nombre; el front descarga desde /generated_pdfs
+            ruta_pdf=nombre_archivo_pdf,
             analisis_id=analisis_id,
             resumen_texto=resumen
         )
     except Exception as e:
         print("❌ Error iniciar_analisis_historial:", repr(e))
-        # fallback: guardado simple (sin rating)
         try:
             guardar_en_historial(timestamp, usuario, nombre_archivo_pdf, nombre_archivo_pdf, resumen)
         except Exception:
             pass
         historial_id = None
 
-    # Registrar pendiente local (para UX y bloqueo consistente)
     try:
         _pr_add(usuario, historial_id, timestamp, nombre_archivo_pdf)
     except Exception as e:
@@ -696,7 +721,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     return {
         "resumen": resumen,
         "pdf": nombre_archivo_pdf,
-        "timestamp": timestamp,            # 👈 el front lo usa para el modal
+        "timestamp": timestamp,
         "historial_id": historial_id,
         "analisis_id": analisis_id
     }
@@ -718,7 +743,6 @@ async def alias_analisis():
 
 @app.get("/descargar/{archivo}")
 async def descargar_pdf(archivo: str):
-    # Sanitizado: evitamos path traversal
     archivo = os.path.basename(archivo)
     ruta = os.path.join("generated_pdfs", archivo)
     if os.path.exists(ruta) and os.path.isfile(ruta):
@@ -810,8 +834,6 @@ async def vista_incidencias(request: Request):
     for t in tickets_raw:
         if len(t) < 7:
             continue
-        # t[6] suele venir como 'YYYY-MM-DD HH:MM:SS' (asumido UTC si backend guardó así).
-        # Lo mostramos en hora local AR:
         try:
             fecha_legible = iso_utc_to_ar_str(t[6], "%d/%m/%Y %H:%M")
         except Exception:
@@ -1011,6 +1033,9 @@ async def chat_view(request: Request):
     return templates.TemplateResponse("chat.html", {"request": request})
 
 # ================== Chat interno (API) ==================
+def _is_no_table_error(e: Exception) -> bool:
+    return isinstance(e, sqlite3.OperationalError) and "no such table" in str(e).lower()
+
 @app.get("/api/usuarios")
 async def api_buscar_usuarios(request: Request, term: str = "", limit: int = 8):
     if not request.session.get("usuario"):
@@ -1045,6 +1070,9 @@ async def chat_enviar(request: Request):
         await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=texto)
         return JSONResponse({"ok": True, "id": msg_id})
     except Exception as e:
+        if _is_no_table_error(e):
+            ensure_chat_tables()
+            return JSONResponse({"ok": False, "error": "Inicialicé las tablas de chat, intentá de nuevo."}, status_code=503)
         print("❌ Error chat_enviar:", repr(e))
         return JSONResponse({"error": "No se pudo enviar el mensaje"}, status_code=500)
 
@@ -1068,6 +1096,9 @@ async def chat_enviar_archivos(
     try:
         msg_id = enviar_mensaje(de_email=de, para_email=para, texto=texto or "", actor_user_id=actor_user_id, ip=ip)
     except Exception as e:
+        if _is_no_table_error(e):
+            ensure_chat_tables()
+            return JSONResponse({"ok": False, "error": "Inicialicé las tablas de chat, intentá de nuevo."}, status_code=503)
         print("❌ Error creando mensaje:", repr(e))
         return JSONResponse({"error": "No se pudo crear el mensaje"}, status_code=500)
 
@@ -1135,6 +1166,9 @@ async def chat_hilos(request: Request):
         hilos = obtener_hilos_para(yo)
         return JSONResponse({"hilos": hilos})
     except Exception as e:
+        if _is_no_table_error(e):
+            ensure_chat_tables()
+            return JSONResponse({"hilos": []})
         print("❌ Error chat_hilos:", repr(e))
         return JSONResponse({"error": "No se pudieron obtener los hilos"}, status_code=500)
 
@@ -1149,6 +1183,9 @@ async def chat_mensajes(request: Request, con: str, limit: int = 100):
         mensajes = obtener_mensajes_entre(yo, con, limit=limit)
         return JSONResponse({"entre": [yo, con], "mensajes": mensajes})
     except Exception as e:
+        if _is_no_table_error(e):
+            ensure_chat_tables()
+            return JSONResponse({"entre": [yo, con], "mensajes": []})
         print("❌ Error chat_mensajes:", repr(e))
         return JSONResponse({"error": "No se pudieron obtener los mensajes"}, status_code=500)
 
@@ -1165,6 +1202,9 @@ async def chat_marcar_leidos(request: Request):
         marcar_mensajes_leidos(de_email=de, para_email=yo)
         return JSONResponse({"ok": True})
     except Exception as e:
+        if _is_no_table_error(e):
+            ensure_chat_tables()
+            return JSONResponse({"ok": True})
         print("❌ Error chat_marcar_leidos:", repr(e))
         return JSONResponse({"error": "No se pudo marcar como leídos"}, status_code=500)
 
@@ -1177,6 +1217,10 @@ async def chat_no_leidos(request: Request):
         total = contar_no_leidos(yo)
         return JSONResponse({"no_leidos": total})
     except Exception as e:
+        if _is_no_table_error(e):
+            # autocorrección para evitar el error de Render
+            ensure_chat_tables()
+            return JSONResponse({"no_leidos": 0})
         print("❌ Error chat_no_leidos:", repr(e))
         return JSONResponse({"error": "No se pudo obtener el conteo"}, status_code=500)
 
@@ -1194,6 +1238,9 @@ async def chat_ocultar(request: Request):
         ocultar_hilo(owner_email=yo, otro_email=con, actor_user_id=actor_user_id, ip=ip)
         return JSONResponse({"ok": True})
     except Exception as e:
+        if _is_no_table_error(e):
+            ensure_chat_tables()
+            return JSONResponse({"ok": True})
         print("❌ Error chat_ocultar:", repr(e))
         return JSONResponse({"error": "No se pudo ocultar el hilo"}, status_code=500)
 
@@ -1211,6 +1258,9 @@ async def chat_restaurar(request: Request):
         restaurar_hilo(owner_email=yo, otro_email=con, actor_user_id=actor_user_id, ip=ip)
         return JSONResponse({"ok": True})
     except Exception as e:
+        if _is_no_table_error(e):
+            ensure_chat_tables()
+            return JSONResponse({"ok": True})
         print("❌ Error chat_restaurar:", repr(e))
         return JSONResponse({"error": "No se pudo restaurar el hilo"}, status_code=500)
 
@@ -1228,6 +1278,9 @@ async def chat_abrir(request: Request):
         restaurar_hilo(owner_email=yo, otro_email=con, actor_user_id=actor_user_id, ip=ip)
         return JSONResponse({"ok": True})
     except Exception as e:
+        if _is_no_table_error(e):
+            ensure_chat_tables()
+            return JSONResponse({"ok": True})
         print("❌ Error chat_abrir:", repr(e))
         return JSONResponse({"error": "No se pudo abrir el hilo"}, status_code=500)
 
@@ -1251,6 +1304,15 @@ async def auditoria_eliminar_masivo_disabled(request: Request):
 @app.post("/auditoria/purgar", dependencies=[Depends(require_admin)])
 async def auditoria_purgar_disabled(request: Request):
     return JSONResponse({"error": "Operación no permitida: la auditoría es inmutable"}, status_code=405)
+
+# ========= Ruta /admin (para el botón del topbar) =========
+@app.get("/admin")
+async def admin_entry(request: Request):
+    if not request.session.get("usuario"):
+        return RedirectResponse("/login")
+    # exige admin y redirige a la vista de auditoría
+    require_admin(request)
+    return RedirectResponse("/auditoria", status_code=307)
 
 # =====================================================================
 # ========================== CALENDARIO (endpoints) ===================
@@ -1351,28 +1413,67 @@ async def cal_delete(evt_id: str, request: Request):
     await notify_async(request.session.get("usuario","Desconocido"), "Evento eliminado", f"ID: {evt_id}")
     return {"ok": True}
 
-# ================== Notificaciones mínimas ==================
-@app.get("/notificaciones")
-async def list_notifs(request: Request, limit: int = 20):
+# ================== Notificaciones ==================
+def _wants_html(req: Request) -> bool:
+    acc = (req.headers.get("accept") or "").lower()
+    # si el navegador pide html explícito, devolvemos html
+    return "text/html" in acc and "application/json" not in acc
+
+@app.get("/notificaciones", response_class=HTMLResponse)
+async def notificaciones(request: Request,
+                         q: Optional[str] = Query(default=None),
+                         only_unread: Optional[bool] = Query(default=None),
+                         limit: int = Query(default=20, ge=1, le=200),
+                         offset: int = Query(default=0, ge=0)):
+    """
+    Si el request espera HTML -> renderiza notificaciones.html
+    Caso contrario -> devuelve JSON con filtros (q, only_unread, limit, offset)
+    """
     user = request.session.get("usuario", "Desconocido")
+
+    # Si el cliente quiere HTML (ej. click en "Ver todas"), renderizamos la vista
+    if _wants_html(request) and offset == 0 and q is None and only_unread is None:
+        return templates.TemplateResponse("notificaciones.html", {"request": request})
+
+    q_like = f"%{(q or '').strip()}%"
+    where = ["user=?"]
+    args: List[object] = [user]
+    if q and q.strip():
+        where.append("(LOWER(titulo) LIKE LOWER(?) OR LOWER(cuerpo) LIKE LOWER(?))")
+        args += [q_like, q_like]
+    if only_unread:
+        where.append("leida=0")
+
+    where_sql = " AND ".join(where)
     with cal_conn() as c:
         total_unread = c.execute(
             "SELECT COUNT(1) FROM notificaciones WHERE user=? AND leida=0", (user,)
         ).fetchone()[0]
-        cur = c.execute(
-            "SELECT id, titulo, cuerpo, created_at, leida FROM notificaciones WHERE user=? ORDER BY id DESC LIMIT ?",
-            (user, limit)
-        )
-        items = []
-        for r in cur.fetchall():
-            items.append({
-                "id": r["id"],
-                "titulo": r["titulo"],
-                "cuerpo": r["cuerpo"],
-                "fecha_legible": iso_utc_to_ar_str(r["created_at"]),
-                "leida": bool(r["leida"])
-            })
+        sql = f"""
+            SELECT id, titulo, cuerpo, created_at, leida
+            FROM notificaciones
+            WHERE {where_sql}
+            ORDER BY id DESC
+            LIMIT ? OFFSET ?
+        """
+        args_sql = args + [limit, offset]
+        cur = c.execute(sql, tuple(args_sql))
+        items = [{
+            "id": r["id"],
+            "titulo": r["titulo"],
+            "cuerpo": r["cuerpo"],
+            "fecha_legible": iso_utc_to_ar_str(r["created_at"]),
+            "leida": bool(r["leida"])
+        } for r in cur.fetchall()]
+
     return {"total_unread": total_unread, "items": items}
+
+# Alias directo a la vista
+@app.get("/notificaciones/vista", response_class=HTMLResponse)
+async def notificaciones_vista(request: Request):
+    if not request.session.get("usuario"):
+        return RedirectResponse("/login")
+    return templates.TemplateResponse("notificaciones.html", {"request": request})
 
 @app.post("/notificaciones/marcar-leidas")
 async def mark_read(request: Request):
@@ -1381,11 +1482,21 @@ async def mark_read(request: Request):
         c.execute("UPDATE notificaciones SET leida=1 WHERE user=?", (user,))
     return {"ok": True}
 
+@app.post("/notificaciones/eliminar")
+async def notif_delete(request: Request):
+    user = request.session.get("usuario", "Desconocido")
+    data = await request.json()
+    notif_id = int(data.get("id", 0))
+    if not notif_id:
+        return JSONResponse({"error": "Falta id"}, status_code=400)
+    with cal_conn() as c:
+        c.execute("DELETE FROM notificaciones WHERE id=? AND user=?", (notif_id, user))
+    return {"ok": True}
+
 # =====================================================================
 # ========================== PRESENCIA / ONLINE =======================
 # =====================================================================
 
-# Tiempo de inactividad para considerar una sesión "expirada" (en minutos)
 SESSION_TIMEOUT_MIN = 10
 
 def init_presence_db():
@@ -1399,7 +1510,6 @@ def init_presence_db():
                 ua TEXT
             )
         """)
-        # Auditoría de sesiones
         c.execute("""
             CREATE TABLE IF NOT EXISTS sessions(
                 id TEXT PRIMARY KEY,
@@ -1519,12 +1629,6 @@ async def auditoria_actividad(
     hasta: Optional[str] = Query(default=None, description="YYYY-MM-DD"),
     limit: int = Query(default=500, ge=1, le=5000)
 ):
-    """
-    Devuelve sesiones con duración y estado:
-      - logout_at NULL y (now-last_seen)<=timeout  -> activa
-      - logout_at NULL y (now-last_seen)>timeout   -> expirada
-      - logout_at no NULL                           -> cerrada
-    """
     now = datetime.now(timezone.utc)
     rows_out = []
 

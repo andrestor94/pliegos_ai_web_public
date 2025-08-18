@@ -3,7 +3,24 @@
 
 {% block extra_head %}
 <style>
+  /* ====== Mapeo de variables a tu tema global ====== */
+  :root{
+    --bg-soft: #f6f7fe;
+    --text: var(--ink);
+    --text-1: var(--ink);
+    --text-2: var(--muted);
+    --brand: var(--accent-a);
+  }
+  [data-theme="dark"]{
+    --bg-soft: #0f172a;
+    --brand: #a78bfa;
+  }
+
   /* ——— Estilos específicos de la vista ——— */
+  .card-clean{ border:1px solid var(--border); border-radius:16px; box-shadow:var(--shadow); }
+  .shadow-hover{ transition: box-shadow .15s ease; }
+  .shadow-hover:hover{ box-shadow: 0 14px 34px rgba(16,24,40,.16); }
+
   .toolbar{ gap:.5rem; }
   .toolbar .form-control, .toolbar .form-select{ border-radius:10px; }
 
@@ -20,9 +37,24 @@
     background:#e3ecf5; color:var(--brand);
     border:1px solid #b6d1ea; border-radius:999px; padding:.15rem .5rem; font-size:.72rem;
   }
+  [data-theme="dark"] .badge-kind{
+    background:#0e223b; border-color:#1f3b61;
+  }
   .actions .btn{ border-radius:8px!important; }
 
   .empty{ color:var(--text-2); padding:18px; text-align:center; }
+
+  .skeleton{
+    position:relative; overflow:hidden; border-bottom:1px solid var(--border);
+    padding:12px;
+  }
+  .skeleton::after{
+    content:""; position:absolute; inset:0;
+    background:linear-gradient(90deg, transparent, rgba(180,190,210,.22), transparent);
+    animation: shimmer 1.1s infinite;
+  }
+  .sk-bar{ height:12px; background:rgba(148,163,184,.25); border-radius:6px; margin:6px 0; }
+  @keyframes shimmer{ 0%{ transform:translateX(-100%);} 100%{ transform:translateX(100%);} }
 
   @media (max-width:700px){
     .notif-item{ grid-template-columns: 24px 1fr; }
@@ -85,6 +117,9 @@
   const escapeHtml = (s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const $ = (sel)=> document.querySelector(sel);
 
+  // Debounce simple
+  function debounce(fn, wait){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), wait); }; }
+
   // Estado de la vista
   const state = {
     q: '',
@@ -97,12 +132,47 @@
     totalShown: 0
   };
 
+  // Prefill desde la URL
+  (function hydrateFromURL(){
+    const usp = new URLSearchParams(location.search);
+    state.q = (usp.get('q')||'').trim();
+    state.onlyUnread = usp.get('only_unread') === '1';
+    if(state.q) $('#search').value = state.q;
+    $('#filterUnread').value = state.onlyUnread ? 'unread' : 'all';
+  })();
+
+  function syncURL(){
+    const usp = new URLSearchParams();
+    if(state.q) usp.set('q', state.q);
+    if(state.onlyUnread) usp.set('only_unread', '1');
+    const qs = usp.toString();
+    const newUrl = qs ? (`${location.pathname}?`+qs) : location.pathname;
+    history.replaceState(null, '', newUrl);
+  }
+
   function renderCounter(){
     $('#counter').textContent = `${state.totalShown} mostradas${state.onlyUnread ? ' (no leídas)' : ''}`;
   }
   function checkboxChanged(id, checked){
     if(checked) state.selected.add(id); else state.selected.delete(id);
     $('#btnMarkSelected').disabled = state.selected.size === 0;
+  }
+
+  function renderSkeleton(n=3){
+    const list = $('#list');
+    list.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    for(let i=0;i<n;i++){
+      const sk = document.createElement('div');
+      sk.className='skeleton';
+      sk.innerHTML = `
+        <div class="sk-bar" style="width:38%; height:14px"></div>
+        <div class="sk-bar" style="width:82%"></div>
+        <div class="sk-bar" style="width:56%"></div>
+      `;
+      frag.appendChild(sk);
+    }
+    list.appendChild(frag);
   }
 
   function renderList(items, append){
@@ -132,7 +202,7 @@
         </div>
         <div class="actions d-flex align-items-start gap-1">
           ${!n.leida ? `<button class="btn btn-sm btn-outline-success" data-action="read">Marcar leída</button>` : ''}
-          <button class="btn btn-sm btn-outline-danger" data-action="delete"><i class="bi bi-trash"></i></button>
+          <button class="btn btn-sm btn-outline-danger" data-action="delete" title="Eliminar"><i class="bi bi-trash"></i></button>
         </div>
       `;
 
@@ -172,6 +242,7 @@
     if(state.loading || state.done) return;
     state.loading = true;
     $('#loadMore').disabled = true; $('#loadMore').textContent = 'Cargando…';
+    if(!append && state.offset === 0) renderSkeleton(4);
     try{
       const params = new URLSearchParams({
         limit: String(state.limit),
@@ -180,7 +251,7 @@
       if(state.q) params.set('q', state.q);
       if(state.onlyUnread) params.set('only_unread','1');
 
-      const r = await fetch(`/notificaciones?${params.toString()}`);
+      const r = await fetch(`/notificaciones?${params.toString()}`, { headers:{'Accept':'application/json'} });
       if(!r.ok) throw new Error('HTTP '+r.status);
       const data = await r.json();
       const items = data.items || data.lista || [];
@@ -215,7 +286,8 @@
       (window.showToast||console.log)({title:'Listo', body:(ids.length>1? 'Notificaciones marcadas' : 'Notificación marcada'), icon:'check2-circle'});
       state.selected.clear(); $('#btnMarkSelected').disabled = true;
       // Actualizar campanita global (base.html)
-      if(window.fetchNotifs) await window.fetchNotifs();
+      if(typeof window.refreshNotif === 'function') await window.refreshNotif();
+      else if(typeof window.fetchNotifs === 'function') await window.fetchNotifs();
     }catch(_){
       (window.showToast||console.error)({title:'Error', body:'No se pudieron marcar como leídas.', icon:'exclamation-triangle'});
     }
@@ -225,7 +297,8 @@
     try{
       await fetch('/notificaciones/marcar-leidas',{method:'POST'});
       (window.showToast||console.log)({title:'Notificaciones', body:'Marcadas como leídas', icon:'check2-circle'});
-      if(window.fetchNotifs) await window.fetchNotifs();
+      if(typeof window.refreshNotif === 'function') await window.refreshNotif();
+      else if(typeof window.fetchNotifs === 'function') await window.fetchNotifs();
       await reloadList(true);
     }catch(_){
       (window.showToast||console.error)({title:'Error', body:'No se pudieron marcar todas.', icon:'exclamation-triangle'});
@@ -234,16 +307,26 @@
 
   // Eventos UI
   document.addEventListener('DOMContentLoaded', ()=>{
-    $('#search').addEventListener('input', ()=>{ state.q = $('#search').value.trim(); reloadList(true); });
-    $('#filterUnread').addEventListener('change', ()=>{ state.onlyUnread = $('#filterUnread').value === 'unread'; reloadList(true); });
+    const onSearch = debounce(()=>{ state.q = $('#search').value.trim(); syncURL(); reloadList(true); }, 300);
+    $('#search').addEventListener('input', onSearch);
+
+    $('#filterUnread').addEventListener('change', ()=>{
+      state.onlyUnread = $('#filterUnread').value === 'unread';
+      syncURL();
+      reloadList(true);
+    });
     $('#loadMore').addEventListener('click', ()=> fetchList({append:true}));
     $('#btnMarkAll').addEventListener('click', async ()=>{ if(confirm('¿Marcar todas las notificaciones actuales como leídas?')) await markAllAsRead(); });
-    $('#btnMarkSelected').addEventListener('click', async ()=>{ if(state.selected.size) { await markIdsAsRead([...state.selected]); await reloadList(true); } });
+    $('#btnMarkSelected').addEventListener('click', async ()=>{
+      if(state.selected.size){
+        await markIdsAsRead([...state.selected]);
+        await reloadList(true);
+      }
+    });
   });
 
   // Init (base.html ya carga nav, chat IA, campanita, etc.)
   window.onload = async ()=>{
-    // Si base expone getUsuario/fetchNotifs, se ejecutan allí.
     await reloadList(true);
   };
 </script>
