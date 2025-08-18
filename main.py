@@ -1424,6 +1424,84 @@ async def admin_users_delete(request: Request, email: str, hard: bool = Query(de
         print("❌ admin_users_delete:", repr(e))
         return JSONResponse({"error": "No se pudo eliminar el usuario"}, status_code=500)
 
+# ======= LEGACY/COMPAT: endpoints antiguos que usa admin.html =======
+
+async def _json_or_form(request: Request) -> dict:
+    """Acepta JSON o form-data/x-www-form-urlencoded."""
+    ctype = (request.headers.get("content-type") or "").lower()
+    if "application/json" in ctype:
+        try:
+            return await request.json()
+        except Exception:
+            return {}
+    try:
+        form = await request.form()
+        return {k: (str(v) if v is not None else "") for k, v in form.items()}
+    except Exception:
+        return {}
+
+@app.get("/admin/usuarios")
+async def legacy_admin_users(request: Request, q: str = "", limit: int = 500):
+    # Alias de /api/admin/users
+    return await admin_users_list(request, q=q, limit=limit)
+
+@app.post("/admin/crear-usuario")
+async def legacy_admin_create_user(request: Request):
+    # Alias de /api/admin/users (POST)
+    data = await _json_or_form(request)
+    payload = AdminUserCreate(
+        nombre=(data.get("nombre") or "").strip(),
+        email=(data.get("email") or "").strip(),
+        rol=(data.get("rol") or "usuario").strip()
+    )
+    return await admin_users_create(request, payload)
+
+@app.post("/admin/usuarios/password")
+@app.post("/admin/blanquear-password")
+async def legacy_admin_password(request: Request):
+    data = await _json_or_form(request)
+    payload = AdminPasswordIn(
+        email=(data.get("email") or "").strip(),
+        password=(data.get("password") or data.get("nueva") or data.get("new") or "").strip()
+    )
+    return await admin_users_password(request, payload)
+
+@app.post("/admin/usuarios/toggle")
+async def legacy_admin_toggle(request: Request):
+    data = await _json_or_form(request)
+    activo_raw = str(data.get("activo", "")).lower()
+    activo = activo_raw in ("1", "true", "t", "yes", "on")
+    payload = AdminToggleIn(
+        email=(data.get("email") or "").strip(),
+        activo=activo
+    )
+    return await admin_users_toggle(request, payload)
+
+@app.post("/admin/usuarios/rol")
+async def legacy_admin_role(request: Request):
+    data = await _json_or_form(request)
+    payload = AdminRoleIn(
+        email=(data.get("email") or "").strip(),
+        rol=(data.get("rol") or "").strip()
+    )
+    return await admin_users_role(request, payload)
+
+@app.delete("/admin/usuarios/{email:path}")
+async def legacy_admin_delete(request: Request, email: str, hard: bool = Query(default=False)):
+    # Alias directo de /api/admin/users/{email}
+    return await admin_users_delete(request, email=email, hard=hard)
+
+@app.post("/admin/eliminar-usuario")
+async def legacy_admin_delete_post(request: Request):
+    # Variante POST por si el front la usa con form-data
+    data = await _json_or_form(request)
+    email = (data.get("email") or "").strip()
+    hard_raw = str(data.get("hard", "")).lower()
+    hard = hard_raw in ("1", "true", "t", "yes", "on")
+    return await admin_users_delete(request, email=email, hard=hard)
+
+# ======= FIN LEGACY =======
+
 # =====================================================================
 # ========================== CALENDARIO (endpoints) ===================
 # =====================================================================
@@ -1832,5 +1910,5 @@ async def auditoria_actividad_csv(
     return Response(
         content=csv_body,
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename=\"{filename}\"'}
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
