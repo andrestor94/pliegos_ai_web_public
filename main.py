@@ -1305,14 +1305,11 @@ async def auditoria_eliminar_masivo_disabled(request: Request):
 async def auditoria_purgar_disabled(request: Request):
     return JSONResponse({"error": "Operación no permitida: la auditoría es inmutable"}, status_code=405)
 
-# ========= Ruta /admin (para el botón del topbar) =========
-@app.get("/admin")
-async def admin_entry(request: Request):
-    if not request.session.get("usuario"):
-        return RedirectResponse("/login")
-    # exige admin y redirige a la vista de auditoría
-    require_admin(request)
-    return RedirectResponse("/auditoria", status_code=307)
+# ========= Panel de Administración =========
+@app.get("/admin", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+async def admin_panel(request: Request):
+    # Renderiza el panel de administración (botón del topbar apunta aquí)
+    return templates.TemplateResponse("admin.html", {"request": request})
 
 # =====================================================================
 # ========================== CALENDARIO (endpoints) ===================
@@ -1416,7 +1413,6 @@ async def cal_delete(evt_id: str, request: Request):
 # ================== Notificaciones ==================
 def _wants_html(req: Request) -> bool:
     acc = (req.headers.get("accept") or "").lower()
-    # si el navegador pide html explícito, devolvemos html
     return "text/html" in acc and "application/json" not in acc
 
 @app.get("/notificaciones", response_class=HTMLResponse)
@@ -1431,7 +1427,6 @@ async def notificaciones(request: Request,
     """
     user = request.session.get("usuario", "Desconocido")
 
-    # Si el cliente quiere HTML (ej. click en "Ver todas"), renderizamos la vista
     if _wants_html(request) and offset == 0 and q is None and only_unread is None:
         return templates.TemplateResponse("notificaciones.html", {"request": request})
 
@@ -1468,7 +1463,6 @@ async def notificaciones(request: Request,
 
     return {"total_unread": total_unread, "items": items}
 
-# Alias directo a la vista
 @app.get("/notificaciones/vista", response_class=HTMLResponse)
 async def notificaciones_vista(request: Request):
     if not request.session.get("usuario"):
