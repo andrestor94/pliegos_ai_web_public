@@ -786,3 +786,14 @@ def obtener_auditoria(limit=50):
                 "ip": log.ip
             })
         return resultado
+
+# --- STUBS NO-OP PARA TABLAS OPCIONALES (Render) ---
+if 'crear_tabla_mensajes' not in globals():
+    def crear_tabla_mensajes(): pass
+if 'crear_tabla_hilos_ocultos' not in globals():
+    def crear_tabla_hilos_ocultos(): pass
+if 'crear_tabla_tickets' not in globals():
+    def crear_tabla_tickets(): pass
+if 'crear_tabla_adjuntos' not in globals():
+    def crear_tabla_adjuntos(): pass
+# --- FIN STUBS ---
