@@ -2,7 +2,8 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <!-- ✅ Viewport correcto para móviles (incluye notch iOS) -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>{% block title %}Suizo Argentina – Licitaciones IA{% endblock %}</title>
 
   <!-- Aplica tema ANTES de pintar para evitar FOUC -->
@@ -25,6 +26,9 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
 
+  <!-- ✅ Tu theme global en archivo (mobile-first y fixes iOS) -->
+  <link rel="stylesheet" href="{{ url_for('static', path='css/app.theme.css') }}">
+
   <style>
     :root{
       --grad-a:#7c3aed; --grad-b:#ec4899; --grad-c:#2563eb;
@@ -35,10 +39,11 @@
       --sidebar-grad-a:#0f172a; --sidebar-grad-b:#0b1220;
       --chip-bg:#f6f7fe;
       --sidebar-w: 74px;
-      --drawer-w: 280px; /* ancho del drawer en móviles/tablets */
+      --drawer-w: 280px;
       --header-h: 76px;
+      --safe-top: env(safe-area-inset-top);
+      --safe-bottom: env(safe-area-inset-bottom);
     }
-    /* Modo oscuro global (forzado por atributo) */
     [data-theme="dark"]{
       --panel:#0b1220; --ink:#e5e7eb; --muted:#94a3b8; --border:#1f2a44;
       --pill:#111a33; --shadow:0 12px 32px rgba(0,0,0,.45);
@@ -48,17 +53,25 @@
     }
 
     html, body { height:100%; }
-    html{ scroll-behavior:smooth; }
+    html{
+      scroll-behavior:smooth;
+      /* ✅ Evita zoom raro en iOS al focusear inputs */
+      -webkit-text-size-adjust: 100%;
+    }
+    /* ✅ MOBILE FIX: sin scroll lateral + respeta safe areas */
+    html, body{ overflow-x:hidden; }
     body{
       margin:0;
       font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       color:var(--ink);
-      overflow:hidden;
       background:var(--panel);
+      padding-top: var(--safe-top);
+      padding-bottom: var(--safe-bottom);
+      font-size: 16px; /* evita zoom de iOS en inputs */
     }
 
-    /* ===== Shell / Layout normal ===== */
-    .shell{ width:100vw; height:100vh; margin:0; background:var(--panel); border-radius:0; border:none; box-shadow:none; overflow:hidden; display:block; }
+    /* ===== Shell / Layout ===== */
+    .shell{ width:100vw; height:100vh; margin:0; background:var(--panel); overflow:hidden; display:block; }
     .app{
       height:100%;
       display:grid;
@@ -67,6 +80,8 @@
       grid-template-areas:
         "sidebar header"
         "sidebar content";
+      /* ✅ que los hijos de la grid puedan encogerse en iOS */
+      min-width:0;
     }
 
     /* ===== Sidebar ===== */
@@ -81,32 +96,21 @@
       height: calc(100% - 10vh);
       margin: auto 0;
       z-index: 1020;
+      min-width:0; /* ✅ */
     }
     [data-theme="dark"] .sidebar{
       box-shadow: 0 10px 26px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.04);
     }
-
-    .side-logo{
-      width:46px; height:46px; border-radius:12px;
-      background:#fff; display:grid; place-items:center;
-      box-shadow: inset 0 0 0 1px rgba(0,0,0,.06);
-    }
+    .side-logo{ width:46px; height:46px; border-radius:12px; background:#fff; display:grid; place-items:center; box-shadow: inset 0 0 0 1px rgba(0,0,0,.06); }
     .side-logo img{ width:30px; height:30px; object-fit:contain; }
-
     .side-nav{ display:flex; flex-direction:column; gap:8px; align-items:center; width:100%; margin-top:8px; }
-
     .side-btn{
-      width:44px; height:44px;
-      border-radius:12px; display:grid; place-items:center;
-      color:#cbd5e1; font-size:18px;
-      border:1px solid rgba(255,255,255,.08);
-      background:rgba(255,255,255,.03);
-      transition: transform .06s ease, box-shadow .2s ease, background .2s ease, color .2s ease;
-      text-decoration:none;
+      width:44px; height:44px; border-radius:12px; display:grid; place-items:center;
+      color:#cbd5e1; font-size:18px; border:1px solid rgba(255,255,255,.08);
+      background:rgba(255,255,255,.03); transition: transform .06s ease, box-shadow .2s, background .2s, color .2s; text-decoration:none;
     }
     .side-btn:hover{ transform:translateY(-2px); color:#fff; box-shadow:0 12px 22px rgba(0,0,0,.28); background:rgba(255,255,255,.08); }
     .side-btn.active{ color:#fff; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); border-color:transparent; box-shadow:0 10px 22px rgba(139,92,246,.35); }
-
     .side-spacer{ flex:1; }
     .side-small{ color:#94a3b8; font-size:11px; }
 
@@ -118,59 +122,36 @@
       border-bottom:1px solid var(--border);
       background:linear-gradient(0deg, rgba(255,255,255,.92), rgba(255,255,255,.92));
       backdrop-filter: blur(6px);
-      position: sticky;
-      top: 0;
-      z-index: 1030;
+      position: sticky; top: 0; z-index: 1030;
+      min-width:0; /* ✅ */
     }
-    [data-theme="dark"] .header{
-      background:linear-gradient(0deg, rgba(11,18,32,.92), rgba(11,18,32,.92));
-    }
+    [data-theme="dark"] .header{ background:linear-gradient(0deg, rgba(11,18,32,.92), rgba(11,18,32,.92)); }
 
-    /* Botón hamburguesa (visible en móviles/tablets) */
-    .menu-btn{
-      display:none;
-      width:42px; height:42px; border-radius:12px;
-      border:1px solid var(--border);
-      background:#fff; color:var(--ink);
-      align-items:center; justify-content:center;
-    }
+    /* Botón hamburguesa en móviles/tablets */
+    .menu-btn{ display:none; width:42px; height:42px; border-radius:12px; border:1px solid var(--border); background:#fff; color:var(--ink); align-items:center; justify-content:center; }
     [data-theme="dark"] .menu-btn{ background:#0b1220; color:#e5e7eb; }
-    @media (max-width: 992px){
-      .menu-btn{ display:inline-flex; }
-    }
+    @media (max-width: 992px){ .menu-btn{ display:inline-flex; } }
 
-    /* Brand: sólo logo + “Licitaciones IA” */
+    /* Brand */
     .brand{ display:flex; align-items:center; gap:14px; padding:8px 14px; border-radius:16px; border:1px solid var(--border); background:#fff; }
     .brand img{ height:34px; width:auto; object-fit:contain; }
     .brand .brand-title{ font-weight:700; letter-spacing:.2px; }
     [data-theme="dark"] .brand{ background:#0b1220; }
 
-    .header-actions{ margin-left:auto; display:flex; align-items:center; gap:10px; }
+    .header-actions{ margin-left:auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap; min-width:0; }
     .pill{ position:relative; border-radius:999px; padding:.55rem 1rem; border:1px solid var(--border); background:var(--pill); color:var(--ink); font-weight:500; text-decoration:none; }
     .pill-grad{ border:none; color:#fff; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); box-shadow:0 12px 26px rgba(139,92,246,.32); }
     .pill-icon{ display:inline-flex; align-items:center; gap:.5rem; }
-    .icon-btn{ position:relative; width:44px; height:44px; display:grid; place-items:center; border-radius:14px; border:1px solid var(--border); background:#fff; color:var(--ink); }
+    .icon-btn{ position:relative; width:44px; height:44px; display:grid; place-items:center; border-radius:14px; border:1px solid var(--border); background:#fff; color:var(--ink); } /* ← fix var */
     [data-theme="dark"] .icon-btn{ background:#0b1220; color:#e5e7eb; border-color:var(--border); }
-    .icon-badge{
-      position:absolute; top:-4px; right:-4px; min-width:18px; height:18px; padding:0 4px;
-      border-radius:999px; background:#ef4444; color:#fff; font-size:11px; line-height:18px; text-align:center;
-      display:none;
-    }
-    /* Badge para “Chat interno” */
-    .chat-badge{
-      position:absolute; top:-6px; right:-6px; min-width:18px; height:18px; padding:0 4px;
-      border-radius:999px; background:#ef4444; color:#fff; font-size:11px; line-height:18px; text-align:center;
-      display:none;
+    .icon-badge, .chat-badge{
+      position:absolute; top:-6px; right:-6px; min-width:18px; height:18px; padding:0 4px; border-radius:999px; background:#ef4444; color:#fff; font-size:11px; line-height:18px; text-align:center; display:none;
     }
 
-    /* Usuario (nombre + avatar) */
+    /* Usuario */
     .user-box{ display:flex; align-items:center; gap:10px; margin-left:6px; }
     .user-name{ font-weight:600; color:var(--ink); }
-    .user-avatar{
-      width:40px; height:40px; border-radius:999px; overflow:hidden; position:relative;
-      border:1px solid var(--border); background:#e2e8f0; display:grid; place-items:center; cursor:pointer;
-      user-select:none;
-    }
+    .user-avatar{ width:40px; height:40px; border-radius:999px; overflow:hidden; position:relative; border:1px solid var(--border); background:#e2e8f0; display:grid; place-items:center; cursor:pointer; user-select:none; }
     .user-avatar img{ width:100%; height:100%; object-fit:cover; display:block; }
     .user-avatar .initials{ font-weight:700; color:#334155; }
     [data-theme="dark"] .user-avatar{ background:#111827; }
@@ -178,12 +159,8 @@
 
     /* ===== Content ===== */
     .content{
-      grid-area:content;
-      position:relative;
-      padding:24px;
-      min-height:0;
-      height:100%;
-      overflow:auto;
+      grid-area:content; position:relative; padding:24px; min-height:0;
+      height:100%; overflow:auto; min-width:0; /* ✅ */
       background:
         radial-gradient(900px 660px at 16% 16%, rgba(37,99,235,.10), transparent 60%),
         radial-gradient(1000px 720px at 84% 80%, rgba(236,72,153,.12), transparent 60%),
@@ -198,6 +175,9 @@
         var(--bg-body);
     }
 
+    /* ✅ Los hijos directos del header/content no deben forzar overflow */
+    .header > *, .content > * { min-width:0; }
+
     .cardx{ background:#fff; border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow); padding:16px; position:relative; }
     .cardx .title{ font-weight:700; display:flex; align-items:center; gap:8px; }
     [data-theme="dark"] .cardx{ background:#0b1220; }
@@ -209,57 +189,50 @@
 
     @media (max-width: 1200px){ .col-5,.col-4,.col-3{ grid-column: span 6; } }
 
-    /* ====== Drawer Mobile / Tablet ======
-       En < 992px la sidebar pasa a drawer deslizante, con overlay.
-    */
+    /* ===== Drawer Mobile/Tablet ===== */
     @media (max-width: 991.98px){
+      .shell{ height: 100dvh; }
       .app{
         grid-template-columns: 1fr;
         grid-template-rows: var(--header-h) 1fr;
-        grid-template-areas:
-          "header"
-          "content";
+        grid-template-areas: "header" "content";
       }
       .sidebar{
-        position: fixed;
-        top: 0; left: 0;
-        height: 100dvh;
-        width: min(var(--drawer-w), 88vw);
-        max-width: 92vw;
-        padding: 16px 10px;
-        margin: 0;
-        border-radius: 0 22px 22px 0;
-        transform: translateX(-100%);
-        transition: transform .25s ease;
+        position: fixed; top: 0; left: 0; height: 100dvh;
+        width: min(var(--drawer-w), 88vw); max-width: 92vw;
+        padding: 16px 10px; margin: 0; border-radius: 0 22px 22px 0;
+        transform: translateX(-100%); transition: transform .25s ease;
       }
       .sidebar.open{ transform: translateX(0); }
       .sidebar .close-drawer{
-        display: inline-flex;
-        align-items:center; justify-content:center;
+        display: inline-flex; align-items:center; justify-content:center;
         width:36px; height:36px; border-radius:10px;
         border:1px solid rgba(255,255,255,.12);
         color:#fff; background:rgba(255,255,255,.06);
         margin: 2px 0 10px auto;
       }
       .sidebar-overlay{
-        position: fixed;
-        inset: 0;
-        background: rgba(15,18,34,.35);
-        backdrop-filter: blur(2px);
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity .2s ease;
-        z-index: 1010;
+        position: fixed; inset: 0; background: rgba(15,18,34,.35); backdrop-filter: blur(2px);
+        opacity: 0; pointer-events: none; transition: opacity .2s ease; z-index: 1010;
       }
-      .sidebar-overlay.open{
-        opacity: 1;
-        pointer-events: auto;
-      }
+      .sidebar-overlay.open{ opacity: 1; pointer-events: auto; }
+
+      /* ✅ mobile tweaks */
+      .content{ padding:16px; }
+      .header-actions{ gap:8px; }
+      .brand{ padding:6px 10px; gap:10px; }
+      .brand img{ height:28px; }
+      .pill, .icon-btn{ padding:.5rem .75rem; }
+      .grid{ grid-template-columns: repeat(6, 1fr); }
+      .col-8,.col-7,.col-6,.col-5,.col-4,.col-3{ grid-column: span 6; }
+      /* Nada supera el ancho */
+      img, svg, video, canvas, iframe, table, .cardx, .brand, .pill, .icon-btn{ max-width:100%; }
     }
 
-    /* Inputs y tablas en dark/light */
+    /* Inputs y tablas */
     input.form-control, select.form-select, textarea.form-control{
       background:#fff; color:#111827; border:1px solid var(--border); border-radius:12px;
+      font-size:16px; /* evita zoom iOS */
     }
     [data-theme="dark"] input.form-control,
     [data-theme="dark"] select.form-select,
@@ -298,19 +271,12 @@
     [data-theme="dark"] .chat-ia{ background:#0b1220; }
     .chat-ia.open{ right:0; }
     .chat-ia-overlay.open{ opacity:1; pointer-events:auto; }
-
-    .chat-ia__header{
-      display:flex; align-items:center; justify-content:space-between;
-      padding:12px 14px; border-bottom:1px solid var(--border);
-      background:linear-gradient(0deg, rgba(255,255,255,.96), rgba(255,255,255,.96));
-    }
-    [data-theme="dark"] .chat-ia__header{
-      background:linear-gradient(0deg, rgba(11,18,32,.96), rgba(11,18,32,.96));
-    }
+    .chat-ia__header{ display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--border);
+      background:linear-gradient(0deg, rgba(255,255,255,.96), rgba(255,255,255,.96)); }
+    [data-theme="dark"] .chat-ia__header{ background:linear-gradient(0deg, rgba(11,18,32,.96), rgba(11,18,32,.96)); }
     .chat-ia__title{ font-weight:700; display:flex; align-items:center; gap:8px; }
     .chat-ia__close{ border:1px solid var(--border); background:#fff; border-radius:10px; width:36px; height:36px; display:grid; place-items:center; }
     [data-theme="dark"] .chat-ia__close{ background:#0b1220; color:#e5e7eb; }
-
     .chat-ia__body{
       flex:1; overflow:auto; padding:14px; background:
       radial-gradient(700px 520px at 84% 12%, rgba(236,72,153,.10), transparent 60%),
@@ -328,33 +294,16 @@
     .msg.ai{ background:linear-gradient(180deg,#ffffff,#fbfdff); }
     .msg.me{ background:#eff4ff; border-color:#dfe6ff; }
     [data-theme="dark"] .msg{ background:#0f172a; }
-
     .msg.typing{ display:flex; align-items:center; gap:8px; }
-    .typing-dot{
-      display:inline-block; width:6px; height:6px; border-radius:50%;
-      background:#94a3b8; opacity:.6; animation: blink 1s infinite ease-in-out;
-    }
+    .typing-dot{ display:inline-block; width:6px; height:6px; border-radius:50%; background:#94a3b8; opacity:.6; animation: blink 1s infinite ease-in-out; }
     .typing-dot:nth-child(2){ animation-delay:.15s; }
     .typing-dot:nth-child(3){ animation-delay:.3s; }
-    @keyframes blink{
-      0%, 60%, 100%{ transform: translateY(0); opacity:.35; }
-      30%{ transform: translateY(-3px); opacity:.9; }
-    }
-
-    .chat-ia__composer{
-      padding:12px; border-top:1px solid var(--border); display:flex; gap:8px; background:#fff;
-    }
+    @keyframes blink{ 0%, 60%, 100%{ transform: translateY(0); opacity:.35; } 30%{ transform: translateY(-3px); opacity:.9; } }
+    .chat-ia__composer{ padding:12px; border-top:1px solid var(--border); display:flex; gap:8px; background:#fff; }
     [data-theme="dark"] .chat-ia__composer{ background:#0b1220; }
-    .chat-ia__composer textarea{
-      resize:none; height:46px; flex:1; border:1px solid var(--border); border-radius:12px; padding:10px 12px; background:#fff; color:#111827;
-    }
+    .chat-ia__composer textarea{ resize:none; height:46px; flex:1; border:1px solid var(--border); border-radius:12px; padding:10px 12px; background:#fff; color:#111827; font-size:16px; }
     [data-theme="dark"] .chat-ia__composer textarea{ background:#0b1220; color:#e5e7eb; }
-
-    .chat-ia__send{
-      border:none; border-radius:999px; padding:0 16px; min-width:120px;
-      background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); color:#fff;
-      box-shadow:0 12px 26px rgba(139,92,246,.22);
-    }
+    .chat-ia__send{ border:none; border-radius:999px; padding:0 16px; min-width:120px; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); color:#fff; box-shadow:0 12px 26px rgba(139,92,246,.22); }
 
     /* ===== FullCalendar (si se usa) ===== */
     .fc { --fc-border-color: var(--border); --fc-page-bg-color: transparent; }
@@ -379,6 +328,12 @@
     }
     .fc .fc-highlight{ background: rgba(139,92,246,.16); }
 
+    /* ✅ Impedir que FullCalendar o su contenedor fuercen overflow */
+    #calendar, .fc, .fc .fc-view-harness, .fc .fc-scroller{
+      min-width:0 !important;
+      max-width:100% !important;
+    }
+
     /* Ocultar FAB externo si existe */
     #chatOpenAiFab, .chat-openai-fab, [data-chat-fab]{ display:none !important; }
   </style>
@@ -401,7 +356,6 @@
     <div class="app">
       <!-- ===== Sidebar (drawer en mobile) ===== -->
       <aside class="sidebar" id="sidebar" aria-hidden="false" aria-label="Navegación lateral">
-        <!-- Botón cerrar (solo visible en mobile) -->
         <button class="close-drawer d-none d-lg-none" id="btnCloseDrawer" aria-label="Cerrar menú">
           <i class="bi bi-x-lg"></i>
         </button>
@@ -416,12 +370,10 @@
           <a class="side-btn" data-match="/incidencias"    href="/incidencias"    title="Incidencias"><i class="bi bi-bug"></i></a>
           <a class="side-btn" data-match="/calendario"     href="/calendario"     title="Calendario"><i class="bi bi-calendar-event"></i></a>
 
-          <!-- Historial: usa ruta alias; si ya estamos en Home, hacemos scroll sin recargar -->
           <a class="side-btn" id="btnHistorial" href="/historia" title="Historial">
             <i class="bi bi-clock-history"></i>
           </a>
 
-          {# ✅ SOLO ADMIN: Auditoría y Admin #}
           {% if request.session.get('rol', 'usuario') == 'admin' %}
             <a class="side-btn" data-match="/auditoria" href="/auditoria" title="Auditoría" data-admin-only>
               <i class="bi bi-clipboard-data"></i>
@@ -444,36 +396,30 @@
 
       <!-- ===== Header ===== -->
       <header class="header">
-        <!-- Botón hamburguesa (abre drawer en mobile/tablet) -->
         <button class="menu-btn" id="btnOpenDrawer" aria-label="Abrir menú" aria-controls="sidebar" aria-expanded="false">
           <i class="bi bi-list"></i>
         </button>
 
-        <!-- Brand -->
         <div class="brand">
           <img src="/static/logo-suizo.png" alt="Logo Suizo">
           <div class="brand-title">Licitaciones IA</div>
         </div>
 
         <div class="header-actions">
-          <!-- Selector de tema global -->
           <button class="icon-btn" id="btnTheme" title="Tema: Sistema">
             <i id="icoTheme" class="bi bi-circle-half"></i>
           </button>
 
-          <!-- Usuarios activos -->
           <button class="icon-btn" id="btnPresence" title="Usuarios activos">
             <i class="bi bi-people"></i>
             <span id="presenceBadge" class="icon-badge">0</span>
           </button>
 
-          <!-- Notificaciones -->
           <button class="icon-btn" id="btnNotif" title="Notificaciones">
             <i class="bi bi-bell"></i>
             <span id="notifBadge" class="icon-badge">0</span>
           </button>
 
-          <!-- Chat interno con badge de no leídos -->
           <a class="pill pill-icon" href="/chat" id="btnChat">
             <i class="bi bi-chat-dots"></i> Chat interno
             <span id="chatBadge" class="chat-badge">0</span>
@@ -481,7 +427,6 @@
 
           <button class="pill pill-grad pill-icon" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Chat OpenAI</button>
 
-          <!-- Usuario actual: nombre + avatar -->
           <div class="user-box">
             <div class="user-name" id="userName">—</div>
             <div class="user-avatar" id="avatarBtn" title="Cambiar foto de perfil">
@@ -531,7 +476,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    /* Fallback de rol en el cliente: elimina cualquier marca admin-only si el rol no es admin */
+    /* Fallback rol: oculta admin-only si no sos admin */
     (function(){
       try{
         var role = "{{ request.session.get('rol', 'usuario') }}";
@@ -541,7 +486,7 @@
       }catch(_){}
     })();
 
-    /* Usuario en header (nombre + avatar) */
+    /* Usuario (nombre + avatar) */
     function initialsFromName(n){
       n = (n||'').trim();
       if(!n) return '?';
@@ -550,27 +495,26 @@
       const b = (parts[1]||'').charAt(0);
       return (a + (b||'')).toUpperCase();
     }
-
     async function getUsuario(){
       try{
         const r=await fetch('/usuario-actual'); if(!r.ok) return;
         const d=await r.json();
         const name = d?.nombre || d?.usuario || 'Usuario';
-        const avatar = d?.avatar_url || '';
-        const nameEl = document.getElementById('userName');
-        const imgEl  = document.getElementById('avatarImg');
-        const iniEl  = document.getElementById('avatarInitials');
-
-        if(nameEl) nameEl.textContent = name;
-        if(avatar){
-          imgEl.src = avatar;
-          imgEl.style.display = 'block';
-          if(iniEl) iniEl.style.display = 'none';
-        }else{
-          if(imgEl){ imgEl.removeAttribute('src'); imgEl.style.display='none'; }
-          if(iniEl){ iniEl.textContent = initialsFromName(name); iniEl.style.display='block'; }
-        }
+        theAvatar(d?.avatar_url||'', name);
       }catch(_){}
+    }
+    function theAvatar(avatar, name){
+      const nameEl = document.getElementById('userName');
+      const imgEl  = document.getElementById('avatarImg');
+      const iniEl  = document.getElementById('avatarInitials');
+      if(nameEl) nameEl.textContent = name || 'Usuario';
+      if(avatar){
+        imgEl.src = avatar; imgEl.style.display = 'block';
+        if(iniEl) iniEl.style.display = 'none';
+      }else{
+        if(imgEl){ imgEl.removeAttribute('src'); imgEl.style.display='none'; }
+        if(iniEl){ iniEl.textContent = initialsFromName(name); iniEl.style.display='block'; }
+      }
     }
 
     /* Subida de avatar */
@@ -589,10 +533,7 @@
         if(!r.ok || !j.ok){ throw new Error(j?.error || 'No se pudo actualizar el avatar'); }
         showToast({title:'Perfil', body:'Avatar actualizado', icon:'person-check'});
         const url = j.avatar_url + '?t=' + Date.now();
-        const imgEl  = document.getElementById('avatarImg');
-        const iniEl  = document.getElementById('avatarInitials');
-        if(imgEl){ imgEl.src = url; imgEl.style.display='block'; }
-        if(iniEl){ iniEl.style.display='none'; }
+        theAvatar(url, document.getElementById('userName')?.textContent || 'Usuario');
       }catch(err){
         showToast({title:'Perfil', body:String(err?.message||'Error'), icon:'exclamation-triangle'});
       }finally{
@@ -604,11 +545,10 @@
     function logout(){ fetch('/logout',{method:'POST'}).then(()=> location.href='/login?logout=1'); }
     document.getElementById('btnSalir')?.addEventListener('click', (e)=>{ e.preventDefault(); logout(); });
 
-    /* Notificaciones (panel + badge) */
+    /* Notificaciones */
     const notifBtn = document.getElementById('btnNotif');
     const notifPanel = document.getElementById('notif-panel');
     const notifBadge = document.getElementById('notifBadge');
-
     async function refreshNotif(){
       try{
         const r = await fetch('/notificaciones');
@@ -626,7 +566,6 @@
         }
       }catch(_){}
     }
-
     notifBtn?.addEventListener('click', ()=>{
       if(!notifPanel) return;
       notifPanel.style.display = (notifPanel.style.display==='block'?'none':'block');
@@ -644,7 +583,7 @@
       }catch(_){}
     });
 
-    /* ====== Drawer Sidebar (mobile/tablet) ====== */
+    /* ===== Drawer Sidebar (mobile/tablet) ===== */
     const mqDesktop = window.matchMedia('(min-width: 992px)');
     const sidebar = document.getElementById('sidebar');
     const overlay = document.getElementById('sidebarOverlay');
@@ -652,20 +591,17 @@
     const btnClose = document.getElementById('btnCloseDrawer');
 
     function isDesktop(){ return mqDesktop.matches; }
-
     function openSidebarMobile(){
       if(isDesktop()) return;
       sidebar.classList.add('open');
       overlay.classList.add('open');
       sidebar.setAttribute('aria-hidden','false');
       btnOpen?.setAttribute('aria-expanded','true');
-      // focus first interactive (logo siguiente o nav)
       const first = sidebar.querySelector('a,button,[tabindex]:not([tabindex="-1"])');
       if(first) try{ first.focus(); }catch(_){}
     }
     function closeSidebarMobile(){
       if(isDesktop()){
-        // en desktop la sidebar es fija
         sidebar.classList.remove('open');
         overlay.classList.remove('open');
         sidebar.setAttribute('aria-hidden','false');
@@ -678,23 +614,18 @@
       btnOpen?.setAttribute('aria-expanded','false');
       btnOpen?.focus?.();
     }
-
     btnOpen?.addEventListener('click', openSidebarMobile);
     btnClose?.addEventListener('click', closeSidebarMobile);
     overlay?.addEventListener('click', closeSidebarMobile);
-    document.addEventListener('keydown', (e)=>{
-      if(e.key === 'Escape') closeSidebarMobile();
-    });
+    document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') closeSidebarMobile(); });
 
     function applySidebarMode(){
       if(isDesktop()){
-        // Modo fijo
         sidebar.classList.remove('open');
         overlay.classList.remove('open');
         sidebar.setAttribute('aria-hidden','false');
         btnOpen?.setAttribute('aria-expanded','false');
       }else{
-        // Modo drawer cerrado por defecto
         sidebar.setAttribute('aria-hidden','true');
       }
     }
@@ -726,7 +657,6 @@
       localStorage.removeItem(CHAT_STATE_KEY);
     }
     function openChatAndExpand(){ openChatIA(true); }
-
     window.openChatAndExpand = openChatAndExpand;
 
     chatIaOverlay?.addEventListener('click', closeChatIA);
@@ -789,7 +719,7 @@
       const el = document.createElement('div');
       el.className = 'msg ' + (who==='ai'?'ai':'me');
       el.innerHTML = (who==='ai' ? '<b>IA:</b> ' : '<b>Yo:</b> ') + escapeHTML(text);
-      chatIaBody.appendChild(el);
+      document.getElementById('chatIaBody').appendChild(el);
       scrollToBottom(true);
       return el;
     }
@@ -800,7 +730,7 @@
         '<span class="typing-dot"></span>' +
         '<span class="typing-dot"></span>' +
         '<span class="typing-dot"></span>';
-      chatIaBody.appendChild(el);
+      document.getElementById('chatIaBody').appendChild(el);
       scrollToBottom(true);
       return el;
     }
@@ -849,7 +779,7 @@
     getUsuario();
     refreshNotif();
 
-    /* ====== Tema global ====== */
+    /* ===== Tema global ===== */
     const btnTheme = document.getElementById('btnTheme');
     const icoTheme = document.getElementById('icoTheme');
     function getTheme(){ try{ return localStorage.getItem('theme'); }catch(_){ return null; } }
@@ -878,7 +808,7 @@
     }catch(_){}
     updateThemeBtn();
 
-    /* ====== PRESENCIA (usuarios activos) ====== */
+    /* ===== PRESENCIA ===== */
     const presenceBtn   = document.getElementById('btnPresence');
     const presenceBadge = document.getElementById('presenceBadge');
     const isAuthScreen  = document.body.getAttribute('data-auth') === '1';
@@ -886,7 +816,7 @@
     presenceBtn?.addEventListener('click', ()=>{ location.href = '/usuarios-activos'; });
 
     async function presencePing(){
-      if(isAuthScreen) return; // no pings en pantalla de login
+      if(isAuthScreen) return;
       try{ await fetch('/presence/ping', { method:'POST' }); }catch(_){}
     }
     async function refreshPresence(){
@@ -901,7 +831,6 @@
         presenceBtn.title = `Usuarios activos: ${n}`;
       }catch(_){}
     }
-
     if(!isAuthScreen){
       presencePing();
       refreshPresence();
@@ -909,7 +838,7 @@
       setInterval(refreshPresence, 15000);
     }
 
-    /* ====== NO LEÍDOS DEL CHAT (badge global) ====== */
+    /* ===== NO LEÍDOS CHAT ===== */
     const chatBadge = document.getElementById('chatBadge');
     async function refreshChatUnread(){
       try{
