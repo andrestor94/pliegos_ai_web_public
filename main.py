@@ -117,7 +117,7 @@ def ensure_chat_tables():
                 )
             """)
     except Exception as e:
-        print("⚠️ ensure_chat_tables() no pudo crear tablas:", repr(e))
+        print(⚠️ ensure_chat_tables() no pudo crear tablas:", repr(e))
     finally:
         try:
             conn.close()
@@ -1536,9 +1536,11 @@ async def legacy_admin_create_user(request: Request):
 @app.post("/admin/blanquear-password")
 async def legacy_admin_password(request: Request):
     data = await _json_or_form(request)
+    # Si no llega contraseña, usar DEFAULT_NEW_USER_PASSWORD
+    new_pwd = (data.get("password") or data.get("nueva") or data.get("new") or "").strip() or DEFAULT_NEW_USER_PASSWORD
     payload = AdminPasswordIn(
         email=(data.get("email") or "").strip(),
-        password=(data.get("password") or data.get("nueva") or data.get("new") or "").strip()
+        password=new_pwd
     )
     return await admin_users_password(request, payload)
 
@@ -1575,6 +1577,47 @@ async def legacy_admin_delete_post(request: Request):
     hard_raw = str(data.get("hard", "")).lower()
     hard = hard_raw in ("1", "true", "t", "yes", "on", "si", "sí")
     return await admin_users_delete(request, email=email, hard=hard)
+
+# 👇 NUEVOS endpoints legacy que tu admin.html ya usa (activar/desactivar/reset sesión)
+@app.post("/admin/desactivar-usuario", dependencies=[Depends(require_admin)])
+async def legacy_admin_disable_user(request: Request):
+    data = await _json_or_form(request)
+    email = (data.get("email") or "").strip().lower()
+    actor_user_id, ip = _actor_info(request)
+    try:
+        cambiar_estado_usuario(email, 0, actor_user_id=actor_user_id, ip=ip)
+        return {"ok": True}
+    except Exception as e:
+        print("❌ legacy_admin_disable_user:", repr(e))
+        return JSONResponse({"error": "No se pudo desactivar"}, status_code=500)
+
+@app.post("/admin/activar-usuario", dependencies=[Depends(require_admin)])
+async def legacy_admin_enable_user(request: Request):
+    data = await _json_or_form(request)
+    email = (data.get("email") or "").strip().lower()
+    actor_user_id, ip = _actor_info(request)
+    try:
+        cambiar_estado_usuario(email, 1, actor_user_id=actor_user_id, ip=ip)
+        return {"ok": True}
+    except Exception as e:
+        print("❌ legacy_admin_enable_user:", repr(e))
+        return JSONResponse({"error": "No se pudo activar"}, status_code=500)
+
+@app.post("/admin/reset-sesion", dependencies=[Depends(require_admin)])
+async def legacy_admin_reset_session(request: Request):
+    data = await _json_or_form(request)
+    email = (data.get("email") or "").strip().lower()
+    now = now_iso_utc()
+    try:
+        with cal_conn() as c:
+            c.execute(
+                "UPDATE sessions SET logout_at=?, closed_reason=? WHERE user=? AND logout_at IS NULL",
+                (now, "admin-reset", email)
+            )
+        return {"ok": True}
+    except Exception as e:
+        print("❌ legacy_admin_reset_session:", repr(e))
+        return JSONResponse({"error": "No se pudo reiniciar la sesión"}, status_code=500)
 
 # ======= FIN LEGACY =======
 
@@ -1650,7 +1693,7 @@ async def cal_update(evt_id: str, request: Request):
     if desc  is not None: sets.append("description=?"); vals.append(desc)
     if color is not None: sets.append("color=?"); vals.append(color)
     if start is not None: sets.append("start=?"); vals.append(start)
-    if end   is not None: sets.append("end=?");   vals.append(end)
+    if end   is not None: sets.append("end=?"); vals.append(end)
     if all_day is not None: sets.append("all_day=?"); vals.append(1 if all_day else 0)
     sets.append("updated_at=?"); vals.append(_now_iso())
     vals.append(evt_id)
@@ -1736,6 +1779,14 @@ async def notificaciones_vista(request: Request):
     if not request.session.get("usuario"):
         return RedirectResponse("/login")
     return templates.TemplateResponse("notificaciones.html", {"request": request})
+
+# 👉 Aliases/redirects para que la campana y “Ver todas” SIEMPRE abran la vista HTML
+@app.get("/notificaciones/panel")
+@app.get("/notificaciones/todas")
+@app.get("/notificaciones/")
+@app.get("/notifications")
+def notificaciones_redirect():
+    return RedirectResponse("/notificaciones/vista", status_code=307)
 
 @app.post("/notificaciones/marcar-leidas")
 async def mark_read(request: Request):
@@ -1865,7 +1916,7 @@ def _parse_iso(ts: Optional[str]):
     except Exception:
         return None
 
-def _to_dt(s: Optional[str]):
+def _to_dt(s: Optional:str):
     if not s:
         return None
     try:
