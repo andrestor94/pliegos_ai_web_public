@@ -2,7 +2,6 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8"/>
-  <!-- Viewport móvil correcto (incluye notch iOS) -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>{% block title %}Suizo Argentina – Licitaciones IA{% endblock %}</title>
 
@@ -136,7 +135,7 @@
     .pill-icon{ display:inline-flex; align-items:center; gap:.5rem; }
     .icon-btn{
       position:relative; width:44px; height:44px; display:grid; place-items:center;
-      border-radius:14px; border:1px solid var(--border); background:#fff; color:var(--ink); /* fix */
+      border-radius:14px; border:1px solid var(--border); background:#fff; color:var(--ink);
     }
     [data-theme="dark"] .icon-btn{ background:#0b1220; color:#e5e7eb; border-color:var(--border); }
     .icon-badge, .chat-badge{
@@ -300,6 +299,15 @@
     .rating-stars .star.active { color:#f59e0b; }
     .rating-stars .star:hover { transform: translateY(-1px) scale(1.05); }
     .rating-hint { font-size:12px; color:var(--muted); }
+
+    /* Banner “Valoración pendiente” */
+    .rating-banner{
+      position:fixed; left:16px; bottom:16px; z-index:1200;
+      background:#fff; color:var(--ink); border:1px solid var(--border);
+      border-radius:14px; box-shadow:var(--shadow); padding:10px 12px; display:none;
+    }
+    [data-theme="dark"] .rating-banner{ background:#0b1220; }
+    .rating-banner .btn{ padding:.35rem .75rem; border-radius:999px; }
   </style>
 
   {% block extra_head %}{% endblock %}
@@ -468,6 +476,16 @@
           </button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Banner Valoración pendiente -->
+  <div id="ratingBanner" class="rating-banner">
+    <div class="d-flex align-items-center gap-2">
+      <i class="bi bi-star-fill text-warning"></i>
+      <span class="small">Tenés una valoración pendiente.</span>
+      <button id="ratingBannerBtn" class="btn btn-sm btn-primary">Valorar ahora</button>
+      <button id="ratingBannerClose" class="btn btn-sm btn-outline-secondary">Cerrar</button>
     </div>
   </div>
 
@@ -857,6 +875,15 @@
        === RATING DE ANÁLISIS ===
        ========================= */
     (function ratingInit(){
+      const RATING_CFG = {
+        minAutoDelayMs: 90_000,           // ⏱️ auto-abrir recién tras 90s (ajustable)
+        pendingCheckIntervalMs: 45_000    // frecuencia para re-chequear pendientes
+      };
+      const LS_KEYS = {
+        last: 'lastAnalysisInfo',         // { ts, pdf, createdAt, viewed, downloaded }
+        done: 'ratingDone:'               // ratingDone:20250818153905 => "1"
+      };
+
       const modalEl = document.getElementById('ratingModal');
       if(!modalEl) return;
       const modal = new bootstrap.Modal(modalEl, { backdrop: 'static', keyboard: false });
@@ -867,9 +894,19 @@
       const submitBtn = document.getElementById('ratingSubmit');
       const spinner = document.getElementById('ratingSpinner');
       const sendIcon = document.getElementById('ratingSendIcon');
+      const banner = document.getElementById('ratingBanner');
+      const bannerBtn = document.getElementById('ratingBannerBtn');
+      const bannerClose = document.getElementById('ratingBannerClose');
 
       const state = { score: 0, timestamp: '', nombre_pdf: '' };
 
+      /* ---------- Utils almacenamiento ---------- */
+      function loadLast(){ try{ return JSON.parse(localStorage.getItem(LS_KEYS.last)||'{}')||{}; }catch(_){ return {}; } }
+      function saveLast(obj){ try{ localStorage.setItem(LS_KEYS.last, JSON.stringify(obj||{})); }catch(_){ } }
+      function setDone(ts){ try{ localStorage.setItem(LS_KEYS.done+ts, '1'); }catch(_){ } }
+      function isDone(ts){ try{ return localStorage.getItem(LS_KEYS.done+ts)==='1'; }catch(_){ return false; } }
+
+      /* ---------- Pintado de estrellas ---------- */
       function paintStars(n){
         starsWrap.querySelectorAll('.star').forEach(st=>{
           const v = Number(st.getAttribute('data-val'));
@@ -894,10 +931,10 @@
         setTimeout(()=> starsWrap.querySelector('.star')?.focus(), 150);
       }
 
-      // Exponer para uso manual
+      // Exponer para uso manual/depuración
       window.promptRatingFor = openFor;
 
-      // Accesibles: click o Enter/Espacio y flechas
+      // Accesible con teclado
       starsWrap.addEventListener('click', (e)=>{
         const st = e.target.closest('.star'); if(!st) return;
         state.score = Number(st.getAttribute('data-val'))||0;
@@ -936,8 +973,10 @@
           if(!res.ok || j?.error){
             throw new Error(j?.error || 'No se pudo registrar la valoración.');
           }
+          setDone(state.timestamp);
           modal.hide();
           showToast({title:'¡Gracias!', body:'Tu valoración fue registrada.', icon:'star-fill'});
+          hideBanner();
           refreshNotif();
         }catch(err){
           showToast({title:'Valoración', body:String(err?.message||'Error'), icon:'exclamation-triangle'});
@@ -949,67 +988,116 @@
       }
       submitBtn.addEventListener('click', sendRating);
 
-      /* === Disparadores del modal === */
+      /* ---------- Banner ---------- */
+      function showBanner(){ if(banner) banner.style.display='block'; }
+      function hideBanner(){ if(banner) banner.style.display='none'; }
+      bannerBtn?.addEventListener('click', ()=>{
+        const last = loadLast();
+        if(last?.ts && !isDone(last.ts)) openFor(last.ts, last.pdf||'');
+      });
+      bannerClose?.addEventListener('click', hideBanner);
 
-      // A) Cualquier link que apunte a un resumen YYYYMMDDHHMMSS.pdf (absoluto o relativo)
+      /* ---------- Lógica de disparo (NO inmediato) ---------- */
+      function scheduleAutoOpen(){
+        const last = loadLast();
+        if(!last?.ts || isDone(last.ts)) return;
+        const elapsed = Date.now() - (last.createdAt||0);
+        const wait = Math.max(RATING_CFG.minAutoDelayMs - elapsed, 0);
+        clearTimeout(scheduleAutoOpen._t);
+        scheduleAutoOpen._t = setTimeout(()=>{
+          // Si sigue pendiente y no se calificó, abrimos automáticamente
+          const again = loadLast();
+          if(again?.ts && !isDone(again.ts)){
+            openFor(again.ts, again.pdf||'');
+          }
+        }, wait);
+      }
+
+      function markViewed(ts){
+        const last = loadLast();
+        if(last?.ts === ts){ last.viewed = true; saveLast(last); }
+      }
+      function markDownloaded(ts){
+        const last = loadLast();
+        if(last?.ts === ts){ last.downloaded = true; saveLast(last); }
+      }
+
+      // A) Detectar CLICK a enlaces de resumen
       document.addEventListener('click', (e)=>{
         const a = e.target.closest('a[href]');
         if(!a) return;
-        const href = (a.getAttribute('href') || '').trim();
+        const href = (a.getAttribute('href')||'').trim();
         const m = href.match(/resumen_(\d{14})\.pdf$/i);
         if(!m) return;
         const ts = m[1];
-        const fname = href.split('/').pop();
-        setTimeout(()=> openFor(ts, fname), 600);
-      });
 
-      // B) Botón “Descargar último PDF” si lo marcás con data-descargar-ultimo
-      document.addEventListener('click', (e)=>{
-        const btn = e.target.closest('[data-descargar-ultimo]');
-        if(!btn) return;
-        const guess = document.querySelector('a[href*="resumen_"][href$=".pdf"]');
-        const href = guess ? (guess.getAttribute('href')||'') : '';
-        const m = href.match(/resumen_(\d{14})\.pdf$/i);
-        if(m){
-          const ts = m[1];
-          const fname = href.split('/').pop();
-          setTimeout(()=> openFor(ts, fname), 400);
+        // Si es descarga explícita (/descargar/...), marcamos descargado y abrimos
+        if(/\/descargar\//i.test(href)){
+          markDownloaded(ts);
+          // Esperamos un poco para no cortar el flujo del navegador
+          setTimeout(()=>{
+            const last = loadLast();
+            if(last?.ts === ts && !isDone(ts)) openFor(ts, last.pdf||href.split('/').pop());
+          }, 800);
+        }else{
+          // Visualización en el navegador
+          markViewed(ts);
         }
       });
 
-      // C) Si el backend dejó info en <body data-last-*>: DESACTIVADO para no abrir de inmediato
-      // [CAMBIO] No abrir modal automáticamente con data-last-*
-      /*
-      (function tryOpenFromBodyData(){
-        const b = document.body;
-        if(!b) return;
-        const fname = b.getAttribute('data-last-pdf') || '';
-        const ts    = b.getAttribute('data-last-ts')  || '';
-        if(fname || ts){
-          setTimeout(()=> openFor(ts, fname), 600);
-        }
-      })();
-      */
+      // B) Interceptor de fetch para /analizar-pliego => guardar info, NO abrir
+      const _origFetch = window.fetch;
+      window.fetch = async function(input, init){
+        const res = await _origFetch(input, init);
+        try{
+          const url = (typeof input === 'string') ? input : (input?.url || '');
+          if(/\/analizar-pliego\/?$/.test(url)){
+            const clone = res.clone();
+            const j = await clone.json().catch(()=> ({}));
+            if(res.status === 409 || res.headers.get('X-Require-Rating') === '1'){
+              const last = j?.last || j?.pending || {};
+              if(last?.timestamp){
+                saveLast({ ts: last.timestamp, pdf: last.nombre_pdf||'', createdAt: Date.now(), viewed:false, downloaded:false });
+                showBanner();
+                scheduleAutoOpen();
+                showToast({title:'Valoración requerida', body:'Podés revisar el análisis y valorarlo cuando quieras.', icon:'star'});
+              }
+            }else if(j && j.pdf && j.timestamp){
+              // Nuevo análisis generado: guardamos pero NO abrimos aún
+              saveLast({ ts: j.timestamp, pdf: j.pdf, createdAt: Date.now(), viewed:false, downloaded:false });
+              showBanner();
+              scheduleAutoOpen();
+              // Aviso amistoso
+              showToast({title:'Análisis listo', body:'Podés revisar/descargar y luego valorarlo.', icon:'check-circle'});
+            }
+          }
+        }catch(_){}
+        return res;
+      };
 
-      // D) Valoración pendiente: solo aviso, no abrir modal
-      // [CAMBIO] Antes abría el modal; ahora muestra toast informativo.
+      // C) Chequeo de pendientes al cargar (NO abrir de inmediato)
       async function checkPending(){
         try{
           const r = await fetch('/api/rating/pending', { headers:{'Accept':'application/json'} });
           if(!r.ok) return;
           const j = await r.json().catch(()=> ({}));
-          if(j?.pending){
-            showToast({
-              title:'Valoración pendiente',
-              body:'Podés valorarlo al descargar el PDF o antes de iniciar un nuevo análisis.',
-              icon:'star'
-            });
+          if(j?.pending || j?.last){
+            const last = j.last || j.pending;
+            if(last?.timestamp && !isDone(last.timestamp)){
+              // Guardamos referencia y mostramos banner
+              saveLast({ ts: last.timestamp, pdf: last.nombre_pdf||'', createdAt: Date.now(), viewed:false, downloaded:false });
+              showBanner();
+              scheduleAutoOpen();
+            }
+          }else{
+            hideBanner();
           }
         }catch(_){}
       }
       checkPending();
+      setInterval(checkPending, RATING_CFG.pendingCheckIntervalMs);
 
-      // E) Bloquear POST a /analizar-pliego si hay pendiente
+      // D) Bloquear POST a /analizar-pliego si hay pendiente sin valorar
       document.addEventListener('submit', async (e)=>{
         const form = e.target;
         try{
@@ -1021,50 +1109,35 @@
             if(j?.pending){
               e.preventDefault();
               const last = j.last || j.pending;
-              openFor(last?.timestamp || '', last?.nombre_pdf || '');
-              showToast({title:'Valoración requerida', body:'Debés valorar el análisis anterior para continuar.', icon:'exclamation-circle'});
+              saveLast({ ts: last?.timestamp||'', pdf: last?.nombre_pdf||'', createdAt: Date.now(), viewed:false, downloaded:false });
+              showBanner();
+              scheduleAutoOpen();
+              showToast({title:'Valoración requerida', body:'Calificá el análisis anterior para continuar.', icon:'exclamation-circle'});
             }
           }
         }catch(_){}
       });
 
-      // F) Interceptor global de fetch para respuestas de /analizar-pliego
-      // [CAMBIO] Quitamos la rama que abría el modal tras éxito (solo abrimos si el backend exige valorar).
-      const _origFetch = window.fetch;
-      window.fetch = async function(input, init){
-        const res = await _origFetch(input, init);
-        try{
-          const url = (typeof input === 'string') ? input : (input?.url || '');
-          if(/\/analizar-pliego\/?$/.test(url)){
-            if(res.status === 409 || res.headers.get('X-Require-Rating') === '1'){
-              const clone = res.clone();
-              const j = await clone.json().catch(()=> ({}));
-              const last = j?.last || j?.pending || {};
-              openFor(last.timestamp || '', last.nombre_pdf || '');
-              showToast({title:'Valoración requerida', body:'Calificá el análisis anterior para continuar.', icon:'star'});
-            }
-          }
-        }catch(_){}
-        return res;
-      };
+      // E) Si el backend dejó info en <body data-last-*>: solo guardar, NO abrir
+      (function syncFromBodyData(){
+        const b = document.body; if(!b) return;
+        const fname = b.getAttribute('data-last-pdf') || '';
+        const ts    = b.getAttribute('data-last-ts')  || '';
+        if(ts){
+          saveLast({ ts, pdf: fname||'', createdAt: Date.now(), viewed:false, downloaded:false });
+          showBanner();
+          scheduleAutoOpen();
+        }
+      })();
 
-      // G) Utilidad para probar desde consola
+      // Utilidad para probar desde consola
       window.__rateLast = async function(){
-        try{
-          const j = await (await fetch('/api/rating/pending')).json();
-          if(j?.last){
-            openFor(j.last.timestamp || '', j.last.nombre_pdf || '');
-          }else{
-            const a = document.querySelector('a[href*="resumen_"][href$=".pdf"]');
-            if(a){
-              const href = a.getAttribute('href')||'';
-              const m = href.match(/resumen_(\d{14})\.pdf$/i);
-              openFor(m?m[1]:'', href.split('/').pop());
-            }else{
-              showToast({title:'Prueba', body:'No encontré un enlace a resumen_*.pdf en esta vista.', icon:'info-circle'});
-            }
-          }
-        }catch(_){}
+        const last = loadLast();
+        if(last?.ts && !isDone(last.ts)){
+          openFor(last.ts, last.pdf||'');
+        }else{
+          showToast({title:'Prueba', body:'No hay análisis pendiente para valorar.', icon:'info-circle'});
+        }
       };
     })();
 
