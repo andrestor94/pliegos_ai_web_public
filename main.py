@@ -131,6 +131,43 @@ ensure_chat_tables()
 # Inicializa ORM (audit_logs)
 inicializar_bd_orm()
 
+# ---------- Bootstrap de admin si DB está vacía ----------
+def ensure_default_admin():
+    """
+    Si no hay usuarios en la DB, crea un admin inicial.
+    Variables de entorno:
+      - DEFAULT_ADMIN_EMAIL
+      - DEFAULT_ADMIN_NAME
+      - DEFAULT_ADMIN_PASSWORD  (fallback a DEFAULT_NEW_USER_PASSWORD o '1234')
+    """
+    try:
+        usuarios = listar_usuarios()
+    except Exception:
+        usuarios = []
+    if usuarios:
+        return
+
+    default_email = (os.getenv("DEFAULT_ADMIN_EMAIL", "admin@suizo.com") or "").lower()
+    default_name  = os.getenv("DEFAULT_ADMIN_NAME", "Admin")
+    default_pwd   = os.getenv("DEFAULT_ADMIN_PASSWORD", os.getenv("DEFAULT_NEW_USER_PASSWORD", "1234"))
+
+    try:
+        if not obtener_usuario_por_email(default_email):
+            agregar_usuario(
+                nombre=default_name,
+                email=default_email,
+                password=default_pwd,
+                rol="admin",
+                actor_user_id=None,
+                ip=None
+            )
+            print(f"✅ Admin inicial creado: {default_email}")
+    except Exception as e:
+        print("⚠️ ensure_default_admin() error:", repr(e))
+
+ensure_default_admin()
+# ---------- fin bootstrap ----------
+
 # Static
 os.makedirs("static", exist_ok=True)
 os.makedirs("generated_pdfs", exist_ok=True)
@@ -1470,7 +1507,7 @@ async def legacy_admin_password(request: Request):
 async def legacy_admin_toggle(request: Request):
     data = await _json_or_form(request)
     activo_raw = str(data.get("activo", "")).lower()
-    activo = activo_raw in ("1", "true", "t", "yes", "on")
+    activo = activo_raw in ("1", "true", "t", "yes", "on", "si", "sí")
     payload = AdminToggleIn(
         email=(data.get("email") or "").strip(),
         activo=activo
@@ -1497,7 +1534,7 @@ async def legacy_admin_delete_post(request: Request):
     data = await _json_or_form(request)
     email = (data.get("email") or "").strip()
     hard_raw = str(data.get("hard", "")).lower()
-    hard = hard_raw in ("1", "true", "t", "yes", "on")
+    hard = hard_raw in ("1", "true", "t", "yes", "on", "si", "sí")
     return await admin_users_delete(request, email=email, hard=hard)
 
 # ======= FIN LEGACY =======
@@ -1606,7 +1643,7 @@ def _wants_html(req: Request) -> bool:
     acc = (req.headers.get("accept") or "").lower()
     return "text/html" in acc and "application/json" not in acc
 
-# <<< FIX AQUÍ: sin response_class para poder devolver JSON o HTML según Accept >>>
+# <<< FIX: sin response_class -> devuelve JSON o HTML según Accept >>>
 @app.get("/notificaciones")
 async def notificaciones(request: Request,
                          q: Optional[str] = Query(default=None),
