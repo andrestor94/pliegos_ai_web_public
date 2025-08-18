@@ -198,10 +198,9 @@
       .brand img{ height:28px; }
       .pill, .icon-btn{ padding:.5rem .75rem; }
     }
-    /* Drawer un poco más angosto en teléfonos chicos */
+    /* Drawer un poco más angosto en teléfonos chicos + header-actions scrollable */
     @media (max-width:575.98px){
       .sidebar{ width:78vw; }
-      /* Header actions: una fila desplazable (no se rompen) */
       .header{ align-items:flex-start; gap:8px; padding:10px 12px; }
       .brand{ flex:0 0 auto; }
       .header-actions{
@@ -214,7 +213,7 @@
       .header-actions > *{ flex:0 0 auto; }
     }
 
-    /* Inputs / tablas / toasts… (igual que antes) */
+    /* Inputs / tablas / toasts */
     input.form-control, select.form-select, textarea.form-control{
       background:#fff; color:#111827; border:1px solid var(--border); border-radius:12px;
     }
@@ -241,7 +240,7 @@
       body[data-auth="1"] .content{ background: linear-gradient(180deg,#0b1020 0%, #0b1328 100%); }
     }
 
-    /* Chat IA (igual que tenías) */
+    /* Chat IA */
     .chat-ia-overlay{ position:fixed; inset:0; background:rgba(15,18,34,.28); backdrop-filter: blur(2px); opacity:0; pointer-events:none; transition:opacity .2s ease; z-index:1200; }
     .chat-ia{ position:fixed; top:0; right:-480px; height:100%; width:480px; max-width:100%; background:#fff; border-left:1px solid var(--border); box-shadow: var(--shadow); display:flex; flex-direction:column; transition:right .28s ease; z-index:1201; }
     [data-theme="dark"] .chat-ia{ background:#0b1220; }
@@ -349,6 +348,7 @@
 
           <button class="pill pill-grad pill-icon" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Chat OpenAI</button>
 
+          <!-- Usuario -->
           <div class="user-box">
             <div class="user-name" id="userName">—</div>
             <div class="user-avatar" id="avatarBtn" title="Cambiar foto de perfil">
@@ -517,7 +517,7 @@
       btnOpen?.setAttribute('aria-expanded','true');
       const first = sidebar.querySelector('a,button,[tabindex]:not([tabindex="-1"])');
       if(first) try{ first.focus(); }catch(_){}
-      /* ⚠️ fuerza recálculo del calendario tras la animación */
+      /* recálculo del calendario tras la animación */
       setTimeout(()=> window.dispatchEvent(new Event('resize')), 280);
     }
     function closeSidebarMobile(){
@@ -555,7 +555,7 @@
     mqDesktop.addEventListener?.('change', applySidebarMode);
     applySidebarMode();
 
-    /* Chat IA drawer (igual que antes) */
+    /* ===== Chat IA (drawer) ===== */
     const CHAT_STATE_KEY = 'chatboxState';
     const chatIa = document.getElementById('chatIa');
     const chatIaOverlay = document.getElementById('chatIaOverlay');
@@ -593,27 +593,39 @@
       catch(_){ chatIaBody.scrollTop = chatIaBody.scrollHeight; }
     }
 
-    /* Chat IA envío */
+    // Enter = enviar | Shift+Enter = salto de línea
     chatIaInput?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
         e.preventDefault(); chatIaForm?.requestSubmit();
       }
     });
+
     chatIaForm?.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const text = (chatIaInput?.value || '').trim();
       if(!text) return;
+
       appendMsg('me', text);
       chatIaInput.value = '';
+
       const thinkingNode = addTyping();
+
       try{
-        const r = await fetch('/api/chat-openai',{method:'POST',headers:{'Content-Type':'application/json'},body: JSON.stringify({ message: text })});
+        const r = await fetch('/api/chat-openai', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ message: text })
+        });
+
         let data = null, bodyText = '';
         try { data = await r.json(); } catch { bodyText = await r.text(); }
         const reply = pickReply(data, bodyText) || 'No recibí respuesta del servidor.';
         replaceMsg(thinkingNode, 'ai', reply);
-      }catch(err){ replaceMsg(thinkingNode, 'ai', 'Hubo un error al contactar la IA.'); }
+      }catch(err){
+        replaceMsg(thinkingNode, 'ai', 'Hubo un error al contactar la IA.');
+      }
     });
+
     function pickReply(json, fallbackText){
       if(json){
         if(typeof json.reply === 'string') return json.reply;
@@ -630,13 +642,20 @@
       const el = document.createElement('div');
       el.className = 'msg ' + (who==='ai'?'ai':'me');
       el.innerHTML = (who==='ai' ? '<b>IA:</b> ' : '<b>Yo:</b> ') + escapeHTML(text);
-      chatIaBody.appendChild(el); scrollToBottom(true); return el;
+      chatIaBody.appendChild(el);
+      scrollToBottom(true);
+      return el;
     }
     function addTyping(){
       const el = document.createElement('div');
       el.className = 'msg ai typing';
-      el.innerHTML = '<b>IA:</b> <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
-      chatIaBody.appendChild(el); scrollToBottom(true); return el;
+      el.innerHTML = '<b>IA:</b> ' +
+        '<span class="typing-dot"></span>' +
+        '<span class="typing-dot"></span>' +
+        '<span class="typing-dot"></span>';
+      chatIaBody.appendChild(el);
+      scrollToBottom(true);
+      return el;
     }
     function replaceMsg(node, who, text){
       if(!node) return appendMsg(who, text);
@@ -656,7 +675,7 @@
       });
     })();
 
-    /* Historial en home (scroll suave) */
+    /* Historial en home */
     document.getElementById('btnHistorial')?.addEventListener('click', (e)=>{
       if(location.pathname === '/'){
         e.preventDefault();
@@ -746,6 +765,10 @@
     // Kill-switch FAB externo
     document.querySelectorAll('#chatOpenAiFab, .chat-openai-fab, [data-chat-fab]')
       .forEach(el => { try{ el.remove(); }catch(_){ el.style.display='none'; } });
+
+    /* ✅ Cargar datos iniciales */
+    getUsuario();
+    refreshNotif();
   </script>
 
   {% block extra_scripts %}{% endblock %}
