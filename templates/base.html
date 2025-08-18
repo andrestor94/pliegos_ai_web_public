@@ -305,7 +305,9 @@
   {% block extra_head %}{% endblock %}
 </head>
 <body data-auth="{{ '1' if request and request.url.path.startswith('/login') else '' }}"
-      data-route="{{ request.url.path if request else '' }}">
+      data-route="{{ request.url.path if request else '' }}"
+      data-last-pdf="{{ pdf_nombre or '' }}"
+      data-last-ts="{{ timestamp or '' }}">
 
   <script>
     (function(){
@@ -719,6 +721,7 @@
       const el = document.createElement('div');
       el.className = 'msg ' + (who==='ai'?'ai':'me');
       el.innerHTML = (who==='ai' ? '<b>IA:</b> ' : '<b>Yo:</b> ') + escapeHTML(text);
+      const chatIaBody = document.getElementById('chatIaBody');
       chatIaBody.appendChild(el);
       scrollToBottom(true);
       return el;
@@ -730,6 +733,7 @@
         '<span class="typing-dot"></span>' +
         '<span class="typing-dot"></span>' +
         '<span class="typing-dot"></span>';
+      const chatIaBody = document.getElementById('chatIaBody');
       chatIaBody.appendChild(el);
       scrollToBottom(true);
       return el;
@@ -760,7 +764,7 @@
 
     function showToast({title='Aviso', body='', icon='info', delay=3200}={}){
       const cont=document.getElementById('toastContainer'); if(!cont) return;
-      const esc=(s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+      const esc=(s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); 
       const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
       el.innerHTML=`<div class="toast-header">
         <i class="bi bi-${esc(icon)} me-1"></i><strong class="me-auto">${esc(title)}</strong>
@@ -890,7 +894,7 @@
         setTimeout(()=> starsWrap.querySelector('.star')?.focus(), 150);
       }
 
-      // Exponer para uso manual si lo necesitás desde otras vistas
+      // Exponer para uso manual
       window.promptRatingFor = openFor;
 
       // Accesibles: click o Enter/Espacio y flechas
@@ -945,18 +949,46 @@
       }
       submitBtn.addEventListener('click', sendRating);
 
-      // 1) Abrir luego de descargar un PDF (detecta /descargar/resumen_*.pdf)
+      /* === Disparadores del modal === */
+
+      // A) Cualquier link que apunte a un resumen YYYYMMDDHHMMSS.pdf (absoluto o relativo)
       document.addEventListener('click', (e)=>{
-        const a = e.target.closest('a[href^="/descargar/"]');
+        const a = e.target.closest('a[href]');
         if(!a) return;
-        const href = a.getAttribute('href') || '';
-        const fname = href.split('/').pop() || '';
-        const m = fname.match(/resumen_(\d{14})\.pdf$/i);
-        const ts = m ? m[1] : '';
-        setTimeout(()=> openFor(ts, fname), 750); // pequeño delay para no interferir con la descarga
+        const href = (a.getAttribute('href') || '').trim();
+        const m = href.match(/resumen_(\d{14})\.pdf$/i);
+        if(!m) return;
+        const ts = m[1];
+        const fname = href.split('/').pop();
+        setTimeout(()=> openFor(ts, fname), 600);
       });
 
-      // 2) Si hay valoración pendiente, abrir automáticamente
+      // B) Botón “Descargar último PDF” si lo marcás con data-descargar-ultimo
+      document.addEventListener('click', (e)=>{
+        const btn = e.target.closest('[data-descargar-ultimo]');
+        if(!btn) return;
+        const guess = document.querySelector('a[href*="resumen_"][href$=".pdf"]');
+        const href = guess ? (guess.getAttribute('href')||'') : '';
+        const m = href.match(/resumen_(\d{14})\.pdf$/i);
+        if(m){
+          const ts = m[1];
+          const fname = href.split('/').pop();
+          setTimeout(()=> openFor(ts, fname), 400);
+        }
+      });
+
+      // C) Si el backend dejó info en <body data-last-*>
+      (function tryOpenFromBodyData(){
+        const b = document.body;
+        if(!b) return;
+        const fname = b.getAttribute('data-last-pdf') || '';
+        const ts    = b.getAttribute('data-last-ts')  || '';
+        if(fname || ts){
+          setTimeout(()=> openFor(ts, fname), 600);
+        }
+      })();
+
+      // D) Si hay valoración pendiente, abrir automáticamente
       async function checkPending(){
         try{
           const r = await fetch('/api/rating/pending', { headers:{'Accept':'application/json'} });
@@ -971,7 +1003,7 @@
       }
       checkPending();
 
-      // 3) Bloquear formularios que envían a /analizar-pliego si hay pendiente
+      // E) Bloquear POST a /analizar-pliego si hay pendiente
       document.addEventListener('submit', async (e)=>{
         const form = e.target;
         try{
@@ -990,13 +1022,13 @@
         }catch(_){}
       });
 
-      // 4) Interceptor global de fetch para capturar respuestas de /analizar-pliego
+      // F) Interceptor global de fetch para respuestas de /analizar-pliego
       const _origFetch = window.fetch;
       window.fetch = async function(input, init){
         const res = await _origFetch(input, init);
         try{
           const url = (typeof input === 'string') ? input : (input?.url || '');
-          if(/\/analizar-pliego$/.test(url)){
+          if(/\/analizar-pliego\/?$/.test(url)){
             if(res.status === 409 || res.headers.get('X-Require-Rating') === '1'){
               const clone = res.clone();
               const j = await clone.json().catch(()=> ({}));
@@ -1004,17 +1036,35 @@
               openFor(last.timestamp || '', last.nombre_pdf || '');
               showToast({title:'Valoración requerida', body:'Calificá el análisis anterior para continuar.', icon:'star'});
             }else{
-              // Si el backend devuelve info del PDF generado, abrimos el modal en éxito
+              // Si el backend devuelve info del PDF generado, abrir modal también
               const clone = res.clone();
               const j = await clone.json().catch(()=> ({}));
               if(j && j.pdf && j.timestamp){
-                // Éxito normal: mostrar rating también (opcional)
                 setTimeout(()=> openFor(j.timestamp, j.pdf), 600);
               }
             }
           }
         }catch(_){}
         return res;
+      };
+
+      // G) Utilidad para probar desde consola
+      window.__rateLast = async function(){
+        try{
+          const j = await (await fetch('/api/rating/pending')).json();
+          if(j?.last){
+            openFor(j.last.timestamp || '', j.last.nombre_pdf || '');
+          }else{
+            const a = document.querySelector('a[href*="resumen_"][href$=".pdf"]');
+            if(a){
+              const href = a.getAttribute('href')||'';
+              const m = href.match(/resumen_(\d{14})\.pdf$/i);
+              openFor(m?m[1]:'', href.split('/').pop());
+            }else{
+              showToast({title:'Prueba', body:'No encontré un enlace a resumen_*.pdf en esta vista.', icon:'info-circle'});
+            }
+          }
+        }catch(_){}
       };
     })();
 
