@@ -427,7 +427,8 @@
       <button class="btn btn-sm btn-outline-secondary" id="btnMarkRead">Marcar leídas</button>
     </div>
     <div id="notif-list" class="small muted">Sin notificaciones</div>
-    <div class="text-end mt-2"><a href="/notificaciones" class="small">Ver todas</a></div>
+    <!-- 👇 ahora va a la página UI, no al endpoint JSON -->
+    <div class="text-end mt-2"><a href="/notificaciones/ui" class="small">Ver todas</a></div>
   </div>
 
   <!-- Toasts -->
@@ -573,7 +574,7 @@
         const n = Number(j?.total_unread||0);
         if(notifBadge){
           notifBadge.textContent = n>99 ? '99+' : String(n);
-          notifBadge.style.display = n>0 ? 'inline-block' : 'none';
+        notifBadge.style.display = n>0 ? 'inline-block' : 'none';
         }
         const list = document.getElementById('notif-list');
         if(Array.isArray(j.items) && list){
@@ -1005,7 +1006,6 @@
         const wait = Math.max(RATING_CFG.minAutoDelayMs - elapsed, 0);
         clearTimeout(scheduleAutoOpen._t);
         scheduleAutoOpen._t = setTimeout(()=>{
-          // Si sigue pendiente y no se calificó, abrimos automáticamente
           const again = loadLast();
           if(again?.ts && !isDone(again.ts)){
             openFor(again.ts, again.pdf||'');
@@ -1031,16 +1031,13 @@
         if(!m) return;
         const ts = m[1];
 
-        // Si es descarga explícita (/descargar/...), marcamos descargado y abrimos
         if(/\/descargar\//i.test(href)){
           markDownloaded(ts);
-          // Esperamos un poco para no cortar el flujo del navegador
           setTimeout(()=>{
             const last = loadLast();
             if(last?.ts === ts && !isDone(ts)) openFor(ts, last.pdf||href.split('/').pop());
           }, 800);
         }else{
-          // Visualización en el navegador
           markViewed(ts);
         }
       });
@@ -1063,11 +1060,9 @@
                 showToast({title:'Valoración requerida', body:'Podés revisar el análisis y valorarlo cuando quieras.', icon:'star'});
               }
             }else if(j && j.pdf && j.timestamp){
-              // Nuevo análisis generado: guardamos pero NO abrimos aún
               saveLast({ ts: j.timestamp, pdf: j.pdf, createdAt: Date.now(), viewed:false, downloaded:false });
               showBanner();
               scheduleAutoOpen();
-              // Aviso amistoso
               showToast({title:'Análisis listo', body:'Podés revisar/descargar y luego valorarlo.', icon:'check-circle'});
             }
           }
@@ -1084,7 +1079,6 @@
           if(j?.pending || j?.last){
             const last = j.last || j.pending;
             if(last?.timestamp && !isDone(last.timestamp)){
-              // Guardamos referencia y mostramos banner
               saveLast({ ts: last.timestamp, pdf: last.nombre_pdf||'', createdAt: Date.now(), viewed:false, downloaded:false });
               showBanner();
               scheduleAutoOpen();
