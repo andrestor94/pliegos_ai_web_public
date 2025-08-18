@@ -1528,7 +1528,8 @@ def _wants_html(req: Request) -> bool:
     acc = (req.headers.get("accept") or "").lower()
     return "text/html" in acc and "application/json" not in acc
 
-@app.get("/notificaciones", response_class=HTMLResponse)
+# <<< FIX AQUÍ: sin response_class para poder devolver JSON o HTML según Accept >>>
+@app.get("/notificaciones")
 async def notificaciones(request: Request,
                          q: Optional[str] = Query(default=None),
                          only_unread: Optional[bool] = Query(default=None),
@@ -1831,5 +1832,5 @@ async def auditoria_actividad_csv(
     return Response(
         content=csv_body,
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        headers={"Content-Disposition": f'attachment; filename=\"{filename}\"'}
     )
