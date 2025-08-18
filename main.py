@@ -117,7 +117,7 @@ def ensure_chat_tables():
                 )
             """)
     except Exception as e:
-        print(⚠️ ensure_chat_tables() no pudo crear tablas:", repr(e))
+        print("⚠️ ensure_chat_tables() no pudo crear tablas:", repr(e))
     finally:
         try:
             conn.close()
@@ -167,26 +167,6 @@ def ensure_default_admin():
 
 ensure_default_admin()
 # ---------- fin bootstrap ----------
-
-# --- DEBUG rápido de la DB activa ---
-@app.get("/__debug/db")
-async def __debug_db():
-    import os as _os, sqlite3 as _sq
-    info = {"DB_PATH": DB_PATH, "abs": _os.path.abspath(DB_PATH), "size_bytes": None, "tables": []}
-    try:
-        if _os.path.exists(DB_PATH):
-            info["size_bytes"] = _os.path.getsize(DB_PATH)
-        con = _sq.connect(DB_PATH)
-        cur = con.cursor()
-        info["tables"] = [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
-        try:
-            c = cur.execute("SELECT COUNT(*) FROM usuarios").fetchone()
-            info["usuarios_count"] = c[0]
-        except Exception as e:
-            info["usuarios_count_error"] = str(e)
-    except Exception as e:
-        info["error"] = repr(e)
-    return info
 
 # Static
 os.makedirs("static", exist_ok=True)
@@ -1435,15 +1415,13 @@ async def admin_users_list(request: Request, q: str = "", limit: int = 500):
         raw = listar_usuarios() or []
     except Exception as e:
         print("❌ admin_users_list/listar_usuarios:", repr(e))
-        return {"items": [], "usuarios": []}
+        return {"items": []}
 
     items = [_user_row_to_dict(u) for u in raw]
     q = (q or "").strip().lower()
     if q:
         items = [u for u in items if q in (u["email"] + " " + (u["nombre"] or "").lower())]
-    items = items[:limit]
-    # Compatibilidad: devolvemos ambas claves
-    return {"items": items, "usuarios": items}
+    return {"items": items[:limit]}
 
 # alias de compatibilidad
 @app.get("/api/usuarios/list")
@@ -1466,12 +1444,7 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
             actor_user_id=actor_user_id,
             ip=ip
         )
-        # Aseguramos activo=1 (por si algún entorno no toma el default)
-        try:
-            cambiar_estado_usuario(email, 1, actor_user_id=actor_user_id, ip=ip)
-        except Exception as e:
-            print("ℹ️ No pude activar automáticamente (continuamos):", repr(e))
-        return {"ok": True, "email": email}
+        return {"ok": True}
     except Exception as e:
         print("❌ admin_users_create:", repr(e))
         return JSONResponse({"error": "No se pudo crear el usuario"}, status_code=500)
@@ -1545,10 +1518,8 @@ async def _json_or_form(request: Request) -> dict:
 
 @app.get("/admin/usuarios")
 async def legacy_admin_users(request: Request, q: str = "", limit: int = 500):
-    # Devuelve ambas claves por compatibilidad con distintos admin.html
-    data = await admin_users_list(request, q=q, limit=limit)
-    # admin_users_list ya trae {"items":..., "usuarios":...}
-    return data
+    # Alias de /api/admin/users
+    return await admin_users_list(request, q=q, limit=limit)
 
 @app.post("/admin/crear-usuario")
 async def legacy_admin_create_user(request: Request):
@@ -2015,5 +1986,5 @@ async def auditoria_actividad_csv(
     return Response(
         content=csv_body,
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename=\"{filename}\"'}
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
