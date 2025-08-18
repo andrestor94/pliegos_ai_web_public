@@ -943,4 +943,66 @@ def ocultar_hilo(owner_email: str, otro_email: str, actor_user_id=None, ip=None)
     with _get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO hilos_ocultos (owner_email
+            INSERT INTO hilos_ocultos (owner_email, otro_email, hidden_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(owner_email, otro_email)
+            DO UPDATE SET hidden_at=excluded.hidden_at
+            """,
+            (owner_email, otro_email, hidden_at),
+        )
+    registrar_auditoria(
+        actor_user_id, "HIDE_THREAD", "hilos_ocultos", f"{owner_email}|{otro_email}",
+        after={"owner": owner_email, "otro": otro_email, "hidden_at": hidden_at}, ip=ip
+    )
+
+def restaurar_hilo(owner_email: str, otro_email: str, actor_user_id=None, ip=None, silent: bool=False):
+    """Quita el ocultamiento del hilo para 'owner_email' (vuelve a verse en el sidebar)."""
+    with _get_conn() as conn:
+        conn.execute("DELETE FROM hilos_ocultos WHERE owner_email = ? AND otro_email = ?", (owner_email, otro_email))
+    if not silent:
+        registrar_auditoria(
+            actor_user_id, "UNHIDE_THREAD", "hilos_ocultos", f"{owner_email}|{otro_email}",
+            before={"owner": owner_email, "otro": otro_email}, ip=ip
+        )
+
+def es_hilo_oculto(owner_email: str, otro_email: str):
+    """Devuelve la fecha de ocultamiento (str) si está oculto, o None si no lo está."""
+    with _get_conn() as conn:
+        cur = conn.execute(
+            "SELECT hidden_at FROM hilos_ocultos WHERE owner_email = ? AND otro_email = ?",
+            (owner_email, otro_email),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+# =============================================================================
+# Consultar Auditoría (últimas N acciones)
+# =============================================================================
+
+def obtener_auditoria(limit=50):
+    """
+    Devuelve las últimas acciones de audit_logs, con email/nombre si existe el usuario.
+    Las fechas se muestran en zona local (APP_TIMEZONE) y las acciones en español.
+    """
+    with SessionLocal() as session:
+        logs = (
+            session.query(AuditLog, Usuario)
+            .join(Usuario, Usuario.id == AuditLog.actor_user_id, isouter=True)
+            .order_by(AuditLog.id.desc())
+            .limit(limit)
+            .all()
+        )
+        resultado = []
+        for log, user in logs:
+            resultado.append({
+                "fecha": _fmt_fecha(log.at),  # hora local legible
+                "usuario": user.email if user else (f"ID {log.actor_user_id}" if log.actor_user_id else "-"),
+                "nombre": user.nombre if user else None,
+                "accion": _accion_es(log.action),  # español
+                "entidad": log.entity,
+                "entidad_id": log.entity_id,
+                "before": log.before_json,
+                "after": log.after_json,
+                "ip": log.ip
+            })
+        return resultado
