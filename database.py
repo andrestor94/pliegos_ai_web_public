@@ -105,7 +105,7 @@ def inicializar_bd():
     _migrar_historial_add_rating_fields()           # 👈 agrega columnas de rating si faltan
     _crear_indices_historial_rating()
 
-    crear_tabla_tickets()
+    # crear_tabla_tickets()  # TODO
     crear_tabla_mensajes()       # 👈 chat interno
     crear_tabla_hilos_ocultos()  # 👈 gestión de hilos ocultos
     crear_tabla_adjuntos()       # 👈 adjuntos de mensajes
