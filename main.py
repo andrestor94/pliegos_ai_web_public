@@ -13,6 +13,7 @@ from fastapi.concurrency import run_in_threadpool
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from sqlalchemy import or_
+from pydantic import BaseModel
 
 from utils import (
     extraer_texto_de_pdf,
@@ -36,7 +37,9 @@ from database import (
     marcar_mensajes_leidos, contar_no_leidos,
     ocultar_hilo, restaurar_hilo,
     guardar_adjunto,
-    es_admin
+    es_admin,
+    # 👇 NUEVO: rating obligatorio
+    iniciar_analisis_historial, marcar_valoracion_historial, tiene_valoracion_pendiente
 )
 
 # ORM (audit_logs)
@@ -346,9 +349,60 @@ async def logout_get(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 # ================== Análisis ==================
+
+class RatingIn(BaseModel):
+    historial_id: int
+    rating: int
+
+@app.get("/api/rating/pendiente")
+async def rating_pendiente(request: Request):
+    """Consulta si el usuario actual tiene una valoración pendiente (bloquea nuevo análisis)."""
+    user = request.session.get("usuario", "")
+    if not user:
+        return {"pendiente": False}
+    try:
+        return {"pendiente": tiene_valoracion_pendiente(user)}
+    except Exception:
+        return {"pendiente": False}
+
+@app.post("/api/rating")
+async def enviar_rating(request: Request, payload: RatingIn):
+    """Registra la valoración (1..5) del último análisis y envía un agradecimiento."""
+    user = request.session.get("usuario")
+    if not user:
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+
+    actor_user_id, ip = _actor_info(request)
+    try:
+        marcar_valoracion_historial(payload.historial_id, payload.rating, actor_user_id=actor_user_id, ip=ip)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        print("❌ Error enviar_rating:", repr(e))
+        return JSONResponse({"error": "No se pudo registrar la valoración"}, status_code=500)
+
+    # Notificación/agradecimiento
+    try:
+        await notify_async(user, "¡Gracias por tu valoración!", "Tu calificación se registró correctamente.")
+    except Exception:
+        pass
+
+    return {"ok": True, "message": "Valoración registrada"}
+
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
     usuario = request.session.get("usuario", "Anónimo")
+
+    # 👇 BLOQUEO: si hay una valoración pendiente, no permitir nuevo análisis
+    try:
+        if tiene_valoracion_pendiente(usuario):
+            return JSONResponse(
+                {"error": "Tienes una valoración pendiente. Califica el análisis anterior para continuar."},
+                status_code=409
+            )
+    except Exception as e:
+        # Si falla la verificación por algún motivo, preferimos no bloquear
+        print("⚠️ Warning al chequear pendiente:", repr(e))
 
     if not archivos:
         return JSONResponse({"error": "Subí al menos un archivo"}, status_code=400)
@@ -366,20 +420,38 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     try:
         # Importante: nombre con hora local AR para que el usuario vea su hora real
         timestamp = now_stamp_ar()
-        nombre_archivo = f"resumen_{timestamp}.pdf"
+        nombre_archivo_pdf = f"resumen_{timestamp}.pdf"
 
-        # Llamamos a utils con 2 args (firma actual)
-        await run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo)
+        # Generar PDF del análisis
+        await run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo_pdf)
     except Exception as e:
         return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
 
+    # Registrar análisis en historial con "rating_required=1"
+    analisis_id = uuid.uuid4().hex
     try:
-        # Guardamos el mismo timestamp local (coherente con el nombre)
-        guardar_en_historial(timestamp, usuario, nombre_archivo, nombre_archivo, resumen)
-    except Exception:
-        pass
+        historial_id = iniciar_analisis_historial(
+            usuario=usuario,
+            nombre_archivo=nombre_archivo_pdf,
+            ruta_pdf=nombre_archivo_pdf,   # guardamos el nombre; el front descarga desde /generated_pdfs
+            analisis_id=analisis_id,
+            resumen_texto=resumen
+        )
+    except Exception as e:
+        print("❌ Error iniciar_analisis_historial:", repr(e))
+        # fallback: guardado simple (sin rating)
+        try:
+            guardar_en_historial(timestamp, usuario, nombre_archivo_pdf, nombre_archivo_pdf, resumen)
+        except Exception:
+            pass
+        historial_id = None
 
-    return {"resumen": resumen, "pdf": nombre_archivo}
+    return {
+        "resumen": resumen,
+        "pdf": nombre_archivo_pdf,
+        "historial_id": historial_id,
+        "analisis_id": analisis_id
+    }
 
 # ================== Historial ==================
 @app.get("/historial")
@@ -621,7 +693,7 @@ async def crear_usuario_api(request: Request):
         nombre = (data.get("nombre") or "").strip()
         email = (data.get("email") or "").strip()
         rol = (data.get("rol") or "").strip()
-        if not nombre or not email or not rol:  # <-- FIX SyntaxError
+        if not nombre or not email or not rol:
             return JSONResponse({"error": "Faltan campos: nombre, email, rol"}, status_code=400)
         actor_user_id, ip = _actor_info(request)
         agregar_usuario(nombre, email, "1234", rol, actor_user_id=actor_user_id, ip=ip)
@@ -1343,7 +1415,7 @@ async def usuarios_activos(request: Request):
     })
 
 # ========================== Auditoría de Actividad (admins) =================
-def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
+def _parse_iso(ts: Optional[str]):
     if not ts:
         return None
     try:
@@ -1355,7 +1427,7 @@ def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
     except Exception:
         return None
 
-def _to_dt(s: Optional[str]) -> Optional[datetime]:
+def _to_dt(s: Optional[str]):
     if not s:
         return None
     try:
@@ -1404,7 +1476,6 @@ async def auditoria_actividad(
     h = _parse_iso(hasta)
     if d:
         conds.append("login_at >= ?")
-        # d ya está con tz, pero exportamos como UTC 00:00Z
         args.append(d.strftime("%Y-%m-%dT00:00:00Z"))
     if h:
         conds.append("login_at <= ?")

@@ -30,8 +30,11 @@ ACCION_ES = {
     "SEND_MESSAGE": "Enviar mensaje",  # 👈 chat interno
     "HIDE_THREAD": "Ocultar conversación",
     "UNHIDE_THREAD": "Restaurar conversación",
-    # Nuevas acciones relacionadas a roles
+    # Roles
     "UPDATE_ROLE": "Cambiar rol de usuario",
+    # 👇 Nuevas acciones
+    "CREATE_ANALYSIS_RECORD": "Registrar análisis",
+    "RATE_ANALYSIS": "Valorar análisis",
 }
 
 def _accion_es(codigo: str) -> str:
@@ -99,6 +102,9 @@ def inicializar_bd():
     _crear_indices_usuarios()
 
     crear_tabla_historial()
+    _migrar_historial_add_rating_fields()           # 👈 agrega columnas de rating si faltan
+    _crear_indices_historial_rating()
+
     crear_tabla_tickets()
     crear_tabla_mensajes()       # 👈 chat interno
     crear_tabla_hilos_ocultos()  # 👈 gestión de hilos ocultos
@@ -125,7 +131,6 @@ def _migrar_tabla_usuarios_si_falta_rol_y_activo():
         cols = {r["name"] for r in cur.fetchall()}
 
         if "rol" not in cols:
-            # SQLite >= 3.35 soporta IF NOT EXISTS. Si tu versión no, el try/except lo cubre.
             try:
                 conn.execute("ALTER TABLE usuarios ADD COLUMN rol TEXT NOT NULL DEFAULT 'usuario'")
             except Exception:
@@ -155,78 +160,46 @@ def crear_tabla_historial():
             )
         ''')
 
-def crear_tabla_tickets():
+def _migrar_historial_add_rating_fields():
+    """
+    Migra 'historial' para soportar valoración obligatoria por análisis.
+    Agrega:
+      - analisis_id TEXT
+      - rating INTEGER (1..5)
+      - rating_at TEXT (YYYYMMDDHHMMSS)
+      - rating_required INTEGER (0/1)
+    """
     with _get_conn() as conn:
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS tickets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                usuario TEXT NOT NULL,
-                titulo TEXT NOT NULL,
-                descripcion TEXT NOT NULL,
-                tipo TEXT NOT NULL,
-                estado TEXT NOT NULL DEFAULT 'Abierto',
-                fecha TEXT NOT NULL
-            )
-        ''')
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute("PRAGMA table_info(historial)")
+        cols = {r["name"] for r in cur.fetchall()}
 
-def crear_tabla_mensajes():
-    with _get_conn() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS mensajes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                de_email   TEXT NOT NULL,
-                para_email TEXT NOT NULL,
-                texto      TEXT NOT NULL,
-                leido      INTEGER NOT NULL DEFAULT 0,
-                fecha      TEXT NOT NULL
-            )
-        """)
-        # Índices para performance en listados y filtros
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_mensajes_partes
-            ON mensajes (de_email, para_email, fecha)
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_mensajes_fecha
-            ON mensajes (fecha)
-        """)
+        if "analisis_id" not in cols:
+            try:
+                conn.execute("ALTER TABLE historial ADD COLUMN analisis_id TEXT")
+            except Exception:
+                pass
+        if "rating" not in cols:
+            try:
+                conn.execute("ALTER TABLE historial ADD COLUMN rating INTEGER")
+            except Exception:
+                pass
+        if "rating_at" not in cols:
+            try:
+                conn.execute("ALTER TABLE historial ADD COLUMN rating_at TEXT")
+            except Exception:
+                pass
+        if "rating_required" not in cols:
+            try:
+                conn.execute("ALTER TABLE historial ADD COLUMN rating_required INTEGER NOT NULL DEFAULT 0")
+            except Exception:
+                pass
 
-def crear_tabla_hilos_ocultos():
-    """Registra hilos ocultos por usuario (no borra mensajes)."""
+def _crear_indices_historial_rating():
     with _get_conn() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS hilos_ocultos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                owner_email TEXT NOT NULL,   -- quién oculta
-                otro_email  TEXT NOT NULL,   -- con quién
-                hidden_at   TEXT NOT NULL,   -- ISO str
-                UNIQUE(owner_email, otro_email)
-            )
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_hilos_ocultos_owner
-            ON hilos_ocultos (owner_email, otro_email)
-        """)
-
-# ---------- NUEVO: tabla para adjuntos de mensajes ------------------------
-def crear_tabla_adjuntos():
-    with _get_conn() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS mensajes_adjuntos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                mensaje_id INTEGER NOT NULL,
-                filename   TEXT NOT NULL,   -- nombre seguro en disco
-                original   TEXT NOT NULL,   -- nombre original subido
-                mime       TEXT,
-                size       INTEGER,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (mensaje_id) REFERENCES mensajes(id) ON DELETE CASCADE
-            )
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_adjuntos_msg
-            ON mensajes_adjuntos (mensaje_id)
-        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_historial_usuario ON historial (usuario)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_historial_usuario_pending ON historial (usuario, rating_required)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_historial_analisis_id ON historial (analisis_id)")
 
 # ============================== Usuarios ==================================
 def agregar_usuario(nombre, email, password, rol="usuario", actor_user_id=None, ip=None):
@@ -323,12 +296,11 @@ def cambiar_estado_usuario(email, activo, actor_user_id=None, ip=None):
 
 def cambiar_rol(email: str, nuevo_rol: str, actor_user_id=None, ip=None):
     """
-    Cambia el rol del usuario ('admin' | 'usuario' | lo que uses).
+    Cambia el rol del usuario ('admin' | 'usuario' | 'borrado').
     Auditoría incluida.
     """
     nuevo_rol = (nuevo_rol or "usuario").strip().lower()
     if nuevo_rol not in ("admin", "usuario", "borrado"):
-        # Permitimos 'borrado' porque el soft delete lo usa.
         nuevo_rol = "usuario"
 
     with _get_conn() as conn:
@@ -384,13 +356,21 @@ def borrar_usuario(email, actor_user_id=None, ip=None, soft=True):
     return _with_retry(_op)
 
 # ============================== Historial =================================
+def _ahora_stamp():
+    """Devuelve fecha como 'YYYYMMDDHHMMSS' (consistente con historial.timestamp)."""
+    return datetime.now().strftime("%Y%m%d%H%M%S")
+
 def guardar_en_historial(timestamp, usuario, nombre_archivo, ruta_pdf, resumen_texto=""):
+    """
+    Método histórico existente: inserta un registro estándar en historial.
+    No crea pendiente de valoración.
+    """
     try:
         match = re.search(r"(\d{14})", timestamp)
         if match:
             timestamp = match.group(1)
         else:
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            timestamp = _ahora_stamp()
         with _get_conn() as conn:
             conn.execute('''
                 INSERT INTO historial (timestamp, usuario, nombre_archivo, ruta_pdf, resumen_texto)
@@ -398,6 +378,68 @@ def guardar_en_historial(timestamp, usuario, nombre_archivo, ruta_pdf, resumen_t
             ''', (timestamp, usuario, nombre_archivo, ruta_pdf, resumen_texto))
     except Exception as e:
         print(f"❌ Error al guardar en historial: {e}")
+
+def iniciar_analisis_historial(usuario: str, nombre_archivo: str, ruta_pdf: str, analisis_id: str, resumen_texto: str = "") -> int:
+    """
+    Crea un registro de análisis en 'historial' y marca que requiere valoración (rating_required=1).
+    Devuelve el id autoincremental del historial.
+    """
+    def _op():
+        ts = _ahora_stamp()
+        with _get_conn() as conn:
+            cur = conn.execute('''
+                INSERT INTO historial (timestamp, usuario, nombre_archivo, ruta_pdf, resumen_texto, analisis_id, rating_required)
+                VALUES (?, ?, ?, ?, ?, ?, 1)
+            ''', (ts, usuario, nombre_archivo, ruta_pdf, resumen_texto, analisis_id))
+            return cur.lastrowid
+    historial_id = _with_retry(_op)
+    # Auditoría: registro del inicio de análisis
+    try:
+        registrar_auditoria(
+            actor_user_id=None,  # si tenés el ID del actor, pásalo desde tu capa superior
+            action="CREATE_ANALYSIS_RECORD",
+            entity="historial",
+            entity_id=historial_id,
+            after={"usuario": usuario, "archivo": nombre_archivo, "analisis_id": analisis_id},
+            ip=None
+        )
+    except Exception:
+        pass
+    return historial_id
+
+def marcar_valoracion_historial(historial_id: int, rating: int, actor_user_id=None, ip=None):
+    """
+    Guarda la valoración (1..5), marca rating_required=0 y registra en auditoría.
+    """
+    rating = int(rating)
+    if rating < 1 or rating > 5:
+        raise ValueError("Rating inválido (debe ser 1..5)")
+
+    def _op():
+        ra = _ahora_stamp()
+        with _get_conn() as conn:
+            conn.execute("""
+                UPDATE historial
+                   SET rating = ?, rating_at = ?, rating_required = 0
+                 WHERE id = ?
+            """, (rating, ra, historial_id))
+    _with_retry(_op)
+
+    # Auditoría
+    registrar_auditoria(
+        actor_user_id, "RATE_ANALYSIS", "historial", historial_id,
+        after={"rating": rating}, ip=ip
+    )
+
+def tiene_valoracion_pendiente(usuario: str) -> bool:
+    """Devuelve True si el usuario tiene algún análisis con rating_required=1."""
+    with _get_conn() as conn:
+        cur = conn.execute("""
+            SELECT 1 FROM historial
+             WHERE usuario = ? AND rating_required = 1
+             LIMIT 1
+        """, (usuario,))
+        return cur.fetchone() is not None
 
 def obtener_historial():
     with _get_conn() as conn:
@@ -425,21 +467,25 @@ def obtener_historial():
 def obtener_historial_completo():
     with _get_conn() as conn:
         cursor = conn.execute('''
-            SELECT timestamp, usuario, nombre_archivo, resumen_texto
+            SELECT id, timestamp, usuario, nombre_archivo, resumen_texto, rating, rating_at, rating_required
             FROM historial
             ORDER BY id DESC
         ''')
         historial = []
         for row in cursor.fetchall():
             try:
-                fecha_legible = datetime.strptime(row[0], "%Y%m%d%H%M%S").strftime("%d/%m/%Y %H:%M")
+                fecha_legible = datetime.strptime(row[1], "%Y%m%d%H%M%S").strftime("%d/%m/%Y %H:%M")
             except ValueError:
                 fecha_legible = "Fecha inválida"
             historial.append({
-                "timestamp": row[0],
-                "usuario": row[1],
-                "nombre_archivo": row[2],
-                "resumen": row[3],
+                "id": row[0],
+                "timestamp": row[1],
+                "usuario": row[2],
+                "nombre_archivo": row[3],
+                "resumen": row[4],
+                "rating": row[5],
+                "rating_at": row[6],
+                "rating_required": bool(row[7]),
                 "fecha": fecha_legible
             })
         return historial

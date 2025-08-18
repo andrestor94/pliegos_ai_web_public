@@ -189,7 +189,7 @@
       }
       .sidebar{
         position: fixed; top: 0; left: 0; height: 100dvh;
-        width: min(var(--drawer-w), 72vw); /* angosto */
+        width: min(var(--drawer-w), 72vw);
         max-width: 80vw;
         padding: 16px 10px; margin: 0; border-radius: 0 22px 22px 0;
         transform: translateX(-100%); transition: transform .25s ease;
@@ -308,6 +308,19 @@
 
     /* Ocultar FAB externo si existiera */
     #chatOpenAiFab, .chat-openai-fab, [data-chat-fab]{ display:none !important; }
+
+    /* ===== Rating / Valoración ===== */
+    .rating-trigger-pill{ display:none; }
+    .stars{ display:flex; gap:8px; align-items:center; justify-content:center; padding:8px 0; }
+    .star-btn{
+      width:42px; height:42px; border-radius:50%; display:grid; place-items:center;
+      border:1px solid var(--border); background:#fff; color:#cbd5e1; font-size:22px; cursor:pointer;
+      transition: transform .08s ease, color .2s ease, border-color .2s ease, background .2s ease;
+    }
+    .star-btn:hover{ transform: translateY(-2px); }
+    .star-btn.on{ color:#f59e0b; border-color:#fcd34d; background:#fff8e1; }
+    [data-theme="dark"] .star-btn{ background:#0b1220; color:#64748b; }
+    [data-theme="dark"] .star-btn.on{ background:#1f2937; color:#fbbf24; border-color:#f59e0b; }
   </style>
 
   {% block extra_head %}{% endblock %}
@@ -399,6 +412,11 @@
 
           <button class="pill pill-grad pill-icon" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Chat OpenAI</button>
 
+          <!-- 👇 Nueva: accion rápida para valoración pendiente -->
+          <button class="pill pill-icon rating-trigger-pill" id="btnOpenRating" title="Valorar análisis pendiente">
+            <i class="bi bi-star"></i> Valorar análisis
+          </button>
+
           <!-- Usuario -->
           <div class="user-box">
             <div class="user-name" id="userName">—</div>
@@ -446,6 +464,36 @@
       <button class="chat-ia__send" type="submit"><i class="bi bi-send"></i> Enviar</button>
     </form>
   </aside>
+
+  <!-- ===== Modal de Valoración (5 estrellas obligatorias) ===== -->
+  <div class="modal fade" id="ratingModal" tabindex="-1" aria-labelledby="ratingModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content" style="border-radius:18px;">
+        <div class="modal-header">
+          <h5 class="modal-title" id="ratingModalLabel"><i class="bi bi-star-fill me-1"></i> Valoración del análisis</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body">
+          <p class="mb-2">Contanos cómo resultó el <b>último análisis</b>. Esta valoración es necesaria para continuar con el siguiente.</p>
+          <div class="stars" role="radiogroup" aria-label="Valoración en estrellas">
+            <button type="button" class="star-btn" data-val="1" aria-label="1 estrella" aria-checked="false" role="radio"><i class="bi bi-star-fill"></i></button>
+            <button type="button" class="star-btn" data-val="2" aria-label="2 estrellas" aria-checked="false" role="radio"><i class="bi bi-star-fill"></i></button>
+            <button type="button" class="star-btn" data-val="3" aria-label="3 estrellas" aria-checked="false" role="radio"><i class="bi bi-star-fill"></i></button>
+            <button type="button" class="star-btn" data-val="4" aria-label="4 estrellas" aria-checked="false" role="radio"><i class="bi bi-star-fill"></i></button>
+            <button type="button" class="star-btn" data-val="5" aria-label="5 estrellas" aria-checked="false" role="radio"><i class="bi bi-star-fill"></i></button>
+          </div>
+          <div class="text-center mt-1">
+            <span id="ratingText" class="small text-muted" aria-live="polite">Seleccioná una opción</span>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btnSendRating" type="button" class="btn btn-primary" disabled>
+            <i class="bi bi-check2-circle me-1"></i> Enviar valoración
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
@@ -574,7 +622,6 @@
       btnOpen?.setAttribute('aria-expanded','true');
       const first = sidebar.querySelector('a,button,[tabindex]:not([tabindex="-1"])');
       if(first) try{ first.focus(); }catch(_){}
-      /* Forzamos recálculo de layout (FullCalendar, etc.) tras la animación */
       setTimeout(()=> window.dispatchEvent(new Event('resize')), 280);
     }
     function closeSidebarMobile(){
@@ -606,7 +653,7 @@
       }else{
         sidebar.setAttribute('aria-hidden','true');
       }
-      window.dispatchEvent(new Event('resize')); /* recálculo UI */
+      window.dispatchEvent(new Event('resize'));
     }
     mqDesktop.addEventListener?.('change', applySidebarMode);
     applySidebarMode();
@@ -649,7 +696,6 @@
       catch(_){ chatIaBody.scrollTop = chatIaBody.scrollHeight; }
     }
 
-    // Enter = enviar | Shift+Enter = salto de línea
     chatIaInput?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
         e.preventDefault(); chatIaForm?.requestSubmit();
@@ -831,6 +877,135 @@
     // Inicializaciones
     getUsuario();
     refreshNotif();
+
+    /* ====================== VALORACIÓN (Frontend) ======================= */
+    const RATING_STORAGE_KEY = 'rating_historial_id';
+    const ratingBtn = document.getElementById('btnOpenRating');
+    const ratingModalEl = document.getElementById('ratingModal');
+    const ratingModal = ratingModalEl ? new bootstrap.Modal(ratingModalEl) : null;
+    const stars = Array.from(document.querySelectorAll('#ratingModal .star-btn'));
+    const ratingText = document.getElementById('ratingText');
+    const btnSendRating = document.getElementById('btnSendRating');
+    let currentRating = 0;
+
+    function getPendingHistorialId(){ try{ return localStorage.getItem(RATING_STORAGE_KEY); }catch(_){ return null; } }
+    function setPendingHistorialId(v){ try{ if(v) localStorage.setItem(RATING_STORAGE_KEY, v); else localStorage.removeItem(RATING_STORAGE_KEY); }catch(_){ } }
+    function toggleRatingCTA(show){
+      if(!ratingBtn) return;
+      ratingBtn.style.display = show ? 'inline-flex' : 'none';
+      if(show) ratingBtn.classList.add('pill-grad'); else ratingBtn.classList.remove('pill-grad');
+    }
+
+    function labelFor(n){
+      switch(n){
+        case 1: return 'Muy malo';
+        case 2: return 'Malo';
+        case 3: return 'Regular';
+        case 4: return 'Bueno';
+        case 5: return 'Excelente';
+        default: return 'Seleccioná una opción';
+      }
+    }
+    function updateStars(n){
+      currentRating = n|0;
+      stars.forEach((b,i)=>{
+        const on = (i < currentRating);
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
+      if(ratingText) ratingText.textContent = labelFor(currentRating);
+      if(btnSendRating) btnSendRating.disabled = currentRating < 1;
+    }
+
+    stars.forEach(btn=>{
+      btn.addEventListener('click', ()=> updateStars(parseInt(btn.getAttribute('data-val')||'0',10)));
+      btn.addEventListener('keydown', (e)=>{
+        if(e.key==='ArrowRight' || e.key==='ArrowUp'){ e.preventDefault(); updateStars(Math.min(5, currentRating+1)); }
+        if(e.key==='ArrowLeft'  || e.key==='ArrowDown'){ e.preventDefault(); updateStars(Math.max(1, currentRating-1)); }
+      });
+    });
+
+    ratingBtn?.addEventListener('click', ()=>{
+      updateStars(parseInt(currentRating||'0',10));
+      ratingModal?.show();
+    });
+
+    btnSendRating?.addEventListener('click', async ()=>{
+      const hid = getPendingHistorialId();
+      if(!hid){ showToast({title:'Valoración', body:'No encontré el análisis a valorar.', icon:'exclamation-triangle'}); return; }
+      if(currentRating < 1){ return; }
+      btnSendRating.disabled = true;
+      try{
+        const r = await fetch('/api/rating', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ historial_id: Number.isNaN(+hid) ? hid : +hid, rating: currentRating })
+        });
+        const j = await r.json().catch(()=> ({}));
+        if(!r.ok || !j.ok){ throw new Error(j?.error || 'No se pudo registrar la valoración'); }
+        setPendingHistorialId(null);
+        toggleRatingCTA(false);
+        ratingModal?.hide();
+        showToast({title:'¡Gracias!', body:'Tu valoración se registró correctamente.', icon:'star-fill'});
+        refreshNotif();
+      }catch(err){
+        showToast({title:'Valoración', body:String(err?.message||'Error'), icon:'exclamation-triangle'});
+      }finally{
+        btnSendRating.disabled = false;
+      }
+    });
+
+    // Chequear si hay valoración pendiente al cargar
+    (async function checkPendingAtLoad(){
+      try{
+        const r = await fetch('/api/rating/pendiente');
+        const j = await r.json();
+        const hasPending = !!j?.pendiente;
+        toggleRatingCTA(hasPending || !!getPendingHistorialId());
+        // no abrimos modal automáticamente para dejar que el usuario primero revise/descargue
+      }catch(_){
+        toggleRatingCTA(!!getPendingHistorialId());
+      }
+    })();
+
+    // Interceptar llamadas a /analizar-pliego para:
+    // - Si la API devuelve 409 -> abrir modal de valoración
+    // - Si la API devuelve 200 -> guardar historial_id para poder valorar luego
+    (function patchFetchForRating(){
+      const origFetch = window.fetch;
+      window.fetch = async function(input, init){
+        const url = (typeof input === 'string') ? input : (input?.url || '');
+        const isAnalizar = url.includes('/analizar-pliego');
+        try{
+          const res = await origFetch(input, init);
+          if(isAnalizar){
+            if(res.status === 409){
+              toggleRatingCTA(true);
+              showToast({title:'Valoración pendiente', body:'Calificá el análisis anterior para continuar.', icon:'star'});
+              setTimeout(()=> ratingModal?.show(), 200);
+            }else if(res.ok){
+              // Guardamos el historial_id devuelto para enlazar la valoración a este análisis
+              try{
+                const clone = res.clone();
+                clone.json().then(j=>{
+                  if(j && j.historial_id){
+                    setPendingHistorialId(String(j.historial_id));
+                    toggleRatingCTA(true);
+                    // No abrimos el modal inmediatamente: dejamos que el usuario descargue/verifique primero
+                  }
+                }).catch(()=>{});
+              }catch(_){}
+            }
+          }
+          return res;
+        }catch(err){
+          if(isAnalizar){
+            showToast({title:'Análisis', body:'No se pudo completar la operación.', icon:'exclamation-triangle'});
+          }
+          throw err;
+        }
+      };
+    })();
   </script>
 
   {% block extra_scripts %}{% endblock %}
