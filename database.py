@@ -107,7 +107,10 @@ def inicializar_bd():
 
     # crear_tabla_tickets()  # TODO
     # crear_tabla_mensajes()  # TODO (deshabilitado en Render)
-    crear_tabla_hilos_ocultos()  # 👈 gestión de hilos ocultos
+    try:
+        crear_tabla_hilos_ocultos()  # hilos ocultos
+    except NameError:
+        pass
     crear_tabla_adjuntos()       # 👈 adjuntos de mensajes
 
 def crear_tabla_usuarios():
