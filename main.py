@@ -2,6 +2,7 @@ import os
 import sqlite3
 import uuid
 import asyncio
+import re
 from typing import List, Optional, Dict, Set
 from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body, WebSocket, WebSocketDisconnect, Depends, status, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, Response
@@ -38,7 +39,7 @@ from database import (
     ocultar_hilo, restaurar_hilo,
     guardar_adjunto,
     es_admin,
-    # 👇 NUEVO: rating obligatorio
+    # 👇 rating obligatorio en tu DB principal
     iniciar_analisis_historial, marcar_valoracion_historial, tiene_valoracion_pendiente
 )
 
@@ -64,7 +65,6 @@ def iso_utc_to_ar_str(iso_utc: str, fmt: str = "%d/%m/%Y %H:%M") -> str:
     try:
         dt_utc = datetime.fromisoformat(iso)
     except ValueError:
-        # Fallback para formatos 'YYYY-MM-DD HH:MM:SS'
         try:
             dt_utc = datetime.strptime(iso_utc, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
         except Exception:
@@ -72,7 +72,6 @@ def iso_utc_to_ar_str(iso_utc: str, fmt: str = "%d/%m/%Y %H:%M") -> str:
     return dt_utc.astimezone(TZ_AR).strftime(fmt)
 
 # ================== App & Middlewares ==================
-# Secret desde ENV (más seguro)
 SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-in-prod")
 app = FastAPI(middleware=[
     Middleware(SessionMiddleware, secret_key=SESSION_SECRET)
@@ -83,7 +82,7 @@ inicializar_bd()
 # Inicializa ORM (audit_logs) según DATABASE_URL
 inicializar_bd_orm()
 
-# Static (garantizamos que existan)
+# Static
 os.makedirs("static", exist_ok=True)
 os.makedirs("generated_pdfs", exist_ok=True)
 
@@ -99,7 +98,6 @@ def ar_time(value: str) -> str:
         return iso_utc_to_ar_str(value)
     except Exception:
         return value
-
 templates.env.filters["ar_time"] = ar_time
 
 # ================== Guardas/Dependencias de auth/roles ==================
@@ -277,8 +275,65 @@ def _build_audit_filters(q, filtros):
                 ors.append(getattr(AuditLog, col).like(like))
         if ors:
             q = q.filter(or_(*ors))
-
     return q
+
+# --- helpers extra para rating/identificación por timestamp/nombre ---
+_TS_RE = re.compile(r'(\d{14})')
+
+def _extraer_ts_de_nombre(nombre_pdf: str) -> str:
+    """Devuelve el timestamp (YYYYMMDDHHMMSS) si está embebido en 'resumen_*.pdf'."""
+    if not nombre_pdf:
+        return ""
+    m = _TS_RE.search(nombre_pdf)
+    return m.group(1) if m else ""
+
+def _buscar_historial_usuario(
+    user: str,
+    timestamp: Optional[str] = None,
+    nombre_pdf: Optional[str] = None
+) -> Optional[dict]:
+    """
+    Busca el item de historial del usuario actual. Si se provee 'timestamp' o 'nombre_pdf',
+    intenta matchear por esos campos; si no, devuelve el último del usuario.
+    """
+    try:
+        items = obtener_historial_completo()
+    except Exception:
+        items = []
+
+    user_items = [h for h in items if (h.get("usuario") == user)]
+
+    nombre_pdf = (nombre_pdf or "").strip()
+    timestamp = (timestamp or "").strip()
+
+    # 1) match exacto por timestamp si el historial lo expone
+    if timestamp:
+        for h in user_items:
+            if str(h.get("timestamp") or "") == timestamp:
+                return h
+
+    # 2) match por nombre_pdf
+    if nombre_pdf:
+        for h in user_items:
+            if (h.get("nombre_archivo") or "") == nombre_pdf:
+                return h
+
+    # 3) si vino timestamp pero el historial no lo expone, intento extraer del nombre
+    if timestamp:
+        for h in user_items:
+            ts_h = _extraer_ts_de_nombre(h.get("nombre_archivo") or "")
+            if ts_h == timestamp:
+                return h
+
+    # 4) fallback: último del usuario
+    if user_items:
+        try:
+            user_items.sort(key=lambda x: x.get("fecha",""), reverse=True)
+        except Exception:
+            pass
+        return user_items[0]
+
+    return None
 
 # --- Config pública para el front (límites de adjuntos) ---
 @app.get("/chat/config")
@@ -303,6 +358,110 @@ async def home(request: Request):
 async def login_form(request: Request):
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
+# =====================================================================
+# ========================== CALENDARIO (DB utilitaria) ===============
+# =====================================================================
+
+CAL_DB = "calendar.sqlite3"
+
+def cal_conn():
+    conn = sqlite3.connect(CAL_DB)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_calendar_db():
+    with cal_conn() as c:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS eventos(
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT,
+                start TEXT NOT NULL,
+                end TEXT,
+                all_day INTEGER NOT NULL DEFAULT 0,
+                color TEXT,
+                created_by TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS notificaciones(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user TEXT NOT NULL,
+                titulo TEXT NOT NULL,
+                cuerpo TEXT,
+                created_at TEXT NOT NULL,
+                leida INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+init_calendar_db()
+
+def _now_iso():
+    return now_iso_utc()
+
+def _event_row_to_dict(r: sqlite3.Row):
+    return {
+        "id": r["id"],
+        "title": r["title"],
+        "start": r["start"],
+        "end": r["end"],
+        "allDay": bool(r["all_day"]),
+        "description": r["description"] or "",
+        "color": r["color"] or "#0ea5e9",
+    }
+
+def _notify(user: str, titulo: str, cuerpo: str = ""):
+    with cal_conn() as c:
+        c.execute(
+            "INSERT INTO notificaciones(user, titulo, cuerpo, created_at, leida) VALUES(?,?,?,?,0)",
+            (user or "Desconocido", titulo, cuerpo, _now_iso())
+        )
+
+async def notify_async(user: str, titulo: str, cuerpo: str = ""):
+    _notify(user, titulo, cuerpo)
+    await emit_alert(user, titulo, cuerpo)
+
+# ====== NUEVO: rating pendiente liviano (sidecar) ======
+def init_rating_pending_db():
+    with cal_conn() as c:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pending_ratings(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user TEXT NOT NULL,
+                historial_id TEXT,
+                timestamp TEXT,
+                nombre_pdf TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_pending_ratings_user ON pending_ratings(user)")
+init_rating_pending_db()
+
+def _pr_add(user: str, historial_id: Optional[str], timestamp: str, nombre_pdf: str):
+    # Un solo pendiente por usuario
+    with cal_conn() as c:
+        c.execute("DELETE FROM pending_ratings WHERE user=?", (user,))
+        c.execute(
+            "INSERT INTO pending_ratings(user, historial_id, timestamp, nombre_pdf, created_at) VALUES(?,?,?,?,?)",
+            (user, str(historial_id) if historial_id is not None else None, timestamp, nombre_pdf, _now_iso())
+        )
+
+def _pr_get(user: str):
+    with cal_conn() as c:
+        r = c.execute(
+            "SELECT historial_id, timestamp, nombre_pdf FROM pending_ratings WHERE user=? ORDER BY id DESC LIMIT 1",
+            (user,)
+        ).fetchone()
+        if r:
+            return {"historial_id": r["historial_id"], "timestamp": r["timestamp"], "nombre_pdf": r["nombre_pdf"]}
+    return None
+
+def _pr_clear(user: str):
+    with cal_conn() as c:
+        c.execute("DELETE FROM pending_ratings WHERE user=?", (user,))
+
+# ================== Login/Logout ==================
 @app.post("/login")
 async def login(request: Request, email: str = Form(...), password: str = Form(...)):
     usuario = obtener_usuario_por_email(email)
@@ -312,7 +471,7 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
         request.session["rol"] = usuario[4]
         request.session["nombre"] = usuario[1] or usuario[2]
 
-        # === Auditoría de sesiones (login) ===
+        # Auditoría de sesiones (login)
         sid = uuid.uuid4().hex
         request.session["sid"] = sid
         nombre_s = request.session.get("nombre") or usuario[1] or usuario[2]
@@ -348,42 +507,120 @@ async def logout_get(request: Request):
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
 
-# ================== Análisis ==================
-
+# ================== Rating/Análisis ==================
 class RatingIn(BaseModel):
-    historial_id: int
-    rating: int
+    # Soportamos dos formatos:
+    # 1) nuevo front: timestamp/nombre_pdf/estrellas/comentario
+    # 2) legacy: historial_id/rating
+    historial_id: Optional[int] = None
+    rating: Optional[int] = None
+    timestamp: Optional[str] = None
+    nombre_pdf: Optional[str] = None
+    estrellas: Optional[int] = None
+    comentario: Optional[str] = None
 
-@app.get("/api/rating/pendiente")
-async def rating_pendiente(request: Request):
-    """Consulta si el usuario actual tiene una valoración pendiente (bloquea nuevo análisis)."""
+@app.get("/api/rating/pending")
+async def rating_pending(request: Request):
+    """
+    Devuelve si el usuario tiene una valoración pendiente y, si es posible,
+    info del último análisis (timestamp/nombre_pdf/historial_id) para que
+    el front pueda abrir el modal.
+    """
     user = request.session.get("usuario", "")
     if not user:
-        return {"pendiente": False}
+        return {"pending": False}
+
+    pr = _pr_get(user)
+    pend_flag = False
     try:
-        return {"pendiente": tiene_valoracion_pendiente(user)}
+        pend_flag = bool(tiene_valoracion_pendiente(user))
     except Exception:
-        return {"pendiente": False}
+        pass
+
+    if pr:  # preferimos nuestra info persistida
+        last = pr
+        # intentar castear historial_id a int si es numérico
+        try:
+            last["historial_id"] = int(last.get("historial_id")) if last.get("historial_id") else None
+        except Exception:
+            last["historial_id"] = None
+        return {"pending": True, "last": last}
+
+    if pend_flag:
+        h = _buscar_historial_usuario(user)
+        last = None
+        if h:
+            nombre = (h.get("nombre_archivo") or "")
+            ts = h.get("timestamp") or _extraer_ts_de_nombre(nombre)
+            hid = h.get("historial_id") or h.get("id")
+            last = {
+                "timestamp": ts or "",
+                "nombre_pdf": nombre or "",
+                "historial_id": hid if isinstance(hid, int) else None
+            }
+        return {"pending": True, "last": last}
+
+    return {"pending": False, "last": None}
+
+# Alias legacy
+@app.get("/api/rating/pendiente")
+async def rating_pendiente_alias(request: Request):
+    data = await rating_pending(request)
+    return {"pendiente": data.get("pending", False), "last": data.get("last")}
 
 @app.post("/api/rating")
 async def enviar_rating(request: Request, payload: RatingIn):
-    """Registra la valoración (1..5) del último análisis y envía un agradecimiento."""
+    """
+    Registra la valoración. Acepta:
+      - Formato nuevo: { timestamp, nombre_pdf, estrellas, comentario }
+      - Formato legacy: { historial_id, rating }
+    """
     user = request.session.get("usuario")
     if not user:
         return JSONResponse({"error": "No autenticado"}, status_code=401)
 
+    # normalizo rating:
+    rating = None
+    if isinstance(payload.estrellas, int):
+        rating = payload.estrellas
+    elif isinstance(payload.rating, int):
+        rating = payload.rating
+
+    if not rating or rating < 1 or rating > 5:
+        return JSONResponse({"error": "Rating inválido. Use un entero 1..5."}, status_code=400)
+
+    # resolvemos el historial_id:
+    historial_id = payload.historial_id
+    if not historial_id:
+        h = _buscar_historial_usuario(user, timestamp=payload.timestamp, nombre_pdf=payload.nombre_pdf)
+        if h:
+            hid = h.get("historial_id") or h.get("id")
+            if isinstance(hid, int):
+                historial_id = hid
+
+    if not historial_id:
+        return JSONResponse({"error": "No pude identificar el análisis a valorar."}, status_code=400)
+
     actor_user_id, ip = _actor_info(request)
     try:
-        marcar_valoracion_historial(payload.historial_id, payload.rating, actor_user_id=actor_user_id, ip=ip)
+        marcar_valoracion_historial(historial_id, rating, actor_user_id=actor_user_id, ip=ip)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         print("❌ Error enviar_rating:", repr(e))
         return JSONResponse({"error": "No se pudo registrar la valoración"}, status_code=500)
 
-    # Notificación/agradecimiento
+    # limpiar pendiente y notificar
     try:
-        await notify_async(user, "¡Gracias por tu valoración!", "Tu calificación se registró correctamente.")
+        _pr_clear(user)
+    except Exception:
+        pass
+
+    try:
+        if payload.comentario:
+            await notify_async(user, "¡Gracias por tu valoración!", f"Dejaste {rating}/5: {payload.comentario[:140]}")
+        else:
+            await notify_async(user, "¡Gracias por tu valoración!", f"Calificación {rating}/5 registrada.")
     except Exception:
         pass
 
@@ -393,13 +630,17 @@ async def enviar_rating(request: Request, payload: RatingIn):
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
     usuario = request.session.get("usuario", "Anónimo")
 
-    # 👇 BLOQUEO: si hay una valoración pendiente, no permitir nuevo análisis
+    # BLOQUEO: si hay una valoración pendiente, no permitir nuevo análisis
     try:
-        if tiene_valoracion_pendiente(usuario):
-            return JSONResponse(
-                {"error": "Tienes una valoración pendiente. Califica el análisis anterior para continuar."},
-                status_code=409
-            )
+        pr = _pr_get(usuario)
+        if pr or tiene_valoracion_pendiente(usuario):
+            payload = {"error": "Tienes una valoración pendiente. Califica el análisis anterior para continuar."}
+            if pr:
+                payload["pending"] = True
+                payload["last"] = pr
+            resp = JSONResponse(payload, status_code=409)
+            resp.headers["X-Require-Rating"] = "1"
+            return resp
     except Exception as e:
         # Si falla la verificación por algún motivo, preferimos no bloquear
         print("⚠️ Warning al chequear pendiente:", repr(e))
@@ -446,9 +687,16 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             pass
         historial_id = None
 
+    # Registrar pendiente local (para UX y bloqueo consistente)
+    try:
+        _pr_add(usuario, historial_id, timestamp, nombre_archivo_pdf)
+    except Exception as e:
+        print("⚠️ No se pudo registrar pending_ratings:", repr(e))
+
     return {
         "resumen": resumen,
         "pdf": nombre_archivo_pdf,
+        "timestamp": timestamp,            # 👈 el front lo usa para el modal
         "historial_id": historial_id,
         "analisis_id": analisis_id
     }
@@ -605,7 +853,6 @@ async def crear_incidencia_form(
     archivos: List[UploadFile] = File(default=[])
 ):
     usuario = request.session.get("usuario", "Anónimo")
-    # Para nombres locales coherentes con lo que ve el usuario:
     timestamp = now_stamp_ar()
 
     actor_user_id, ip = _actor_info(request)
@@ -637,122 +884,7 @@ async def eliminar_incidencia_form(request: Request, id: int):
     eliminar_ticket(id, actor_user_id=actor_user_id, ip=ip)
     return RedirectResponse("/incidencias", status_code=303)
 
-# ================== Cambio de contraseña ==================
-@app.get("/cambiar-password", response_class=HTMLResponse)
-async def cambiar_password_form(request: Request):
-    if not request.session.get("usuario"):
-        return RedirectResponse("/login")
-    return templates.TemplateResponse("cambiar_password.html", {
-        "request": request,
-        "mensaje": "",
-        "error": ""
-    })
-
-@app.post("/cambiar-password", response_class=HTMLResponse)
-async def cambiar_password_submit(request: Request,
-                                 old_password: str = Form(...),
-                                 new_password: str = Form(...),
-                                 confirm_password: str = Form(...)):
-    usuario = request.session.get("usuario")
-    if not usuario:
-        return RedirectResponse("/login")
-    datos = obtener_usuario_por_email(usuario)
-    if not datos or datos[3] != old_password:
-        return templates.TemplateResponse("cambiar_password.html", {
-            "request": request,
-            "mensaje": "",
-            "error": "La contraseña actual es incorrecta."
-        })
-    if new_password != confirm_password:
-        return templates.TemplateResponse("cambiar_password.html", {
-            "request": request,
-            "mensaje": "",
-            "error": "La nueva contraseña no coincide en ambos campos."
-        })
-    actor_user_id, ip = _actor_info(request)
-    actualizar_password(usuario, new_password, actor_user_id=actor_user_id, ip=ip)
-    return templates.TemplateResponse("cambiar_password.html", {
-        "request": request,
-        "mensaje": "Contraseña cambiada correctamente.",
-        "error": ""
-    })
-
-# ================== Admin (todas las rutas protegidas) ==================
-@app.get("/admin", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
-async def vista_admin(request: Request):
-    return templates.TemplateResponse("admin.html", {"request": request})
-
-@app.get("/admin/usuarios", dependencies=[Depends(require_admin)])
-async def listar_usuarios_api():
-    return JSONResponse(listar_usuarios())
-
-@app.post("/admin/crear-usuario", dependencies=[Depends(require_admin)])
-async def crear_usuario_api(request: Request):
-    try:
-        data = await request.json()
-        nombre = (data.get("nombre") or "").strip()
-        email = (data.get("email") or "").strip()
-        rol = (data.get("rol") or "").strip()
-        if not nombre or not email or not rol:
-            return JSONResponse({"error": "Faltan campos: nombre, email, rol"}, status_code=400)
-        actor_user_id, ip = _actor_info(request)
-        agregar_usuario(nombre, email, "1234", rol, actor_user_id=actor_user_id, ip=ip)
-        return JSONResponse({"mensaje": "Usuario creado correctamente con contraseña: 1234"})
-    except Exception as e:
-        print("❌ Error crear-usuario:", repr(e))
-        return JSONResponse({"error": f"Error al crear usuario: {e}"}, status_code=400)
-
-@app.post("/admin/blanquear-password", dependencies=[Depends(require_admin)])
-async def blanquear_password(request: Request):
-    try:
-        data = await request.json()
-        email = (data.get("email") or "").strip()
-        if not email:
-            return JSONResponse({"error": "Falta email"}, status_code=400)
-        actor_user_id, ip = _actor_info(request)
-        actualizar_password(email, "1234", actor_user_id=actor_user_id, ip=ip)
-        return JSONResponse({"mensaje": "Contraseña blanqueada a 1234"})
-    except Exception as e:
-        print("❌ Error blanquear-password:", repr(e))
-        return JSONResponse({"error": f"Error al blanquear: {e}"}, status_code=400)
-
-@app.post("/admin/desactivar-usuario", dependencies=[Depends(require_admin)])
-async def desactivar_usuario(request: Request):
-    data = await request.json()
-    email = (data.get("email") or "").strip()
-    if not email:
-        return JSONResponse({"error": "Falta email"}, status_code=400)
-    actor_user_id, ip = _actor_info(request)
-    cambiar_estado_usuario(email, 0, actor_user_id=actor_user_id, ip=ip)
-    return JSONResponse({"mensaje": "Usuario desactivado"})
-
-@app.post("/admin/activar-usuario", dependencies=[Depends(require_admin)])
-async def activar_usuario(request: Request):
-    data = await request.json()
-    email = (data.get("email") or "").strip()
-    if not email:
-        return JSONResponse({"error": "Falta email"}, status_code=400)
-    actor_user_id, ip = _actor_info(request)
-    cambiar_estado_usuario(email, 1, actor_user_id=actor_user_id, ip=ip)
-    return JSONResponse({"mensaje": "Usuario activado"})
-
-@app.post("/admin/eliminar-usuario", dependencies=[Depends(require_admin)])
-async def eliminar_usuario(request: Request):
-    try:
-        data = await request.json()
-        email = (data.get("email") or "").strip()
-        if not email:
-            return JSONResponse({"error": "Falta email"}, status_code=400)
-        actor_user_id, ip = _actor_info(request)
-        ok = borrar_usuario(email, actor_user_id=actor_user_id, ip=ip, soft=False)
-        if not ok:
-            return JSONResponse({"error": "Usuario no encontrado"}, status_code=404)
-        return JSONResponse({"mensaje": "Usuario eliminado definitivamente."})
-    except Exception as e:
-        print("❌ Error eliminar-usuario:", repr(e))
-        return JSONResponse({"error": f"Error al eliminar: {e}"}, status_code=400)
-
-# ================== Chat OpenAI flotante ==================
+# ================== API puente (Chat OpenAI) ==================
 @app.post("/chat-openai")
 async def chat_openai(request: Request):
     data = await request.json()
@@ -786,7 +918,6 @@ async def chat_openai(request: Request):
     respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
     return JSONResponse({"respuesta": respuesta})
 
-# ================== API puente para el drawer ==================
 @app.post("/api/chat-openai")
 async def api_chat_openai(request: Request, payload: dict = Body(...)):
     mensaje = (payload or {}).get("message", "").strip()
@@ -1122,70 +1253,8 @@ async def auditoria_purgar_disabled(request: Request):
     return JSONResponse({"error": "Operación no permitida: la auditoría es inmutable"}, status_code=405)
 
 # =====================================================================
-# ========================== CALENDARIO ===============================
+# ========================== CALENDARIO (endpoints) ===================
 # =====================================================================
-
-CAL_DB = "calendar.sqlite3"
-
-def cal_conn():
-    conn = sqlite3.connect(CAL_DB)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def init_calendar_db():
-    with cal_conn() as c:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS eventos(
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                description TEXT,
-                start TEXT NOT NULL,
-                end TEXT,
-                all_day INTEGER NOT NULL DEFAULT 0,
-                color TEXT,
-                created_by TEXT,
-                created_at TEXT,
-                updated_at TEXT
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS notificaciones(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user TEXT NOT NULL,
-                titulo TEXT NOT NULL,
-                cuerpo TEXT,
-                created_at TEXT NOT NULL,
-                leida INTEGER NOT NULL DEFAULT 0
-            )
-        """)
-
-init_calendar_db()
-
-def _now_iso():
-    return now_iso_utc()
-
-def _event_row_to_dict(r: sqlite3.Row):
-    return {
-        "id": r["id"],
-        "title": r["title"],
-        "start": r["start"],
-        "end": r["end"],
-        "allDay": bool(r["all_day"]),
-        "description": r["description"] or "",
-        "color": r["color"] or "#0ea5e9",
-    }
-
-def _notify(user: str, titulo: str, cuerpo: str = ""):
-    with cal_conn() as c:
-        c.execute(
-            "INSERT INTO notificaciones(user, titulo, cuerpo, created_at, leida) VALUES(?,?,?,?,0)",
-            (user or "Desconocido", titulo, cuerpo, _now_iso())
-        )
-
-async def notify_async(user: str, titulo: str, cuerpo: str = ""):
-    _notify(user, titulo, cuerpo)
-    await emit_alert(user, titulo, cuerpo)
-
 @app.get("/calendario", response_class=HTMLResponse)
 async def calendario_view(request: Request):
     if not request.session.get("usuario"):
@@ -1300,7 +1369,6 @@ async def list_notifs(request: Request, limit: int = 20):
                 "id": r["id"],
                 "titulo": r["titulo"],
                 "cuerpo": r["cuerpo"],
-                # Mostrar en horario local AR
                 "fecha_legible": iso_utc_to_ar_str(r["created_at"]),
                 "leida": bool(r["leida"])
             })
@@ -1331,7 +1399,7 @@ def init_presence_db():
                 ua TEXT
             )
         """)
-        # === Auditoría de sesiones ===
+        # Auditoría de sesiones
         c.execute("""
             CREATE TABLE IF NOT EXISTS sessions(
                 id TEXT PRIMARY KEY,
@@ -1347,10 +1415,8 @@ def init_presence_db():
         """)
         c.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_sessions_dates ON sessions(login_at, last_seen, logout_at)")
-
 init_presence_db()
 
-# ========================== Endpoints presencia ======================
 @app.post("/presence/ping")
 async def presence_ping(request: Request):
     email = request.session.get("usuario")
@@ -1437,17 +1503,14 @@ def _to_dt(s: Optional[str]):
     except Exception:
         return None
 
-# --- VISTA HTML principal (coincide con admin.html) ---
 @app.get("/auditoria/actividad/vista", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def auditoria_actividad_view(request: Request):
     return templates.TemplateResponse("auditoria_actividad.html", {"request": request})
 
-# --- Alias legacy (por si quedó algún link viejo) ---
 @app.get("/auditoria-actividad", dependencies=[Depends(require_admin)])
 async def auditoria_actividad_legacy():
     return RedirectResponse("/auditoria/actividad/vista", status_code=307)
 
-# --- API JSON con datos de sesiones ---
 @app.get("/auditoria/actividad", dependencies=[Depends(require_admin)])
 async def auditoria_actividad(
     request: Request,
@@ -1523,7 +1586,6 @@ async def auditoria_actividad(
 
     return {"items": rows_out, "timeout_min": SESSION_TIMEOUT_MIN, "now_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
 
-# --- Exportar CSV con mismos filtros ---
 @app.get("/auditoria/actividad.csv", dependencies=[Depends(require_admin)])
 async def auditoria_actividad_csv(
     request: Request,
