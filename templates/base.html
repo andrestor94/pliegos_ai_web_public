@@ -39,8 +39,8 @@
       --sidebar-grad-a:#0f172a; --sidebar-grad-b:#0b1220;
       --chip-bg:#f6f7fe;
 
-      --sidebar-w: 74px;   /* columna compacta en escritorio (como antes) */
-      --drawer-w: 240px;   /* ancho del drawer móvil (angosto/estético) */
+      --sidebar-w: 74px;
+      --drawer-w: 240px;
       --header-h: 76px;
 
       --safe-top: env(safe-area-inset-top);
@@ -56,7 +56,6 @@
 
     html, body { height:100%; }
     html{ scroll-behavior:smooth; }
-    /* Evita scroll lateral en móviles (iOS/Android) */
     html, body{ overflow-x:hidden; }
     body{
       margin:0;
@@ -66,10 +65,8 @@
       padding-top: var(--safe-top);
       padding-bottom: var(--safe-bottom);
     }
-    /* Medios fluidos para no desbordar */
     img, iframe, canvas, video{ max-width:100%; height:auto; }
 
-    /* ===== Shell / Layout ===== */
     .shell{ width:100vw; height:100vh; margin:0; background:var(--panel); overflow:hidden; display:block; }
     .app{
       height:100%;
@@ -81,7 +78,6 @@
         "sidebar content";
     }
 
-    /* ===== Sidebar ===== */
     .sidebar{
       grid-area:sidebar;
       display:flex; flex-direction:column; align-items:center;
@@ -112,7 +108,6 @@
     .side-spacer{ flex:1; }
     .side-small{ color:#94a3b8; font-size:11px; }
 
-    /* ===== Header ===== */
     .header{
       grid-area:header;
       display:flex; align-items:center; gap:12px;
@@ -141,14 +136,13 @@
     .pill-icon{ display:inline-flex; align-items:center; gap:.5rem; }
     .icon-btn{
       position:relative; width:44px; height:44px; display:grid; place-items:center;
-      border-radius:14px; border:1px solid var(--border); background:#fff; color:var(--ink);
+      border-radius:14px; border:1px solid var(--border); background:#fff; color:#ink;
     }
     [data-theme="dark"] .icon-btn{ background:#0b1220; color:#e5e7eb; border-color:var(--border); }
     .icon-badge, .chat-badge{
       position:absolute; top:-6px; right:-6px; min-width:18px; height:18px; padding:0 4px; border-radius:999px; background:#ef4444; color:#fff; font-size:11px; line-height:18px; text-align:center; display:none;
     }
 
-    /* Usuario (siempre en línea, sin apilarse) */
     .user-box{ display:flex; align-items:center; gap:10px; margin-left:6px; white-space:nowrap; }
     .user-name{ font-weight:600; color:var(--ink); max-width:28ch; overflow:hidden; text-overflow:ellipsis; }
     .user-avatar{ width:40px; height:40px; border-radius:999px; overflow:hidden; position:relative; border:1px solid var(--border); background:#e2e8f0; display:grid; place-items:center; cursor:pointer; user-select:none; }
@@ -157,7 +151,6 @@
     [data-theme="dark"] .user-avatar{ background:#111827; }
     .user-avatar:hover{ box-shadow:0 8px 20px rgba(0,0,0,.12); }
 
-    /* ===== Content ===== */
     .content{
       grid-area:content; position:relative; padding:24px; min-height:0;
       height:100%; overflow:auto;
@@ -179,7 +172,6 @@
     .cardx .title{ font-weight:700; display:flex; align-items:center; gap:8px; }
     [data-theme="dark"] .cardx{ background:#0b1220; }
 
-    /* ===== Drawer Mobile/Tablet ===== */
     @media (max-width: 991.98px){
       .shell{ height: 100dvh; }
       .app{
@@ -208,13 +200,11 @@
       }
       .sidebar-overlay.open{ opacity: 1; pointer-events: auto; }
 
-      /* Header compactable en teléfonos chicos */
       .content{ padding:16px; }
       .brand{ padding:6px 10px; gap:10px; }
       .brand img{ height:28px; }
       .pill, .icon-btn{ padding:.5rem .75rem; }
     }
-    /* En <= 576px las acciones se deslizan horizontalmente (no se apilan mal) */
     @media (max-width:575.98px){
       .header{ align-items:flex-start; gap:8px; padding:10px 12px; }
       .brand{ flex:0 0 auto; }
@@ -229,7 +219,6 @@
       .user-name{ max-width:22ch; }
     }
 
-    /* Inputs / tablas / toasts */
     input.form-control, select.form-select, textarea.form-control{
       background:#fff; color:#111827; border:1px solid var(--border); border-radius:12px;
     }
@@ -245,7 +234,6 @@
     .toast{ border-radius:12px; box-shadow:var(--shadow); }
     .toast-header{ border-bottom:none; }
 
-    /* ===== LOGIN / AUTH MODE ===== */
     body[data-auth="1"] .app{ grid-template-columns: 1fr; grid-template-rows: 1fr; grid-template-areas: "content"; }
     body[data-auth="1"] .sidebar, body[data-auth="1"] .header{ display:none !important; }
     body[data-auth="1"] .content{
@@ -256,7 +244,6 @@
       body[data-auth="1"] .content{ background: linear-gradient(180deg,#0b1020 0%, #0b1328 100%); }
     }
 
-    /* ===== Chat IA ===== */
     .chat-ia-overlay{
       position:fixed; inset:0; background:rgba(15,18,34,.28); backdrop-filter: blur(2px);
       opacity:0; pointer-events:none; transition:opacity .2s ease; z-index:1200;
@@ -303,24 +290,16 @@
     [data-theme="dark"] .chat-ia__composer textarea{ background:#0b1220; color:#e5e7eb; }
     .chat-ia__send{ border:none; border-radius:999px; padding:0 16px; min-width:120px; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); color:#fff; box-shadow:0 12px 26px rgba(139,92,246,.22); }
 
-    /* ===== FullCalendar tokens (colores se heredan) ===== */
     .fc { --fc-border-color: var(--border); --fc-page-bg-color: transparent; }
 
-    /* Ocultar FAB externo si existiera */
     #chatOpenAiFab, .chat-openai-fab, [data-chat-fab]{ display:none !important; }
 
-    /* ===== Rating / Valoración ===== */
-    .rating-trigger-pill{ display:none; }
-    .stars{ display:flex; gap:8px; align-items:center; justify-content:center; padding:8px 0; }
-    .star-btn{
-      width:42px; height:42px; border-radius:50%; display:grid; place-items:center;
-      border:1px solid var(--border); background:#fff; color:#cbd5e1; font-size:22px; cursor:pointer;
-      transition: transform .08s ease, color .2s ease, border-color .2s ease, background .2s ease;
-    }
-    .star-btn:hover{ transform: translateY(-2px); }
-    .star-btn.on{ color:#f59e0b; border-color:#fcd34d; background:#fff8e1; }
-    [data-theme="dark"] .star-btn{ background:#0b1220; color:#64748b; }
-    [data-theme="dark"] .star-btn.on{ background:#1f2937; color:#fbbf24; border-color:#f59e0b; }
+    /* ==== Estilos rating ==== */
+    .rating-stars { display:flex; gap:8px; font-size:28px; cursor:pointer; user-select:none; }
+    .rating-stars .star { color:#cbd5e1; transition: transform .06s ease; }
+    .rating-stars .star.active { color:#f59e0b; }
+    .rating-stars .star:hover { transform: translateY(-1px) scale(1.05); }
+    .rating-hint { font-size:12px; color:var(--muted); }
   </style>
 
   {% block extra_head %}{% endblock %}
@@ -412,11 +391,6 @@
 
           <button class="pill pill-grad pill-icon" onclick="openChatAndExpand()"><i class="bi bi-robot"></i> Chat OpenAI</button>
 
-          <!-- 👇 Nueva: accion rápida para valoración pendiente -->
-          <button class="pill pill-icon rating-trigger-pill" id="btnOpenRating" title="Valorar análisis pendiente">
-            <i class="bi bi-star"></i> Valorar análisis
-          </button>
-
           <!-- Usuario -->
           <div class="user-box">
             <div class="user-name" id="userName">—</div>
@@ -465,30 +439,29 @@
     </form>
   </aside>
 
-  <!-- ===== Modal de Valoración (5 estrellas obligatorias) ===== -->
-  <div class="modal fade" id="ratingModal" tabindex="-1" aria-labelledby="ratingModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+  <!-- ===== Modal de Valoración ===== -->
+  <div class="modal fade" id="ratingModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
-      <div class="modal-content" style="border-radius:18px;">
+      <div class="modal-content" style="border-radius:16px">
         <div class="modal-header">
-          <h5 class="modal-title" id="ratingModalLabel"><i class="bi bi-star-fill me-1"></i> Valoración del análisis</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+          <h5 class="modal-title"><i class="bi bi-star-half me-1"></i> Valoración del análisis</h5>
         </div>
         <div class="modal-body">
-          <p class="mb-2">Contanos cómo resultó el <b>último análisis</b>. Esta valoración es necesaria para continuar con el siguiente.</p>
-          <div class="stars" role="radiogroup" aria-label="Valoración en estrellas">
-            <button type="button" class="star-btn" data-val="1" aria-label="1 estrella" aria-checked="false" role="radio"><i class="bi bi-star-fill"></i></button>
-            <button type="button" class="star-btn" data-val="2" aria-label="2 estrellas" aria-checked="false" role="radio"><i class="bi bi-star-fill"></i></button>
-            <button type="button" class="star-btn" data-val="3" aria-label="3 estrellas" aria-checked="false" role="radio"><i class="bi bi-star-fill"></i></button>
-            <button type="button" class="star-btn" data-val="4" aria-label="4 estrellas" aria-checked="false" role="radio"><i class="bi bi-star-fill"></i></button>
-            <button type="button" class="star-btn" data-val="5" aria-label="5 estrellas" aria-checked="false" role="radio"><i class="bi bi-star-fill"></i></button>
+          <div class="small text-muted mb-2" id="ratingFileInfo">Por favor, calificá el resultado (1 = malo, 5 = excelente).</div>
+          <div class="rating-stars mb-2" id="ratingStars" role="radiogroup" aria-label="Valoración en estrellas">
+            <i class="bi bi-star star" data-val="1" role="radio" aria-label="1 estrella" aria-checked="false" tabindex="0"></i>
+            <i class="bi bi-star star" data-val="2" role="radio" aria-label="2 estrellas" aria-checked="false" tabindex="0"></i>
+            <i class="bi bi-star star" data-val="3" role="radio" aria-label="3 estrellas" aria-checked="false" tabindex="0"></i>
+            <i class="bi bi-star star" data-val="4" role="radio" aria-label="4 estrellas" aria-checked="false" tabindex="0"></i>
+            <i class="bi bi-star star" data-val="5" role="radio" aria-label="5 estrellas" aria-checked="false" tabindex="0"></i>
           </div>
-          <div class="text-center mt-1">
-            <span id="ratingText" class="small text-muted" aria-live="polite">Seleccioná una opción</span>
-          </div>
+          <div class="rating-hint mb-3" id="ratingHint">Seleccioná una puntuación.</div>
+          <label class="form-label">Comentario (opcional)</label>
+          <textarea id="ratingComment" class="form-control" rows="3" placeholder="¿Qué te gustó o qué mejorarías?"></textarea>
         </div>
         <div class="modal-footer">
-          <button id="btnSendRating" type="button" class="btn btn-primary" disabled>
-            <i class="bi bi-check2-circle me-1"></i> Enviar valoración
+          <button type="button" id="ratingSubmit" class="btn btn-primary">
+            <i class="bi bi-send"></i> Enviar valoración
           </button>
         </div>
       </div>
@@ -687,7 +660,7 @@
 
     chatIaOverlay?.addEventListener('click', closeChatIA);
     chatIaClose?.addEventListener('click', closeChatIA);
-    document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeChatIA(); });
+    document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeChatIA(); });
 
     if(localStorage.getItem(CHAT_STATE_KEY)==='open'){ openChatIA(false); }
 
@@ -767,7 +740,6 @@
     }
     function escapeHTML(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-    /* Link activo sidebar */
     (function markActive(){
       const path=location.pathname;
       document.querySelectorAll('.side-btn[data-match]').forEach(a=>{
@@ -777,7 +749,6 @@
       });
     })();
 
-    /* Historial en home */
     document.getElementById('btnHistorial')?.addEventListener('click', (e)=>{
       if(location.pathname === '/'){
         e.preventDefault();
@@ -785,7 +756,6 @@
       }
     });
 
-    /* Toast helper */
     function showToast({title='Aviso', body='', icon='info', delay=3200}={}){
       const cont=document.getElementById('toastContainer'); if(!cont) return;
       const esc=(s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -797,7 +767,6 @@
       cont.appendChild(el); const t=new bootstrap.Toast(el,{delay}); t.show(); el.addEventListener('hidden.bs.toast',()=> el.remove());
     }
 
-    /* ===== Tema global ===== */
     const btnTheme = document.getElementById('btnTheme');
     const icoTheme = document.getElementById('icoTheme');
     function getTheme(){ try{ return localStorage.getItem('theme'); }catch(_){ return null; } }
@@ -878,134 +847,138 @@
     getUsuario();
     refreshNotif();
 
-    /* ====================== VALORACIÓN (Frontend) ======================= */
-    const RATING_STORAGE_KEY = 'rating_historial_id';
-    const ratingBtn = document.getElementById('btnOpenRating');
-    const ratingModalEl = document.getElementById('ratingModal');
-    const ratingModal = ratingModalEl ? new bootstrap.Modal(ratingModalEl) : null;
-    const stars = Array.from(document.querySelectorAll('#ratingModal .star-btn'));
-    const ratingText = document.getElementById('ratingText');
-    const btnSendRating = document.getElementById('btnSendRating');
-    let currentRating = 0;
+    /* =========================
+       === RATING DE ANÁLISIS ===
+       ========================= */
+    (function ratingInit(){
+      const modalEl = document.getElementById('ratingModal');
+      if(!modalEl) return;
+      const modal = new bootstrap.Modal(modalEl, { backdrop: 'static', keyboard: false });
+      const starsWrap = document.getElementById('ratingStars');
+      const hint = document.getElementById('ratingHint');
+      const info = document.getElementById('ratingFileInfo');
+      const commentEl = document.getElementById('ratingComment');
+      const submitBtn = document.getElementById('ratingSubmit');
 
-    function getPendingHistorialId(){ try{ return localStorage.getItem(RATING_STORAGE_KEY); }catch(_){ return null; } }
-    function setPendingHistorialId(v){ try{ if(v) localStorage.setItem(RATING_STORAGE_KEY, v); else localStorage.removeItem(RATING_STORAGE_KEY); }catch(_){ } }
-    function toggleRatingCTA(show){
-      if(!ratingBtn) return;
-      ratingBtn.style.display = show ? 'inline-flex' : 'none';
-      if(show) ratingBtn.classList.add('pill-grad'); else ratingBtn.classList.remove('pill-grad');
-    }
+      const state = { score: 0, timestamp: '', nombre_pdf: '' };
 
-    function labelFor(n){
-      switch(n){
-        case 1: return 'Muy malo';
-        case 2: return 'Malo';
-        case 3: return 'Regular';
-        case 4: return 'Bueno';
-        case 5: return 'Excelente';
-        default: return 'Seleccioná una opción';
-      }
-    }
-    function updateStars(n){
-      currentRating = n|0;
-      stars.forEach((b,i)=>{
-        const on = (i < currentRating);
-        b.classList.toggle('on', on);
-        b.setAttribute('aria-checked', on ? 'true' : 'false');
-      });
-      if(ratingText) ratingText.textContent = labelFor(currentRating);
-      if(btnSendRating) btnSendRating.disabled = currentRating < 1;
-    }
-
-    stars.forEach(btn=>{
-      btn.addEventListener('click', ()=> updateStars(parseInt(btn.getAttribute('data-val')||'0',10)));
-      btn.addEventListener('keydown', (e)=>{
-        if(e.key==='ArrowRight' || e.key==='ArrowUp'){ e.preventDefault(); updateStars(Math.min(5, currentRating+1)); }
-        if(e.key==='ArrowLeft'  || e.key==='ArrowDown'){ e.preventDefault(); updateStars(Math.max(1, currentRating-1)); }
-      });
-    });
-
-    ratingBtn?.addEventListener('click', ()=>{
-      updateStars(parseInt(currentRating||'0',10));
-      ratingModal?.show();
-    });
-
-    btnSendRating?.addEventListener('click', async ()=>{
-      const hid = getPendingHistorialId();
-      if(!hid){ showToast({title:'Valoración', body:'No encontré el análisis a valorar.', icon:'exclamation-triangle'}); return; }
-      if(currentRating < 1){ return; }
-      btnSendRating.disabled = true;
-      try{
-        const r = await fetch('/api/rating', {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ historial_id: Number.isNaN(+hid) ? hid : +hid, rating: currentRating })
+      function paintStars(n){
+        starsWrap.querySelectorAll('.star').forEach(st=>{
+          const v = Number(st.getAttribute('data-val'));
+          st.classList.toggle('active', v <= n);
+          st.setAttribute('aria-checked', String(v === n));
+          st.classList.toggle('bi-star', !(v <= n));
+          st.classList.toggle('bi-star-fill', v <= n);
         });
-        const j = await r.json().catch(()=> ({}));
-        if(!r.ok || !j.ok){ throw new Error(j?.error || 'No se pudo registrar la valoración'); }
-        setPendingHistorialId(null);
-        toggleRatingCTA(false);
-        ratingModal?.hide();
-        showToast({title:'¡Gracias!', body:'Tu valoración se registró correctamente.', icon:'star-fill'});
-        refreshNotif();
-      }catch(err){
-        showToast({title:'Valoración', body:String(err?.message||'Error'), icon:'exclamation-triangle'});
-      }finally{
-        btnSendRating.disabled = false;
+        hint.textContent = n ? `Tu valoración: ${n}/5` : 'Seleccioná una puntuación.';
       }
-    });
 
-    // Chequear si hay valoración pendiente al cargar
-    (async function checkPendingAtLoad(){
-      try{
-        const r = await fetch('/api/rating/pendiente');
-        const j = await r.json();
-        const hasPending = !!j?.pendiente;
-        toggleRatingCTA(hasPending || !!getPendingHistorialId());
-        // no abrimos modal automáticamente para dejar que el usuario primero revise/descargue
-      }catch(_){
-        toggleRatingCTA(!!getPendingHistorialId());
+      function openFor(ts, filename){
+        state.timestamp = ts || '';
+        state.nombre_pdf = filename || '';
+        state.score = 0;
+        commentEl.value = '';
+        info.textContent = filename
+          ? `Archivo: ${filename}. Por favor, calificá el resultado (1 = malo, 5 = excelente).`
+          : `Por favor, calificá el resultado (1 = malo, 5 = excelente).`;
+        paintStars(0);
+        modal.show();
+        setTimeout(()=> starsWrap.querySelector('.star')?.focus(), 150);
       }
-    })();
 
-    // Interceptar llamadas a /analizar-pliego para:
-    // - Si la API devuelve 409 -> abrir modal de valoración
-    // - Si la API devuelve 200 -> guardar historial_id para poder valorar luego
-    (function patchFetchForRating(){
-      const origFetch = window.fetch;
-      window.fetch = async function(input, init){
-        const url = (typeof input === 'string') ? input : (input?.url || '');
-        const isAnalizar = url.includes('/analizar-pliego');
+      // Accesibles: click o Enter/Espacio
+      starsWrap.addEventListener('click', (e)=>{
+        const st = e.target.closest('.star'); if(!st) return;
+        state.score = Number(st.getAttribute('data-val'))||0;
+        paintStars(state.score);
+      });
+      starsWrap.addEventListener('keydown', (e)=>{
+        const focused = document.activeElement?.closest?.('.star');
+        if(!focused) return;
+        let val = Number(focused.getAttribute('data-val'))||0;
+        if(e.key === 'ArrowRight' || e.key === 'ArrowUp'){ e.preventDefault(); val = Math.min(5, val+1); }
+        if(e.key === 'ArrowLeft'  || e.key === 'ArrowDown'){ e.preventDefault(); val = Math.max(1, val-1); }
+        if(e.key === ' ' || e.key === 'Enter'){ e.preventDefault(); state.score = val; }
+        paintStars(e.key===' '||e.key==='Enter' ? state.score : val);
+      });
+
+      submitBtn.addEventListener('click', async ()=>{
+        if(!state.score){
+          showToast({title:'Valoración', body:'Seleccioná entre 1 y 5 estrellas.', icon:'exclamation-triangle'});
+          return;
+        }
         try{
-          const res = await origFetch(input, init);
-          if(isAnalizar){
-            if(res.status === 409){
-              toggleRatingCTA(true);
-              showToast({title:'Valoración pendiente', body:'Calificá el análisis anterior para continuar.', icon:'star'});
-              setTimeout(()=> ratingModal?.show(), 200);
-            }else if(res.ok){
-              // Guardamos el historial_id devuelto para enlazar la valoración a este análisis
-              try{
-                const clone = res.clone();
-                clone.json().then(j=>{
-                  if(j && j.historial_id){
-                    setPendingHistorialId(String(j.historial_id));
-                    toggleRatingCTA(true);
-                    // No abrimos el modal inmediatamente: dejamos que el usuario descargue/verifique primero
-                  }
-                }).catch(()=>{});
-              }catch(_){}
+          const res = await fetch('/api/rating', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({
+              timestamp: state.timestamp,
+              nombre_pdf: state.nombre_pdf,
+              estrellas: state.score,
+              comentario: commentEl.value || ''
+            })
+          });
+          const j = await res.json().catch(()=> ({}));
+          if(!res.ok || j?.error){
+            throw new Error(j?.error || 'No se pudo registrar la valoración.');
+          }
+          modal.hide();
+          showToast({title:'¡Gracias!', body:'Tu valoración fue registrada.', icon:'star-fill'});
+          // Refrescar notificaciones por si el backend creó una
+          refreshNotif();
+        }catch(err){
+          showToast({title:'Valoración', body:String(err?.message||'Error'), icon:'exclamation-triangle'});
+        }
+      });
+
+      // Exponer para uso manual si lo necesitás desde otras vistas
+      window.promptRatingFor = openFor;
+
+      // 1) Abrir luego de descargar un PDF (detecta /descargar/resumen_*.pdf)
+      document.addEventListener('click', (e)=>{
+        const a = e.target.closest('a[href^="/descargar/"]');
+        if(!a) return;
+        const href = a.getAttribute('href') || '';
+        const fname = href.split('/').pop() || '';
+        const m = fname.match(/resumen_(\d{14})\.pdf$/i);
+        const ts = m ? m[1] : '';
+        // Abrimos modal tras breve delay para no interferir con el download
+        setTimeout(()=> openFor(ts, fname), 500);
+      });
+
+      // 2) Si hay valoración pendiente, abrir automáticamente
+      async function checkPending(){
+        try{
+          const r = await fetch('/api/rating/pending');
+          if(!r.ok) return;
+          const j = await r.json().catch(()=> ({}));
+          if(j?.pending && j?.last){
+            openFor(j.last.timestamp || '', j.last.nombre_pdf || '');
+            showToast({title:'Valoración pendiente', body:'Antes de continuar, calificá el último análisis.', icon:'exclamation-circle'});
+          }
+        }catch(_){}
+      }
+      checkPending();
+
+      // 3) Bloquear formularios que envían a /analizar-pliego si hay pendiente
+      document.addEventListener('submit', async (e)=>{
+        const form = e.target;
+        try{
+          const action = (form.getAttribute('action')||'').toLowerCase();
+          const method = (form.getAttribute('method')||'get').toLowerCase();
+          if(action.includes('/analizar-pliego') && method === 'post'){
+            const r = await fetch('/api/rating/pending');
+            const j = await r.json().catch(()=> ({}));
+            if(j?.pending){
+              e.preventDefault();
+              openFor(j.last?.timestamp || '', j.last?.nombre_pdf || '');
+              showToast({title:'Valoración requerida', body:'Debés valorar el análisis anterior para continuar.', icon:'exclamation-circle'});
             }
           }
-          return res;
-        }catch(err){
-          if(isAnalizar){
-            showToast({title:'Análisis', body:'No se pudo completar la operación.', icon:'exclamation-triangle'});
-          }
-          throw err;
-        }
-      };
+        }catch(_){}
+      });
     })();
+
   </script>
 
   {% block extra_scripts %}{% endblock %}
