@@ -106,7 +106,7 @@ def inicializar_bd():
     _crear_indices_historial_rating()
 
     # crear_tabla_tickets()  # TODO
-    crear_tabla_mensajes()       # 👈 chat interno
+    # crear_tabla_mensajes()  # TODO (deshabilitado en Render)
     crear_tabla_hilos_ocultos()  # 👈 gestión de hilos ocultos
     crear_tabla_adjuntos()       # 👈 adjuntos de mensajes
 
