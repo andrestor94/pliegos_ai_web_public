@@ -1073,6 +1073,45 @@ async def chat_view(request: Request):
 def _is_no_table_error(e: Exception) -> bool:
     return isinstance(e, sqlite3.OperationalError) and "no such table" in str(e).lower()
 
+# ---------- NORMALIZADOR DE USUARIOS (tupla/dict) ----------
+def _norm_rol(s: str) -> str:
+    s = (s or "").strip().lower()
+    if s.startswith("admin"): return "admin"
+    if s.startswith("usuar"): return "usuario"
+    if s == "borrado": return "borrado"
+    return "usuario"
+
+def _user_row_to_dict(u):
+    """Acepta dicts o tuplas y devuelve {'id','nombre','email','rol','activo'}."""
+    if isinstance(u, dict):
+        return {
+            "id": u.get("id"),
+            "nombre": u.get("nombre") or "",
+            "email": (u.get("email") or "").lower(),
+            "rol": _norm_rol(u.get("rol") or u.get("role") or "usuario"),
+            "activo": int(u.get("activo")) if u.get("activo") is not None else 1,
+        }
+    if isinstance(u, (list, tuple)):
+        # (id, nombre, email, password, rol, activo)
+        if len(u) >= 6:
+            return {
+                "id": u[0],
+                "nombre": u[1] or "",
+                "email": (u[2] or "").lower(),
+                "rol": _norm_rol(u[4] or "usuario"),
+                "activo": int(u[5]) if u[5] is not None else 1,
+            }
+        # (id, nombre, email, rol, activo)
+        if len(u) == 5:
+            return {
+                "id": u[0],
+                "nombre": u[1] or "",
+                "email": (u[2] or "").lower(),
+                "rol": _norm_rol(u[3] or "usuario"),
+                "activo": int(u[4]) if u[4] is not None else 1,
+            }
+    return {"id": None, "nombre": "", "email": "", "rol": "usuario", "activo": 0}
+
 @app.get("/api/usuarios")
 async def api_buscar_usuarios(request: Request, term: str = "", limit: int = 8):
     if not request.session.get("usuario"):
@@ -1081,8 +1120,9 @@ async def api_buscar_usuarios(request: Request, term: str = "", limit: int = 8):
     if not term:
         return {"items": []}
     try:
-        items = buscar_usuarios(term, limit=limit)
-        return {"items": [{"id": u["id"], "nombre": u.get("nombre") or "", "email": u["email"]} for u in items]}
+        raw = buscar_usuarios(term, limit=limit) or []
+        norm = [_user_row_to_dict(u) for u in raw]
+        return {"items": [{"id": u["id"], "nombre": u["nombre"], "email": u["email"]} for u in norm]}
     except Exception as e:
         print("❌ Error api_buscar_usuarios:", repr(e))
         return JSONResponse({"error": "No se pudo completar la búsqueda"}, status_code=500)
@@ -1368,20 +1408,19 @@ class AdminRoleIn(BaseModel):
     email: EmailStr
     rol: str  # "admin" | "usuario" | "Administrador" | "Usuario" | "borrado"
 
-def _norm_rol(s: str) -> str:
-    s = (s or "").strip().lower()
-    if s.startswith("admin"): return "admin"
-    if s.startswith("usuar"): return "usuario"
-    if s == "borrado": return "borrado"
-    return "usuario"
-
 @app.get("/api/admin/users")
 async def admin_users_list(request: Request, q: str = "", limit: int = 500):
     require_admin(request)
-    items = listar_usuarios()  # [{'id','nombre','email','rol','activo'}]
+    try:
+        raw = listar_usuarios() or []
+    except Exception as e:
+        print("❌ admin_users_list/listar_usuarios:", repr(e))
+        return {"items": []}
+
+    items = [_user_row_to_dict(u) for u in raw]
     q = (q or "").strip().lower()
     if q:
-        items = [u for u in items if q in (u.get("email","").lower() + " " + (u.get("nombre","") or "").lower())]
+        items = [u for u in items if q in (u["email"] + " " + (u["nombre"] or "").lower())]
     return {"items": items[:limit]}
 
 # alias de compatibilidad
@@ -1627,7 +1666,7 @@ async def cal_update(evt_id: str, request: Request):
     await notify_async(request.session.get("usuario","Desconocido"), "Evento actualizado", f"ID: {evt_id}")
     return {"ok": True}
 
-@app.delete("/calendario/eventos/{evt_id}")
+@app.delete("/calendario/eventos/{evt_id']")
 async def cal_delete(evt_id: str, request: Request):
     if not request.session.get("usuario"):
         return JSONResponse({"error":"No autenticado"}, status_code=401)
@@ -1947,5 +1986,5 @@ async def auditoria_actividad_csv(
     return Response(
         content=csv_body,
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        headers={"Content-Disposition": f'attachment; filename=\"{filename}\"'}
     )
