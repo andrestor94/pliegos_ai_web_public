@@ -22,6 +22,21 @@ En base.html:
   --text-2:#4a5a6a;           /* Secundario */
   --border:#d9ddd8;           /* Bordes suaves */
 
+  /* Accesibilidad inputs/placeholder (NUEVO) */
+  --input-bg:#ffffff;
+  --input-text:var(--text);
+  --input-placeholder:var(--text-2);
+  --input-border:var(--border);
+  --input-border-focus:#5274ce;
+  --input-shadow-focus:0 0 0 .25rem rgba(82,116,206,.25);
+
+  /* Chips/Badges (NUEVO) */
+  --chip-bg: #e7ecfa;
+  --chip-text: #233a80;
+
+  /* Iconos (NUEVO) */
+  --icon: #5b6b7a;           /* usa currentColor en SVG */
+
   /* Pasteles (opcional) */
   --mint-200:#e4f5ee; --sky-200:#e7ecfa; --peach-200:#fff2e8; --violet-200:#f2f0ff;
 
@@ -60,7 +75,27 @@ html[data-theme="dark"]{
   --text:#E5ECF3;
   --text-2:#A9B6C6;
   --border:#263140;
+
+  /* elevar brillo de marca en dark para contraste */
   --brand-100:#0E1C2A;
+  --bs-link-color:#9cc7ff;
+  --bs-link-hover-color:#b9d6ff;
+
+  /* Inputs/placeholder (NUEVO) */
+  --input-bg:#151B22;
+  --input-text:var(--text);
+  --input-placeholder:var(--text-2);
+  --input-border:#263140;
+  --input-border-focus:#5b76b4;
+  --input-shadow-focus:0 0 0 .25rem rgba(90,134,255,.30);
+
+  /* Chips/Badges (NUEVO) */
+  --chip-bg:#17223e;
+  --chip-text:#c7d3ff;
+
+  /* Iconos (NUEVO) */
+  --icon:#a8b3c7;
+
   --shadow-lg: 0 16px 40px rgba(0,0,0,.45);
   --shadow-md: 0 10px 24px rgba(0,0,0,.40);
   --shadow-sm: 0 6px 16px rgba(0,0,0,.35);
@@ -142,12 +177,17 @@ a:hover{ color: var(--bs-link-hover-color); text-decoration: underline; }
 
 /* ---------- Inputs ---------- */
 .form-control, .form-select{
-  border-radius:12px; border-color:var(--border);
-  background:var(--surface); color:var(--text);
+  border-radius:12px;
+  border-color:var(--input-border);
+  background:var(--input-bg);
+  color:var(--input-text);
+}
+.form-control::placeholder, .form-select::placeholder{
+  color:var(--input-placeholder); opacity:1;
 }
 .form-control:focus, .form-select:focus{
-  box-shadow:0 0 0 .25rem rgba(var(--ring-color), .25);
-  border-color:#5274ce;
+  box-shadow:var(--input-shadow-focus);
+  border-color:var(--input-border-focus);
 }
 
 /* Tamaño compacto útil en móvil */
@@ -175,6 +215,20 @@ a:hover{ color: var(--bs-link-hover-color); text-decoration: underline; }
 .btn-outline-primary:hover{ color:#fff; background: var(--brand-500); border-color: var(--brand-500); }
 .btn-outline-secondary{ color: var(--brand-300); border-color: var(--brand-300); }
 .btn-outline-secondary:hover{ color:#fff; background: var(--brand-300); border-color: var(--brand-300); }
+
+/* ---------- Badges / Chips (NUEVO) ---------- */
+.badge, .chip{
+  background:var(--chip-bg);
+  color:var(--chip-text);
+  border:1px solid var(--border);
+  border-radius:999px;
+  font-weight:600;
+}
+
+/* ---------- Iconos (NUEVO) ---------- */
+.icon, .icon-btn svg{ color:var(--icon); fill:currentColor; stroke:currentColor; }
+.icon-btn{ background:transparent; border:1px solid var(--border); border-radius:10px; }
+.icon-btn:hover{ background:var(--muted); }
 
 /* ---------- Tablas responsivas ---------- */
 .table-wrap{ width:100%; overflow-x:auto; -webkit-overflow-scrolling: touch; }
@@ -225,6 +279,7 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
   font-weight:800; color:var(--brand-700);
 }
 .subtle{ color:var(--text-2); }
+.help-text{ color:var(--text-2); font-size:.925rem; } /* NUEVO */
 .shadow-hover{ transition: box-shadow .18s cubic-bezier(0.22,1,0.36,1), transform .18s; }
 .shadow-hover:hover{ box-shadow:var(--shadow-md); transform: translateY(-2px); }
 
@@ -318,20 +373,21 @@ body[data-route^="/chat"] .msg *{
 body[data-route^="/chat"] input,
 body[data-route^="/chat"] textarea,
 body[data-route^="/chat"] .form-control{
-  color: var(--text);
-  background: var(--surface);
+  color: var(--input-text);
+  background: var(--input-bg);
+  border-color: var(--input-border);
 }
 body[data-route^="/chat"] input::placeholder,
 body[data-route^="/chat"] textarea::placeholder,
 body[data-route^="/chat"] .form-control::placeholder{
-  color: var(--text-2);
+  color: var(--input-placeholder);
   opacity: 1;
 }
 /* Compatibilidad extra (algunos navegadores antiguos) */
 body[data-route^="/chat"] input::-webkit-input-placeholder,
-body[data-route^="/chat"] textarea::-webkit-input-placeholder{ color: var(--text-2); }
+body[data-route^="/chat"] textarea::-webkit-input-placeholder{ color: var(--input-placeholder); }
 body[data-route^="/chat"] input:-ms-input-placeholder,
-body[data-route^="/chat"] textarea:-ms-input-placeholder{ color: var(--text-2); }
+body[data-route^="/chat"] textarea:-ms-input-placeholder{ color: var(--input-placeholder); }
 
 /* ===== Fix extra: correo/subtítulo en lista de conversaciones ===== */
 body[data-route^="/chat"] .conversations small,

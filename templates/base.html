@@ -7,21 +7,50 @@
   <meta name="color-scheme" content="light dark"/>
   <meta name="theme-color" content="#eeede8"/>
 
-  <!-- Aplica tema ANTES de pintar para evitar FOUC -->
+  <!-- Aplica tema ANTES de pintar para evitar FOUC (con soporte de “Sistema”) -->
   <script>
     (function(){
       try{
-        const t = localStorage.getItem('theme'); // 'light' | 'dark' | null (sistema)
-        if(t === 'light' || t === 'dark'){
-          document.documentElement.setAttribute('data-theme', t);
+        const saved = localStorage.getItem('theme');            // 'light' | 'dark' | null (sistema)
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+        // Si no hay preferencia guardada, seguimos el sistema desde el inicio
+        if(saved === 'light' || saved === 'dark'){
+          document.documentElement.setAttribute('data-theme', saved);
         }else{
-          document.documentElement.removeAttribute('data-theme'); // sistema
+          document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
         }
+
+        // Ajusta meta theme-color para la barra del navegador móvil
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if(!meta){ meta = document.createElement('meta'); meta.name = 'theme-color'; document.head.appendChild(meta); }
+        meta.setAttribute('content', (saved ? saved==='dark' : prefersDark) ? '#151B22' : '#eeede8');
+
+        // Escucha cambios del sistema SOLO si estamos en modo “Sistema”
+        try{
+          const mq = window.matchMedia('(prefers-color-scheme: dark)');
+          mq.addEventListener && mq.addEventListener('change', function(e){
+            const cur = localStorage.getItem('theme');
+            if(cur === null){
+              document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
+              const m = document.querySelector('meta[name="theme-color"]');
+              if(m) m.setAttribute('content', e.matches ? '#151B22' : '#eeede8');
+            }
+          });
+        }catch(_){}
       }catch(_){}
     })();
   </script>
+  <noscript>
+    <style>
+      /* Sin JS: respeta el modo del SO */
+      @media (prefers-color-scheme: dark){
+        html{ background:#151B22; color:#E5ECF3; }
+      }
+    </style>
+  </noscript>
 
-  <!-- Helper global para sanitizar HTML (usado en múltiples funciones) -->
+  <!-- Helper global para sanitizar HTML (se usa en varias vistas) -->
   <script>
     function escapeHTML(s){
       return (s ?? '').toString().replace(/[&<>"']/g, c => (
@@ -41,8 +70,9 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
 
   <!-- Tu theme global (después de Bootstrap para que sobreescriba) -->
-  <link rel="stylesheet" href="{{ url_for('static', path='css/app.theme.css') }}?v=20250818">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/app.theme.css') }}?v=20250819">
 
+  <!-- Parte 2 colocará aquí el gran bloque <style> ... </style> -->
   <style>
     /* ========= Variables auxiliares propias del layout =========
        Se mapean a los tokens del tema (app.theme.css) */
@@ -365,7 +395,6 @@
     }
     [class*="container"], [class*="Container"]{ min-width: 0; }
   </style>
-
   {% block extra_head %}{% endblock %}
 </head>
 <body data-auth="{{ '1' if request and request.url.path.startswith('/login') else '' }}"
@@ -455,7 +484,9 @@
             <span id="chatBadge" class="chat-badge">0</span>
           </a>
 
-          <button class="pill pill-grad pill-icon" onclick="openChatAndExpand()" aria-label="Abrir chat con IA"><i class="bi bi-robot"></i> Chat OpenAI</button>
+          <button class="pill pill-grad pill-icon" onclick="openChatAndExpand()" aria-label="Abrir chat con IA">
+            <i class="bi bi-robot"></i> Chat OpenAI
+          </button>
 
           <!-- Usuario -->
           <div class="user-box">
@@ -475,7 +506,6 @@
       </main>
     </div>
   </div>
-
   <!-- Panel notificaciones -->
   <div id="notif-panel" class="cardx position-fixed" style="right:22px; top:22px; width:340px; display:none; z-index:999;" role="dialog" aria-modal="false" aria-labelledby="notifTitle">
     <div class="d-flex align-items-center justify-content-between mb-2">
@@ -545,7 +575,6 @@
       <button id="ratingBannerClose" class="btn btn-sm btn-outline-secondary">Cerrar</button>
     </div>
   </div>
-
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     /* Fallback rol: oculta admin-only si no sos admin */
@@ -852,20 +881,25 @@
       cont.appendChild(el); const t=new bootstrap.Toast(el,{delay}); t.show(); el.addEventListener('hidden.bs.toast',()=> el.remove());
     }
 
+    /* ===== Tema: botón y meta theme-color ===== */
     const btnTheme = document.getElementById('btnTheme');
     const icoTheme = document.getElementById('icoTheme');
     function getTheme(){ try{ return localStorage.getItem('theme'); }catch(_){ return null; } }
     function setTheme(val){
       try{
         if(val){ localStorage.setItem('theme', val); document.documentElement.setAttribute('data-theme', val); }
-        else{ localStorage.removeItem('theme'); document.documentElement.removeAttribute('data-theme'); }
+        else{ localStorage.removeItem('theme'); /* modo sistema: elegir según media query actual */ 
+          const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+        }
       }catch(_){}
       updateThemeBtn();
       // Actualiza meta theme-color para móviles
       try{
         const meta = document.querySelector('meta[name="theme-color"]') || (function(){ const m=document.createElement('meta'); m.name='theme-color'; document.head.appendChild(m); return m; })();
-        const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const isDark = val ? (val==='dark') : dark;
+        const t = getTheme();
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const isDark = t ? (t==='dark') : prefersDark;
         meta.setAttribute('content', isDark ? '#151B22' : '#eeede8');
       }catch(_){}
     }
@@ -1051,7 +1085,7 @@
           sendIcon.classList.remove('d-none');
         }
       }
-      submitBtn.addEventListener('click', sendRating);
+      document.getElementById('ratingSubmit')?.addEventListener('click', sendRating);
 
       function showBanner(){ const b=document.getElementById('ratingBanner'); if(b) b.style.display='block'; }
       function hideBanner(){ const b=document.getElementById('ratingBanner'); if(b) b.style.display='none'; }
@@ -1427,7 +1461,6 @@
         };
       };
     })();
-
   </script>
 
   {% block extra_scripts %}{% endblock %}
