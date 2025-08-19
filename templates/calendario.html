@@ -9,17 +9,33 @@
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/locales-all.global.min.js"></script>
 
   <style>
-    /* Ajustes visuales para integrarse al theme */
+    /* Integración visual con el theme */
+    #calWrap { position: relative; }
     #calendar{
       background:#fff; border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow);
-      padding:14px;
+      padding:14px 14px 64px; /* espacio inferior para los controles flotantes */
     }
     .fc .fc-toolbar-title{ font-weight:700; color:#0f172a; }
     .fc .fc-button{ border-radius:10px; }
     .fc-theme-standard .fc-scrollgrid{ border-radius:12px; overflow:hidden; }
 
+    /* Controles externos (abajo izq / abajo der) */
+    .cal-ctrl-left, .cal-ctrl-right{
+      position:absolute; bottom:12px; display:flex; gap:8px;
+    }
+    .cal-ctrl-left{ left:12px; }
+    .cal-ctrl-right{ right:12px; }
+    .cal-ctrl-left .btn, .cal-ctrl-right .btn{ border-radius:10px; }
+
     .legend{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
     .dot{ width:12px; height:12px; border-radius:999px; display:inline-block; }
+
+    @media (max-width: 575.98px){
+      #calendar{ padding-bottom: 88px; } /* más espacio para controles en mobile */
+      .cal-ctrl-left{ left:10px; bottom:10px; }
+      .cal-ctrl-right{ right:10px; bottom:10px; }
+    }
+    [data-theme="dark"] #calendar{ background:var(--panel); }
   </style>
 {% endblock %}
 
@@ -37,7 +53,21 @@
     </section>
 
     <section class="col-12">
-      <div id="calendar" aria-label="Calendario de eventos"></div>
+      <div id="calWrap">
+        <div id="calendar" aria-label="Calendario de eventos"></div>
+
+        <!-- Controles externos -->
+        <div class="cal-ctrl-left" role="group" aria-label="Cambiar vista">
+          <button type="button" class="btn btn-outline-primary is-active" data-cal-view="dayGridMonth">Mes</button>
+          <button type="button" class="btn btn-outline-primary" data-cal-view="timeGridWeek">Semana</button>
+          <button type="button" class="btn btn-outline-primary" data-cal-view="listWeek">Lista</button>
+        </div>
+        <div class="cal-ctrl-right" role="group" aria-label="Navegación">
+          <button type="button" class="btn btn-outline-primary" aria-label="Anterior" data-cal-nav="prev"><i class="bi bi-chevron-left"></i></button>
+          <button type="button" class="btn btn-outline-primary" data-cal-nav="today">Hoy</button>
+          <button type="button" class="btn btn-outline-primary" aria-label="Siguiente" data-cal-nav="next"><i class="bi bi-chevron-right"></i></button>
+        </div>
+      </div>
     </section>
   </div>
 
@@ -152,7 +182,7 @@
   }
 
   /* ===== Modales ===== */
-  let _selectCtx = null;  // guarda el rango seleccionado para el modal "nuevo"
+  let _selectCtx = null;
   function openNuevoModal(info){
     _selectCtx = info;
     document.getElementById('evtTitle').value = '';
@@ -161,7 +191,6 @@
     document.getElementById('evtRangeTxt').textContent = `Rango: ${info.startStr}${info.endStr ? ' → '+info.endStr : ''}`;
     new bootstrap.Modal(document.getElementById('modalNuevoEvt')).show();
   }
-
   function openDetalleModal(evt){
     document.getElementById('evtTitleE').value = evt.title || '';
     document.getElementById('evtDescE').value  = evt.extendedProps?.description || '';
@@ -169,7 +198,6 @@
     document.getElementById('evtColorE').value = col;
     document.getElementById('evtTimeInfo').textContent =
       `${evt.start?.toLocaleString()}${evt.end ? ' → '+evt.end.toLocaleString() : ''}`;
-    // Guardamos referencia en dataset para handlers
     const modal = document.getElementById('modalDetalleEvt');
     modal.dataset.eventId = evt.id;
     new bootstrap.Modal(modal).show();
@@ -188,7 +216,10 @@
       weekNumbers: true,
       expandRows: true,
       initialView: 'dayGridMonth',
-      headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listWeek' },
+
+      /* Usamos SOLO controles externos */
+      headerToolbar: false,
+
       buttonText: { today:'Hoy', month:'Mes', week:'Semana', day:'Día', list:'Lista' },
       selectable: true,
       selectMirror: true,
@@ -225,6 +256,11 @@
       }
     });
     calendar.render();
+
+    /* 👇 Importante: exponer la instancia para controles externos */
+    el.__fcCalendar = calendar;
+    window.AppCalendar = calendar;
+    window.__calendar = calendar;
   }
 
   // Crear evento desde modal
