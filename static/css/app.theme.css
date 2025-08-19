@@ -1,30 +1,31 @@
 /* ===================== app.theme.css =====================
-Place in: /backend/static/css/app.theme.css  (or /static/app.theme.css)
-Link it in base.html with:
+Ubicación sugerida: /backend/static/css/app.theme.css  (o /static/css/app.theme.css)
+En base.html:
 <link rel="stylesheet" href="{{ url_for('static', path='css/app.theme.css') }}">
 ========================================================= */
 
-/* ---------- Design tokens ---------- */
+/* ---------- Design tokens (Brand Suizo) ---------- */
 :root{
-  /* Brand */
-  --brand-700:#03314B; /* deep */
-  --brand-600:#044369; /* Suizo */
-  --brand-500:#0D6EFD; /* accent */
-  --brand-300:#5AA6FF;
-  --brand-100:#E8F2FF;
+  /* Marca */
+  --brand-500:#04436a; /* Azul oscuro (principal) */
+  --brand-600:#033858; /* hover/active */
+  --brand-700:#022b44; /* pressed */
+  --brand-300:#5274ce; /* Azul alternativo (acentos/links) */
+  --brand-100:#e7ecfa; /* tinte suave para fondos sutiles */
+  --brand-white:#ffffff;
 
-  /* Neutrals */
-  --bg:#F6F8FB;               /* app background */
-  --surface:#FFFFFF;          /* cards */
-  --muted:#EEF2F7;            /* panels / inputs */
-  --text:#1C2430;             /* primary text */
-  --text-2:#5E6B7A;           /* secondary */
-  --border:#E5EBF2;           /* soft borders */
+  /* Neutrales afinados a fondo cálido */
+  --bg:#eeede8;              /* Fondo amarillo pálido (APP) */
+  --surface:#ffffff;          /* Cards/sheets */
+  --muted:#f2f1ed;            /* Paneles/inputs */
+  --text:#0f2a3a;             /* Texto principal */
+  --text-2:#4a5a6a;           /* Secundario */
+  --border:#d9ddd8;           /* Bordes suaves */
 
-  /* Feedback pastels */
-  --mint-200:#DFF5EA; --sky-200:#E8F2FF; --peach-200:#FFEFE6; --violet-200:#F1EDFF;
+  /* Pasteles (opcional) */
+  --mint-200:#e4f5ee; --sky-200:#e7ecfa; --peach-200:#fff2e8; --violet-200:#f2f0ff;
 
-  /* Radii & shadow */
+  /* Sombras / radios */
   --radius:18px; --radius-lg:22px;
   --shadow-lg: 0 16px 40px rgba(8,30,61,.12);
   --shadow-md: 0 10px 24px rgba(8,30,61,.10);
@@ -32,8 +33,12 @@ Link it in base.html with:
 
   /* Bootstrap overrides */
   --bs-primary: var(--brand-500);
+  --bs-secondary: var(--brand-300);
   --bs-body-bg: var(--bg);
   --bs-body-color: var(--text);
+  --bs-border-color: var(--border);
+  --bs-link-color: var(--brand-300);
+  --bs-link-hover-color: #3e5fb3;
 
   /* Layout helpers */
   --header-h: 76px;
@@ -42,9 +47,12 @@ Link it in base.html with:
   /* Safe areas (iOS notch) */
   --safe-top: env(safe-area-inset-top);
   --safe-bottom: env(safe-area-inset-bottom);
+
+  /* Rings (para box-shadow rgba) */
+  --ring-color: 82,116,206; /* rgb de #5274ce */
 }
 
-/* Dark theme */
+/* ---------- Dark theme ---------- */
 html[data-theme="dark"]{
   --bg:#0F141A;
   --surface:#151B22;
@@ -72,6 +80,10 @@ body{
 /* Medios fluidos */
 img, video, canvas, iframe{ max-width:100%; height:auto; }
 
+/* Enlaces */
+a{ color: var(--bs-link-color); text-decoration: none; }
+a:hover{ color: var(--bs-link-hover-color); text-decoration: underline; }
+
 /* ---------- Topbar (sticky) ---------- */
 .app-topbar{
   position:fixed; top:0; left:0; right:0; z-index:1030;
@@ -79,10 +91,16 @@ img, video, canvas, iframe{ max-width:100%; height:auto; }
   border-bottom:1px solid var(--border);
   box-shadow: 0 2px 10px rgba(8,30,61,.04);
 }
-.app-topbar .navbar-brand{font-weight:700; letter-spacing:.2px;}
+.app-topbar .navbar-brand{font-weight:700; letter-spacing:.2px; color: var(--brand-500); }
 .app-topbar .nav-link, .app-topbar .navbar-text{color:var(--text-2);} 
-.app-topbar .btn-chat{ border-radius: 999px; padding:.5rem 1rem; font-weight:600;}
-/* Wrap en acciones para que no “salten” en XS */
+.app-topbar .btn-chat{ border-radius: 999px; padding:.5rem 1rem; font-weight:600; }
+/* Variante opcional: topbar con fondo de marca (usar .app-topbar.brand en el HTML si la querés) */
+.app-topbar.brand{ background: var(--brand-500); border-bottom-color: transparent; }
+.app-topbar.brand .navbar-brand,
+.app-topbar.brand .nav-link,
+.app-topbar.brand .navbar-text{ color:#ffffffcc; }
+.app-topbar.brand .nav-link:hover{ color:#ffffff; }
+
 @media (max-width: 575.98px){
   .app-topbar .navbar-text{ display:none; } /* opcional */
 }
@@ -102,7 +120,7 @@ img, video, canvas, iframe{ max-width:100%; height:auto; }
   border-radius:var(--radius);
   box-shadow:var(--shadow-sm);
 }
-.card-clean .card-header{ background:transparent; border-bottom:1px solid var(--border); }
+.card-clean .card-header{ background:linear-gradient(180deg, rgba(4,67,106,.06), rgba(4,67,106,0)); border-bottom:1px solid var(--border); }
 .card-clean .card-body{ padding:1rem 1.25rem; }
 
 /* ---------- Segmented control ---------- */
@@ -128,12 +146,35 @@ img, video, canvas, iframe{ max-width:100%; height:auto; }
   background:var(--surface); color:var(--text);
 }
 .form-control:focus, .form-select:focus{
-  box-shadow:0 0 0 .25rem rgba(13,110,253,.15); border-color:var(--brand-300);
+  box-shadow:0 0 0 .25rem rgba(var(--ring-color), .25);
+  border-color:#5274ce;
 }
 
 /* Tamaño compacto útil en móvil */
 .input-compact .form-control,
 .input-compact .form-select{ padding:.45rem .6rem; font-size:.95rem; }
+
+/* ---------- Botones (toman de los tokens Bootstrap) ---------- */
+.btn-primary{
+  --bs-btn-bg: var(--brand-500);
+  --bs-btn-border-color: var(--brand-500);
+  --bs-btn-hover-bg: var(--brand-600);
+  --bs-btn-hover-border-color: var(--brand-600);
+  --bs-btn-active-bg: var(--brand-700);
+  --bs-btn-active-border-color: var(--brand-700);
+  --bs-btn-color: #ffffff;
+}
+.btn-secondary{
+  --bs-btn-bg: var(--brand-300);
+  --bs-btn-border-color: var(--brand-300);
+  --bs-btn-hover-bg: #3e5fb3;
+  --bs-btn-hover-border-color: #3e5fb3;
+  --bs-btn-color: #ffffff;
+}
+.btn-outline-primary{ color: var(--brand-500); border-color: var(--brand-500); }
+.btn-outline-primary:hover{ color:#fff; background: var(--brand-500); border-color: var(--brand-500); }
+.btn-outline-secondary{ color: var(--brand-300); border-color: var(--brand-300); }
+.btn-outline-secondary:hover{ color:#fff; background: var(--brand-300); border-color: var(--brand-300); }
 
 /* ---------- Tablas responsivas ---------- */
 .table-wrap{ width:100%; overflow-x:auto; -webkit-overflow-scrolling: touch; }
@@ -187,6 +228,14 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
 .shadow-hover{ transition: box-shadow .18s cubic-bezier(0.22,1,0.36,1), transform .18s; }
 .shadow-hover:hover{ box-shadow:var(--shadow-md); transform: translateY(-2px); }
 
+/* Utilidades de marca */
+.text-brand{ color: var(--brand-500) !important; }
+.text-brand-alt{ color: var(--brand-300) !important; }
+.bg-brand{ background: var(--brand-500) !important; color:#fff !important; }
+.bg-brand-alt{ background: var(--brand-300) !important; color:#fff !important; }
+.bg-brand-soft{ background: rgba(4,67,106,.06) !important; }
+.border-brand{ border-color: var(--brand-500) !important; }
+
 /* ---------- Responsive helpers (mobile-first) ---------- */
 /* Grillas adaptables para tus vistas (analisis, admin, etc.) */
 .stack{ display:grid; gap: .75rem; } /* 1 columna por defecto */
@@ -227,7 +276,7 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
   /* Evita que cualquier componente “crezca” más que el viewport */
   .card, .card-clean, .brand, .pill, .icon-btn{ max-width:100%; }
 }
-/* Cualquier contenedor inesperado con min-width fijo quedará neutralizado */
+/* Neutraliza min-width fijos no deseados */
 [class*="container"], [class*="Container"]{ min-width: 0; }
 
 /* ---------- Reduced motion ---------- */
