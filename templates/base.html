@@ -21,6 +21,15 @@
     })();
   </script>
 
+  <!-- Helper global para sanitizar HTML (usado en múltiples funciones) -->
+  <script>
+    function escapeHTML(s){
+      return (s ?? '').toString().replace(/[&<>"']/g, c => (
+        {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+      ));
+    }
+  </script>
+
   <!-- Rendimiento -->
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -202,7 +211,7 @@
         var(--bg-body);
     }
 
-    .cardx{ background:var(--surface); border:1px solid var(--bs-border-color, var(--border)); border-radius:18px; box-shadow:var(--shadow); padding:16px; posición:relative; }
+    .cardx{ background:var(--surface); border:1px solid var(--bs-border-color, var(--border)); border-radius:18px; box-shadow:var(--shadow); padding:16px; position:relative; }
     .cardx .title{ font-weight:700; display:flex; align-items:center; gap:8px; }
 
     @media (max-width: 991.98px){
@@ -816,7 +825,6 @@
       node.innerHTML = (who==='ai' ? '<b>IA:</b> ' : '<b>Yo:</b> ') + escapeHTML(text);
       scrollToBottom(true);
     }
-    function escapeHTML(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
     (function markActive(){
       const path=location.pathname;
@@ -836,12 +844,11 @@
 
     function showToast({title='Aviso', body='', icon='info', delay=3200}={}){
       const cont=document.getElementById('toastContainer'); if(!cont) return;
-      const esc=(s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
       const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
       el.innerHTML=`<div class="toast-header">
-        <i class="bi bi-${esc(icon)} me-1"></i><strong class="me-auto">${esc(title)}</strong>
+        <i class="bi bi-${escapeHTML(icon)} me-1"></i><strong class="me-auto">${escapeHTML(title)}</strong>
         <small>Ahora</small><button class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
-      </div><div class="toast-body">${esc(body)}</div>`;
+      </div><div class="toast-body">${escapeHTML(body)}</div>`;
       cont.appendChild(el); const t=new bootstrap.Toast(el,{delay}); t.show(); el.addEventListener('hidden.bs.toast',()=> el.remove());
     }
 

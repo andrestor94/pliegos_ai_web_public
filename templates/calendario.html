@@ -5,8 +5,8 @@
 {% block extra_head %}
   <!-- FullCalendar 6 -->
   <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/locales-all.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/locales-all.global.min.js" defer></script>
 
   <style>
     /* Integración visual con el theme */
@@ -14,6 +14,7 @@
     #calendar{
       background:#fff; border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow);
       padding:14px 14px 64px; /* espacio inferior para los controles flotantes */
+      position: relative; z-index: 1;
     }
     .fc .fc-toolbar-title{ font-weight:700; color:#0f172a; }
     .fc .fc-button{ border-radius:10px; }
@@ -22,10 +23,15 @@
     /* Controles externos (abajo izq / abajo der) */
     .cal-ctrl-left, .cal-ctrl-right{
       position:absolute; bottom:12px; display:flex; gap:8px;
+      z-index: 10; pointer-events: auto;
     }
     .cal-ctrl-left{ left:12px; }
     .cal-ctrl-right{ right:12px; }
     .cal-ctrl-left .btn, .cal-ctrl-right .btn{ border-radius:10px; }
+    .btn.is-active{
+      border-color: var(--brand-300, #5274ce) !important;
+      box-shadow: 0 0 0 4px rgba(82,116,206,.15);
+    }
 
     .legend{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
     .dot{ width:12px; height:12px; border-radius:999px; display:inline-block; }
@@ -216,10 +222,7 @@
       weekNumbers: true,
       expandRows: true,
       initialView: 'dayGridMonth',
-
-      /* Usamos SOLO controles externos */
-      headerToolbar: false,
-
+      headerToolbar: false,   /* usamos controles externos */
       buttonText: { today:'Hoy', month:'Mes', week:'Semana', day:'Día', list:'Lista' },
       selectable: true,
       selectMirror: true,
@@ -257,67 +260,56 @@
     });
     calendar.render();
 
-    /* 👇 Importante: exponer la instancia para controles externos */
+    /* Exponer instancia para controles externos */
     el.__fcCalendar = calendar;
     window.AppCalendar = calendar;
     window.__calendar = calendar;
+
+    /* Resaltar botón activo al iniciar */
+    markActive(calendar.view.type);
   }
 
-  // Crear evento desde modal
-  document.getElementById('evtCreateBtn')?.addEventListener('click', async ()=>{
-    if(!_selectCtx) return;
-    const title = document.getElementById('evtTitle').value.trim();
-    const description = document.getElementById('evtDesc').value.trim();
-    const color = document.getElementById('evtTipo').value;
-    if(!title){ showToast({title:'Falta título', body:'El evento necesita un título.', icon:'exclamation-triangle'}); return; }
-    try{
-      const created = await crearEvento({
-        title, description, start:_selectCtx.startStr, end:_selectCtx.endStr || null, allDay:_selectCtx.allDay, color
-      });
-      calendar.addEvent({ ...created });
-      showToast({title:'Evento creado', body:title, icon:'check2-circle'});
-    }catch(e){ showToast({title:'Error', body:e.message||'No se pudo crear', icon:'exclamation-triangle'}); }
-    bootstrap.Modal.getInstance(document.getElementById('modalNuevoEvt'))?.hide();
+  /* === Wiring de controles externos === */
+  function markActive(viewName){
+    const btns = document.querySelectorAll('[data-cal-view]');
+    btns.forEach(b => b.classList.toggle('is-active', b.getAttribute('data-cal-view') === viewName));
+  }
+
+  document.addEventListener('click', (ev) => {
+    const viewBtn = ev.target.closest('[data-cal-view]');
+    const navBtn  = ev.target.closest('[data-cal-nav]');
+    if (!viewBtn && !navBtn) return;
+    ev.preventDefault();
+
+    const cal = window.AppCalendar || document.getElementById('calendar').__fcCalendar;
+    if (!cal) return;
+
+    if (viewBtn) {
+      const view = viewBtn.getAttribute('data-cal-view');
+      if (view) {
+        cal.changeView(view);
+        markActive(view);
+      }
+      return;
+    }
+    if (navBtn) {
+      const nav = navBtn.getAttribute('data-cal-nav');
+      switch (nav) {
+        case 'today': cal.today(); break;
+        case 'prev' : cal.prev();  break;
+        case 'next' : cal.next();  break;
+      }
+    }
   });
 
-  // Guardar/Eliminar desde modal detalle
-  document.getElementById('evtSaveBtn')?.addEventListener('click', async ()=>{
-    const modal = document.getElementById('modalDetalleEvt');
-    const id = modal.dataset.eventId;
-    const evt = calendar.getEventById(id);
-    if(!evt) return;
-    const title = document.getElementById('evtTitleE').value.trim();
-    const description = document.getElementById('evtDescE').value.trim();
-    const color = document.getElementById('evtColorE').value;
-    try{
-      await actualizarEvento(id, { title, description, color });
-      evt.setProp('title', title);
-      evt.setExtendedProp('description', description);
-      evt.setProp('backgroundColor', color);
-      evt.setProp('borderColor', color);
-      showToast({title:'Evento actualizado', body:title, icon:'check2-circle'});
-      bootstrap.Modal.getInstance(modal)?.hide();
-    }catch(e){ showToast({title:'Error', body:e.message||'No se pudo actualizar', icon:'exclamation-triangle'}); }
-  });
-
-  document.getElementById('evtDelBtn')?.addEventListener('click', async ()=>{
-    const modal = document.getElementById('modalDetalleEvt');
-    const id = modal.dataset.eventId;
-    const evt = calendar.getEventById(id);
-    if(!evt) return;
-    if(!confirm('¿Eliminar este evento?')) return;
-    try{
-      await eliminarEvento(id);
-      const title = evt.title;
-      evt.remove();
-      showToast({title:'Evento eliminado', body:title, icon:'trash'});
-      bootstrap.Modal.getInstance(modal)?.hide();
-    }catch(e){ showToast({title:'Error', body:e.message||'No se pudo eliminar', icon:'exclamation-triangle'}); }
+  // Sincroniza el highlight si la vista cambia por otro lado
+  document.addEventListener('DOMContentLoaded', () => {
+    const cal = window.AppCalendar || document.getElementById('calendar').__fcCalendar;
+    if (!cal) return;
+    cal.on('viewDidMount', (arg) => markActive(arg.view.type));
   });
 
   /* ===== Init ===== */
-  (async function(){
-    await initCalendar();
-  })();
+  (async function(){ await initCalendar(); })();
 </script>
 {% endblock %}
