@@ -71,7 +71,11 @@ def iso_utc_to_ar_str(iso_utc: str, fmt: str = "%d/%m/%Y %H:%M") -> str:
 # ================== App & Middlewares ==================
 SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-in-prod")
 app = FastAPI(middleware=[
-    Middleware(SessionMiddleware, secret_key=SESSION_SECRET)
+    # Cookie de sesión más robusta y persistente
+    Middleware(SessionMiddleware,
+               secret_key=SESSION_SECRET,
+               same_site="lax",
+               max_age=60*60*24*30)  # 30 días
 ])
 
 # ---------- Garantizar tablas de chat si faltan (fix 'no such table: mensajes') ----------
@@ -539,13 +543,23 @@ def _pr_clear(user: str):
 
 # ================== Login/Logout ==================
 @app.post("/login")
-async def login(request: Request, email: str = Form(...), password: str = Form(...)):
+async def login(request: Request,
+                email: str = Form(...),
+                password: str = Form(...),
+                remember: Optional[str] = Form(default=None)):  # "on" si tildan Recordarme
     usuario = obtener_usuario_por_email(email)
-    if usuario and usuario[3] == password:
+
+    # usuario tuple esperado: (id, nombre, email, password, rol, activo)
+    is_active = True
+    if isinstance(usuario, (list, tuple)) and len(usuario) >= 6:
+        is_active = bool(usuario[5])
+
+    if usuario and usuario[3] == password and is_active:
         request.session["usuario"] = usuario[2]
         request.session["email"] = usuario[2]
         request.session["rol"] = usuario[4]
         request.session["nombre"] = usuario[1] or usuario[2]
+        request.session["remember"] = bool(remember)
 
         sid = uuid.uuid4().hex
         request.session["sid"] = sid
@@ -573,7 +587,13 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
             """, (sid, request.session["usuario"], nombre_s, ip_s, ua_s, now_iso, now_iso, None, None))
 
         return RedirectResponse("/", status_code=303)
-    return templates.TemplateResponse("login.html", {"request": request, "error": "Credenciales incorrectas"})
+
+    # Mensajes de error más claros
+    if usuario and not is_active:
+        err = "Tu usuario está desactivado. Consultá con un administrador."
+    else:
+        err = "Credenciales incorrectas"
+    return templates.TemplateResponse("login.html", {"request": request, "error": err}, status_code=401)
 
 @app.post("/logout")
 async def logout_post(request: Request):
@@ -594,6 +614,72 @@ async def logout_get(request: Request):
             c.execute("UPDATE sessions SET logout_at=?, closed_reason=? WHERE id=?", (now_iso, "logout", sid))
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
+
+# ================== Cambiar contraseña (vista + alias + post) ==================
+@app.get("/cambiar-password", response_class=HTMLResponse)
+async def cambiar_password_view(request: Request):
+    if not request.session.get("usuario"):
+        return RedirectResponse("/login")
+    ok = request.query_params.get("ok")
+    return templates.TemplateResponse("cambiar_password.html", {"request": request, "error": None, "ok": ok})
+
+# Alias con guion_bajo -> redirige a la ruta canónica con guion
+@app.get("/cambiar_password", response_class=HTMLResponse)
+async def cambiar_password_alias():
+    return RedirectResponse("/cambiar-password", status_code=307)
+
+@app.post("/cambiar-password")
+async def cambiar_password_post(
+    request: Request,
+    actual: str = Form(...),
+    nueva: str = Form(...),
+    confirmar: str = Form(...)
+):
+    email = request.session.get("usuario")
+    if not email:
+        return RedirectResponse("/login", status_code=303)
+
+    if not nueva or nueva != confirmar:
+        return templates.TemplateResponse(
+            "cambiar_password.html",
+            {"request": request, "error": "Las contraseñas no coinciden."},
+            status_code=400
+        )
+
+    row = obtener_usuario_por_email(email)
+    if not row:
+        return templates.TemplateResponse(
+            "cambiar_password.html",
+            {"request": request, "error": "Usuario no encontrado."},
+            status_code=404
+        )
+
+    # Validación de contraseña actual (según tu esquema plano)
+    if str(row[3]) != actual:
+        return templates.TemplateResponse(
+            "cambiar_password.html",
+            {"request": request, "error": "La contraseña actual es incorrecta."},
+            status_code=400
+        )
+
+    actor_user_id, ip = _actor_info(request)
+    try:
+        # Tu función actualiza por email
+        actualizar_password(email.lower(), nueva, actor_user_id=actor_user_id, ip=ip)
+    except Exception as e:
+        print("❌ cambiar_password_post:", repr(e))
+        return templates.TemplateResponse(
+            "cambiar_password.html",
+            {"request": request, "error": "No se pudo actualizar la contraseña."},
+            status_code=500
+        )
+
+    try:
+        await notify_async(email, "Contraseña actualizada", "Tu contraseña fue actualizada correctamente.")
+    except Exception:
+        pass
+
+    return RedirectResponse("/cambiar-password?ok=1", status_code=303)
 
 # ================== Rating/Análisis ==================
 class RatingIn(BaseModel):
@@ -1719,7 +1805,6 @@ async def cal_delete(evt_id: str, request: Request):
             return JSONResponse({"error":"Evento no encontrado"}, status_code=404)
     await notify_async(request.session.get("usuario","Desconocido"), "Evento eliminado", f"ID: {evt_id}")
     return {"ok": True}
-
 # ================== Notificaciones ==================
 def _wants_html(req: Request) -> bool:
     acc = (req.headers.get("accept") or "").lower()
@@ -1788,7 +1873,7 @@ async def notificaciones_vista(request: Request):
 def notificaciones_redirect():
     return RedirectResponse("/notificaciones/vista", status_code=307)
 
-# NUEVO: alias exacto que te estaba dando 404
+# Alias directo que a veces usan los enlaces del front
 @app.get("/notificaciones/ui", response_class=HTMLResponse)
 async def notificaciones_ui_alias(request: Request):
     if not request.session.get("usuario"):
