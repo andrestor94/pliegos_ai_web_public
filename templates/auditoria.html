@@ -1,70 +1,68 @@
 {% extends "base.html" %}
 
-{% block title %}Registro de Auditoría · Suizo Argentina{% endblock %}
+{% block title %}Auditoría — Suizo Argentina{% endblock %}
 
 {% block extra_head %}
   <style>
-    /* ---------- Estilos específicos de Auditoría (SCOPED y compatibles con el theme) ---------- */
-
-    /* Contenedor principal en columna */
-    .auditoria.wrap { display: grid; gap: .75rem; }
+    /* ===== Estilos específicos de Auditoría (scoped) ===== */
+    .auditoria.wrap{ display:grid; gap:.75rem; }
 
     /* Filtros compactos y redondeados */
     .auditoria .filters .form-control,
-    .auditoria .filters .form-select{
-      border-radius:12px;
-    }
+    .auditoria .filters .form-select{ border-radius:12px; }
 
-    /* Tabla con header pegajoso dentro del contenedor scroll */
+    /* Tabla con header pegajoso y contenedor con scroll */
     .auditoria .table-wrap{
-      max-height: 65vh;
-      border-radius: var(--radius);
-      overflow: auto;
+      max-height:65vh;
+      border-radius:var(--radius);
+      overflow:auto;
     }
     .auditoria thead th{
-      position: sticky; top: 0; z-index: 1;
-      background: var(--muted);
+      position:sticky; top:0; z-index:1;
+      background:var(--muted);
     }
     html[data-theme="dark"] .auditoria thead th{ background:#0f172a; }
 
+    /* Celdas & columnas */
+    .auditoria .table th, .auditoria .table td{ vertical-align:middle; }
+    .auditoria .cell-pre{ max-width:320px; }
+    .auditoria .cell-trunc{ max-width:260px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
     /* Pills de acción */
     .auditoria .badge-accion{
-      background: var(--brand-100);
-      color: var(--brand-500);
-      border: 1px solid var(--bs-border-color, var(--border));
-      border-radius: 999px;
-      padding: .35rem .6rem;
-      font-weight: 700;
-      font-size: .8rem;
-      white-space: nowrap;
+      background:var(--brand-100);
+      color:var(--brand-500);
+      border:1px solid var(--bs-border-color, var(--border));
+      border-radius:999px;
+      padding:.35rem .6rem;
+      font-weight:700;
+      font-size:.8rem;
+      white-space:nowrap;
     }
 
-    .auditoria .cell-pre{ max-width: 320px; }
-    .auditoria .btn-icon{ display:inline-flex; align-items:center; gap:.35rem; }
-
-    /* Modal JSON – usa tokens para respetar claro/oscuro */
+    /* JSON modal */
     .auditoria .json-box{
-      background: var(--muted);
-      color: var(--text);
-      border-radius: 12px;
-      padding: 12px;
+      background:var(--muted);
+      color:var(--text);
+      border-radius:12px;
+      padding:12px;
       box-shadow: inset 0 0 0 1px var(--bs-border-color, var(--border));
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      font-size: .9rem;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
+      font-size:.9rem; white-space:pre-wrap; overflow-wrap:anywhere;
     }
-    .auditoria .json-box code{ white-space: pre-wrap; }
+
+    /* Botón icono simple */
+    .auditoria .btn-icon{ display:inline-flex; align-items:center; gap:.35rem; }
   </style>
 {% endblock %}
 
 {% block content %}
 <div class="container-xxl auditoria wrap">
 
-  <!-- Header -->
-  <section class="card-clean shadow-hover">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <h1 class="h5 m-0 text-brand"><i class="bi bi-clipboard-data me-1"></i> Registro de Auditoría</h1>
+  <!-- Header (sin hover) -->
+  <section class="card-clean">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <h1 class="hero-title m-0"><i class="bi bi-clipboard-data me-1"></i> Auditoría</h1>
       <div class="d-flex gap-2">
         <button id="btnExport" class="btn btn-sm btn-outline-secondary">
           <i class="bi bi-download me-1"></i> Exportar CSV
@@ -74,8 +72,8 @@
     </div>
   </section>
 
-  <!-- Filtros -->
-  <section class="card-clean shadow-hover filters">
+  <!-- Filtros (sin hover) -->
+  <section class="card-clean filters">
     <div class="card-body">
       <div class="row g-2 align-items-end input-compact">
         <div class="col-md-4">
@@ -109,15 +107,15 @@
   </section>
 
   {% if logs and logs|length > 0 %}
-  <!-- Tabla -->
-  <section class="card-clean shadow-hover">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <div class="small text-muted">
-        Resultados: <span id="count">0</span>
-        · <span class="text-uppercase">Auditoría inmutable</span> (no se permite eliminar registros)
+  <!-- Tabla (sin hover) -->
+  <section class="card-clean">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div class="small subtle">
+        Resultados: <span id="count" aria-live="polite">0</span>
+        · <span class="text-uppercase">Auditoría inmutable</span>
       </div>
       <div class="d-flex align-items-center gap-2">
-        <label for="pageSize" class="small text-muted">Por página:</label>
+        <label for="pageSize" class="small subtle">Por página:</label>
         <select id="pageSize" class="form-select form-select-sm" style="width:auto">
           <option>10</option><option selected>25</option><option>50</option><option>100</option>
         </select>
@@ -130,11 +128,11 @@
           <thead>
             <tr>
               <th>Fecha</th>
-              <th>Email</th>
-              <th>Nombre</th>
+              <th class="cell-trunc">Usuario</th>
+              <th class="cell-trunc">Nombre</th>
               <th>Acción</th>
-              <th>Entidad</th>
-              <th>ID</th>
+              <th class="cell-trunc">Entidad</th>
+              <th class="cell-trunc">ID</th>
               <th>Antes</th>
               <th>Después</th>
               <th>IP</th>
@@ -145,13 +143,13 @@
       </div>
 
       <div class="d-flex justify-content-between align-items-center mt-2">
-        <div class="small text-muted" id="rangeInfo">—</div>
+        <div class="small subtle" id="rangeInfo" aria-live="polite">—</div>
         <nav><ul class="pagination pagination-sm mb-0" id="pager"></ul></nav>
       </div>
     </div>
   </section>
   {% else %}
-    <section class="card-clean shadow-hover">
+    <section class="card-clean">
       <div class="card-body">
         <div class="alert alert-warning mb-0">⚠️ No hay registros de auditoría disponibles.</div>
       </div>
@@ -168,7 +166,7 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
       <div class="modal-body">
-        <div class="json-box"><code id="jsonCode"></code></div>
+        <div class="json-box auditoria"><code id="jsonCode"></code></div>
       </div>
       <div class="modal-footer">
         <button id="btnCopyJson" class="btn btn-outline-secondary btn-icon" type="button"><i class="bi bi-clipboard"></i> Copiar</button>
@@ -181,32 +179,41 @@
 
 {% block extra_scripts %}
 <script>
-  /* Inyectamos los datos desde el servidor en una constante segura.
-     IMPORTANTE: cada log debe incluir un campo numérico 'id' único. */
+  /* Datos inyectados por servidor (cada log debe tener un 'id' único numérico o string) */
   const RAW = {{ (logs or [])|tojson|safe }};
 
-  /* Helpers */
-  function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-  function debounce(fn, ms){ let id; return (...a)=>{ clearTimeout(id); id=setTimeout(()=>fn(...a), ms); }; }
-  const $ = (sel,root=document)=>root.querySelector(sel);
+  /* ===== Helpers ===== */
+  const $  = (sel,root=document)=>root.querySelector(sel);
   const $$ = (sel,root=document)=>[...root.querySelectorAll(sel)];
+  function escapeHtml(s){ return (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function debounce(fn,ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
+  function toCSV(rows){
+    if(!rows.length) return '';
+    const headers = Object.keys(rows[0]);
+    const esc = v => `"${String(v??'').replace(/"/g,'""')}"`;
+    const lines = [headers.map(esc).join(',')];
+    rows.forEach(r => lines.push(headers.map(h => esc(r[h])).join(',')));
+    // BOM para Excel
+    return '\uFEFF' + lines.join('\n');
+  }
 
+  /* ===== Estado & refs ===== */
   let STATE = { filtered: RAW.slice(), page: 1, pageSize: 25 };
+  const TBODY = $('#tbodyLogs');
+  const COUNT = $('#count');
+  const PAGER = $('#pager');
+  const RANGE = $('#rangeInfo');
 
-  const TBODY = document.getElementById('tbodyLogs');
-  const COUNT = document.getElementById('count');
-  const PAGER = document.getElementById('pager');
-  const RANGE = document.getElementById('rangeInfo');
-
-  /* Filtrado */
+  /* ===== Filtrado ===== */
   function applyFilters(){
     const term = ($('#freetext')?.value || '').toLowerCase().trim();
-    const acc  = $('#accion')?.value || '';
+    const acc  = ($('#accion')?.value || '').toUpperCase();
     const d    = $('#desde')?.value || '';
     const h    = $('#hasta')?.value || '';
 
     const out = RAW.filter(l=>{
-      if(acc && (l.accion||'') !== acc) return false;
+      const action = String(l.accion||'').toUpperCase();
+      if(acc && action !== acc) return false;
 
       if(d && new Date(l.fecha) < new Date(d)) return false;
       if(h){
@@ -215,8 +222,11 @@
       }
 
       if(term){
-        const s = [l.usuario,l.nombre,l.accion,l.entidad,l.entidad_id,l.ip,l.before,l.after]
-          .map(x=>x==null?'':String(x)).join(' ').toLowerCase();
+        const s = [
+          l.usuario, l.nombre, l.accion, l.entidad, l.entidad_id, l.ip,
+          typeof l.before==='object' ? JSON.stringify(l.before) : l.before,
+          typeof l.after==='object'  ? JSON.stringify(l.after)  : l.after
+        ].map(x => x==null ? '' : String(x)).join(' ').toLowerCase();
         if(!s.includes(term)) return false;
       }
       return true;
@@ -229,6 +239,7 @@
 
   function paginate(arr, page, size){ const i=(page-1)*size; return arr.slice(i, i+size); }
 
+  /* ===== Render ===== */
   function render(){
     const ps = parseInt($('#pageSize')?.value || '25', 10);
     STATE.pageSize = ps;
@@ -246,20 +257,22 @@
 
       rows.forEach(log=>{
         const tr = document.createElement('tr');
+
         const beforeBtn = (log.before && String(log.before).trim() !== '-') ?
           `<button class="btn btn-sm btn-outline-secondary btn-icon" data-json='${escapeHtml(JSON.stringify(safeJson(log.before), null, 2))}' data-title="Antes" type="button"><i class="bi bi-eye"></i> Ver</button>` :
-          '<span class="text-muted">-</span>';
+          '<span class="subtle">-</span>';
+
         const afterBtn  = (log.after && String(log.after).trim() !== '-') ?
           `<button class="btn btn-sm btn-outline-secondary btn-icon" data-json='${escapeHtml(JSON.stringify(safeJson(log.after), null, 2))}' data-title="Después" type="button"><i class="bi bi-eye"></i> Ver</button>` :
-          '<span class="text-muted">-</span>';
+          '<span class="subtle">-</span>';
 
         tr.innerHTML = `
           <td>${escapeHtml(log.fecha || '')}</td>
-          <td>${escapeHtml(log.usuario || '')}</td>
-          <td>${escapeHtml(log.nombre || '-')}</td>
+          <td class="cell-trunc" title="${escapeHtml(log.usuario||'')}">${escapeHtml(log.usuario || '')}</td>
+          <td class="cell-trunc" title="${escapeHtml(log.nombre||'')}">${escapeHtml(log.nombre || '-')}</td>
           <td><span class="badge-accion">${escapeHtml(log.accion || '')}</span></td>
-          <td>${escapeHtml(log.entidad || '')}</td>
-          <td>${escapeHtml(log.entidad_id || '')}</td>
+          <td class="cell-trunc" title="${escapeHtml(log.entidad||'')}">${escapeHtml(log.entidad || '')}</td>
+          <td class="cell-trunc" title="${escapeHtml(log.entidad_id||'')}">${escapeHtml(log.entidad_id || '')}</td>
           <td class="cell-pre">${beforeBtn}</td>
           <td class="cell-pre">${afterBtn}</td>
           <td>${escapeHtml(log.ip || '-')}</td>
@@ -316,33 +329,37 @@
     });
   }
 
-  // Copiar JSON
+  /* Copiar JSON */
   $('#btnCopyJson')?.addEventListener('click', async ()=>{
     const txt = $('#jsonCode')?.textContent || '';
     try{ await navigator.clipboard.writeText(txt); showToast?.({title:'Copiado', body:'Contenido copiado al portapapeles.', icon:'clipboard'}); }
     catch{ showToast?.({title:'Error', body:'No se pudo copiar.', icon:'exclamation-triangle'}); }
   });
 
-  // Filtros
+  /* Filtros */
   $('#freetext')?.addEventListener('input', debounce(applyFilters, 200));
   $('#accion')?.addEventListener('change', applyFilters);
   $('#desde')?.addEventListener('change', applyFilters);
   $('#hasta')?.addEventListener('change', applyFilters);
   $('#pageSize')?.addEventListener('change', render);
   $('#btnLimpiar')?.addEventListener('click', ()=>{
-    ['freetext','accion','desde','hasta'].forEach(id=>{ const el=document.getElementById(id); if(!el) return; el.value=''; });
+    ['freetext','accion','desde','hasta'].forEach(id=>{ const el=$(`#${id}`); if(el) el.value=''; });
     applyFilters();
   });
 
-  // Export CSV
+  /* Export CSV */
   $('#btnExport')?.addEventListener('click', ()=>{
     const rows = STATE.filtered.map(l=>({
       id: l.id ?? '',
-      fecha:l.fecha||'', usuario:l.usuario||'', nombre:l.nombre||'',
-      accion:l.accion||'', entidad:l.entidad||'', entidad_id:l.entidad_id||'',
+      fecha: l.fecha||'',
+      usuario: l.usuario||'',
+      nombre: l.nombre||'',
+      accion: l.accion||'',
+      entidad: l.entidad||'',
+      entidad_id: l.entidad_id||'',
       before: typeof l.before==='object' ? JSON.stringify(l.before) : (l.before||''),
       after:  typeof l.after ==='object' ? JSON.stringify(l.after ) : (l.after ||''),
-      ip:l.ip||''
+      ip: l.ip||''
     }));
     const csv = toCSV(rows);
     const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
@@ -352,16 +369,7 @@
     a.click(); URL.revokeObjectURL(url);
   });
 
-  function toCSV(rows){
-    if(!rows.length) return '';
-    const headers = Object.keys(rows[0]);
-    const esc = v => `"${String(v).replace(/"/g,'""')}"`;
-    const lines = [headers.map(esc).join(',')];
-    rows.forEach(r => lines.push(headers.map(h => esc(r[h] ?? '')).join(',')));
-    return lines.join('\n');
-  }
-
-  // Inicializar si hay datos
+  /* Init (solo si hay datos) */
   if(RAW.length){ applyFilters(); }
 </script>
 {% endblock %}

@@ -4,7 +4,7 @@
 
 {% block extra_head %}
 <style>
-  /* Vista específica del informe */
+  /* ===== Vista específica del informe (alineada al theme) ===== */
   .report-actions .btn{ border-radius:10px; }
   .report-kv{ display:grid; grid-template-columns: 180px 1fr; gap:10px 16px; }
   .report-kv .k{ color:var(--text-2); }
@@ -13,17 +13,26 @@
   .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
 
   .table thead{ background:var(--bg-soft); position:sticky; top:0; z-index:1; }
-  .badge-doc{ background:#e8efff; color:#1e40af; border:1px solid #cfe0ff; border-radius:999px; padding:.15rem .5rem; font-weight:600; }
+  html[data-theme="dark"] .table thead{ background:#0f172a; }
+  .badge-doc{
+    background:#e8efff; color:#1e40af; border:1px solid #cfe0ff; border-radius:999px; padding:.15rem .5rem; font-weight:600;
+  }
+  html[data-theme="dark"] .badge-doc{ background:#0e223b; color:#93c5fd; border-color:#1f3b61; }
   .toolbar{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .toolbar .form-control, .toolbar .form-select{ border-radius:10px; }
 
   .highlight{ background:#fff3bf; border-radius:3px; padding:0 .15em; }
 
+  /* Cabeceras ordenables */
+  th.sortable{ cursor:pointer; user-select:none; white-space:nowrap; }
+  th.sortable .bi{ opacity:.35; margin-left:.25rem; }
+  th.sortable.active .bi{ opacity:1; }
+
   /* Impresión */
   @media print{
     header, .fab, .report-actions, .notif-fab, .toast-container, .tools-row{ display:none!important; }
     main.container{ max-width: 100%!important; margin:0!important; }
-    .card{ box-shadow:none!important; border:1px solid #ddd; }
+    .card{ box-shadow:none!important; border:1px solid var(--border); }
     .table thead{ position:static; }
   }
 </style>
@@ -50,6 +59,7 @@
           <span class="input-group-text"><i class="bi bi-search"></i></span>
           <input id="filterItems" class="form-control form-control-sm" placeholder="Filtrar ítems… (descr./unidad)">
         </div>
+
         <div class="input-group" style="width:auto;">
           <span class="input-group-text"><i class="bi bi-translate"></i></span>
           <select id="localeSel" class="form-select form-select-sm" style="width:auto">
@@ -57,6 +67,16 @@
             <option value="en-US">Formato: en-US</option>
           </select>
         </div>
+
+        <div class="input-group" style="width:auto;">
+          <span class="input-group-text"><i class="bi bi-currency-exchange"></i></span>
+          <select id="currencySel" class="form-select form-select-sm" style="width:auto" title="Moneda para formateo">
+            <option value="ARS" selected>ARS</option>
+            <option value="USD">USD</option>
+            <option value="EUR">EUR</option>
+          </select>
+        </div>
+
         <div class="ms-auto small text-muted" id="itemsInfo">—</div>
       </div>
     </div>
@@ -110,17 +130,17 @@
           <table class="table align-middle" id="itemsTable">
             <thead>
               <tr>
-                <th style="width:64px">#</th>
-                <th>Descripción</th>
-                <th class="text-nowrap">Unidad</th>
-                <th class="text-end text-nowrap">Cantidad</th>
-                <th class="text-end text-nowrap">Precio Ref.</th>
+                <th class="sortable" data-sort="idx" style="width:64px"># <i class="bi bi-arrow-down-up"></i></th>
+                <th class="sortable" data-sort="desc">Descripción <i class="bi bi-arrow-down-up"></i></th>
+                <th class="sortable text-nowrap" data-sort="unidad">Unidad <i class="bi bi-arrow-down-up"></i></th>
+                <th class="sortable text-end text-nowrap" data-sort="cantidad">Cantidad <i class="bi bi-arrow-down-up"></i></th>
+                <th class="sortable text-end text-nowrap" data-sort="precio">Precio Ref. <i class="bi bi-arrow-down-up"></i></th>
               </tr>
             </thead>
             <tbody>
               {% for it in data.items %}
               <tr>
-                <td class="text-muted">{{ it.id or loop.index }}</td>
+                <td class="text-muted td-idx">{{ it.id or loop.index }}</td>
                 <td class="campo-desc">{{ it.descripcion or it.desc or '—' }}</td>
                 <td class="text-nowrap campo-un">{{ it.unidad or it.u or '—' }}</td>
                 <td class="text-end campo-cant">{{ it.cantidad or it.cant or '—' }}</td>
@@ -157,21 +177,52 @@
 {% block extra_scripts %}
 {% if data %}<script id="reportData" type="application/json">{{ data|tojson }}</script>{% endif %}
 <script>
-  // ===== Helpers =====
+  /* ========= Helpers ========= */
   const $ = (s,sc)=> (sc||document).querySelector(s);
   const $$ = (s,sc)=> Array.from((sc||document).querySelectorAll(s));
   const escapeHtml = (s)=> (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const parseNum = (v)=>{
+  const LS = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v);}catch(_){return d;} }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(_){}} };
+
+  // Parseo robusto de números humanos (1.234,56 | 1,234.56 | 1234,56 | 1234.56 | $ 1.234,56 ARS | US$ 1,234.56)
+  function parseNum(v){
     if(v==null) return NaN;
     if(typeof v==='number') return v;
-    const s=String(v).replace(/[^0-9,.\-]/g,'').replace(/(\d)[,](\d{3}\b)/g,'$1$2'); // quita separadores miles con coma
-    const m = s.match(/^-?\d+(?:[.,]\d+)?$/);
-    if(!m) return NaN;
-    return Number(s.replace(',','.'));
-  };
+    let s = String(v).trim();
+    if(!s) return NaN;
+    s = s.replace(/[^\d.,\-]/g,''); // quita símbolos/currency
+    if(!s) return NaN;
+    const hasDot = s.includes('.'), hasCom = s.includes(',');
+    if(hasDot && hasCom){
+      // el separador decimal suele ser el último que aparece
+      const lastDot = s.lastIndexOf('.');
+      const lastCom = s.lastIndexOf(',');
+      const dec = lastDot > lastCom ? '.' : ',';
+      const grp = dec === '.' ? ',' : '.';
+      s = s.replaceAll(grp,'').replace(dec,'.');
+      return Number(s);
+    }else if(hasCom){
+      const parts = s.split(',');
+      if(parts.length>2){
+        const dec = parts.pop();
+        s = parts.join('') + '.' + dec;
+      }else if(parts.length===2){
+        // si la parte derecha tiene 3 dígitos, es miles; si 1-2, es decimal
+        s = parts[1].length===3 ? (parts.join('')) : (parts[0]+'.'+parts[1]);
+      }
+      return Number(s);
+    }else if(hasDot){
+      const parts = s.split('.');
+      if(parts.length>2){
+        const dec = parts.pop();
+        s = parts.join('') + '.' + dec;
+      } // si es único punto, JS parsea bien
+      return Number(s);
+    }
+    return Number(s);
+  }
   const sum = (arr)=> arr.reduce((a,b)=> a+(Number.isFinite(b)?b:0), 0);
 
-  // Linkificar texto simple (URLs / emails)
+  // Linkificar texto simple (URLs / emails) preservando seguridad
   function linkify(el){
     if(!el) return;
     const txt = el.textContent;
@@ -182,7 +233,7 @@
     el.innerHTML = html;
   }
 
-  // ===== CSV =====
+  // CSV genérico
   function downloadCSV(rows, name){
     const esc = v=> `"${String(v??'').replace(/"/g,'""')}"`;
     const csv = rows.map(r=> r.map(esc).join(',')).join('\n');
@@ -192,11 +243,10 @@
     a.download = name; a.click(); URL.revokeObjectURL(a.href);
   }
 
-  // ===== Copiar =====
+  // ===== Copiar informe (solo texto útil) =====
   $('#btnCopy')?.addEventListener('click', async ()=>{
     try{
       const el = $('#reportCard').cloneNode(true);
-      // Quitamos controles que no aportan al texto
       el.querySelectorAll('button, .form-label, .table tfoot').forEach(n=> n.remove?.());
       await navigator.clipboard.writeText(el.innerText.trim());
       (window.showToast||console.log)({title:'Copiado', body:'Contenido copiado al portapapeles.', icon:'clipboard'});
@@ -205,7 +255,7 @@
     }
   });
 
-  // ===== Export JSON =====
+  // ===== Export JSON bruto =====
   function descargarJSON(){
     try{
       const el = document.getElementById('reportData');
@@ -224,28 +274,46 @@
   }
   window.descargarJSON = descargarJSON;
 
-  // ===== Totales / formateo / filtro =====
-  const localeSel = $('#localeSel');
-  let currentLocale = localeSel?.value || 'es-AR';
+  // ===== Formateo / totales / filtro =====
+  const localeSel   = $('#localeSel');
+  const currencySel = $('#currencySel');
+  let currentLocale  = LS.get('report.locale', 'es-AR');
+  let currentCurrency= LS.get('report.currency','ARS');
+
+  // Persistencia de preferencias
+  (function restorePrefs(){
+    if(localeSel)   localeSel.value   = currentLocale;
+    if(currencySel) currencySel.value = currentCurrency;
+  })();
 
   function nf(opts){ try{ return new Intl.NumberFormat(currentLocale, opts); }catch(_){ return new Intl.NumberFormat('es-AR', opts); } }
 
+  // Detección simple de moneda desde presupuesto o precios
+  (function detectCurrency(){
+    const pres = $('#vPresupuesto')?.textContent || '';
+    const prices = $$('#itemsTable .campo-precio').map(td=> td.textContent).join(' ');
+    const bag = (pres + ' ' + prices).toUpperCase();
+    if(/USD|US\$|U\$S/.test(bag)) currentCurrency='USD';
+    else if(/EUR|€/.test(bag)) currentCurrency='EUR';
+    else if(/\$/.test(bag)) currentCurrency='ARS';
+    if(currencySel) currencySel.value = currentCurrency;
+  })();
+
   function recompute(){
-    const rows = $$('#itemsTable tbody tr');
-    const cant = rows.map(tr => parseNum($('.campo-cant', tr)?.textContent));
-    const precio= rows.map(tr => parseNum($('.campo-precio', tr)?.textContent));
-    // total monto si hay cantidad y precio
+    const rows = $$('#itemsTable tbody tr').filter(tr => tr.style.display!=='none');
+    const cant = rows.map(tr => parseNum($('.campo-cant', tr)?.dataset.raw || $('.campo-cant', tr)?.textContent));
+    const precio= rows.map(tr => parseNum($('.campo-precio', tr)?.dataset.raw || $('.campo-precio', tr)?.textContent));
     const totCant = sum(cant);
     const totMonto = sum(rows.map((_,i)=> (Number.isFinite(cant[i]) && Number.isFinite(precio[i])) ? cant[i]*precio[i] : 0));
     $('#tCant').textContent  = Number.isFinite(totCant) ? nf({maximumFractionDigits:2}).format(totCant) : '—';
-    $('#tMonto').textContent = Number.isFinite(totMonto) ? nf({style:'currency', currency:'ARS', maximumFractionDigits:2}).format(totMonto) : '—';
+    $('#tMonto').textContent = Number.isFinite(totMonto) ? nf({style:'currency', currency:currentCurrency, maximumFractionDigits:2}).format(totMonto) : '—';
     $('#totalsBadge').textContent = (Number.isFinite(totCant)||Number.isFinite(totMonto))
       ? `Ítems: ${rows.length} · Cantidad total: ${$('#tCant').textContent} · Monto estimado: ${$('#tMonto').textContent}`
       : `Ítems: ${rows.length}`;
     $('#itemsInfo').textContent = `Mostrando ${rows.length} ítems`;
   }
 
-  // Re-formatea columnas numéricas al cambiar locale (no altera valores de fuente)
+  // Re-formatea columnas numéricas al cambiar locale/moneda (no altera valores de fuente)
   function reformatNums(){
     $$('#itemsTable tbody tr').forEach(tr=>{
       const c = $('.campo-cant', tr);
@@ -253,7 +321,7 @@
       const nv = parseNum(c?.dataset.raw || c?.textContent);
       const pv = parseNum(p?.dataset.raw || p?.textContent);
       if(c){ if(!c.dataset.raw) c.dataset.raw = c.textContent.trim(); c.textContent = Number.isFinite(nv) ? nf({maximumFractionDigits:2}).format(nv) : c.dataset.raw; }
-      if(p){ if(!p.dataset.raw) p.dataset.raw = p.textContent.trim(); p.textContent = Number.isFinite(pv) ? nf({style:'currency', currency:'ARS', maximumFractionDigits:2}).format(pv) : p.dataset.raw; }
+      if(p){ if(!p.dataset.raw) p.dataset.raw = p.textContent.trim(); p.textContent = Number.isFinite(pv) ? nf({style:'currency', currency:currentCurrency, maximumFractionDigits:2}).format(pv) : p.dataset.raw; }
     });
     recompute();
   }
@@ -282,46 +350,122 @@
     recompute();
   }
 
-  // ===== CSV de ítems =====
+  // ===== Export CSV de ítems visibles (respeta filtro / orden actual) =====
   $('#btnCsv')?.addEventListener('click', ()=>{
     const head = ['#','Descripción','Unidad','Cantidad','PrecioRef'];
     const rows = [head];
     $$('#itemsTable tbody tr').forEach(tr=>{
       if(tr.style.display==='none') return; // respeta el filtro
       rows.push([
-        tr.children[0]?.innerText.trim() || '',
+        tr.querySelector('.td-idx')?.innerText.trim() || '',
         $('.campo-desc', tr)?.innerText.trim() || '',
         $('.campo-un', tr)?.innerText.trim() || '',
-        $('.campo-cant', tr)?.innerText.trim() || '',
-        $('.campo-precio', tr)?.innerText.trim() || ''
+        $('.campo-cant', tr)?.dataset.raw || $('.campo-cant', tr)?.innerText.trim() || '',
+        $('.campo-precio', tr)?.dataset.raw || $('.campo-precio', tr)?.innerText.trim() || ''
       ]);
     });
     const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
     downloadCSV(rows, `items_informe_${stamp}.csv`);
   });
 
+  // ===== Ordenación por columnas =====
+  const STATE = { order: { by: 'idx', dir: 'asc' } };
+
+  function getRowsAsObjs(){
+    return $$('#itemsTable tbody tr').map(tr => ({
+      tr,
+      idx: parseNum(tr.querySelector('.td-idx')?.textContent),
+      desc: tr.querySelector('.campo-desc')?.textContent.trim() || '',
+      unidad: tr.querySelector('.campo-un')?.textContent.trim() || '',
+      cantidad: parseNum(tr.querySelector('.campo-cant')?.dataset.raw || tr.querySelector('.campo-cant')?.textContent),
+      precio: parseNum(tr.querySelector('.campo-precio')?.dataset.raw || tr.querySelector('.campo-precio')?.textContent)
+    }));
+  }
+
+  function sortRows(){
+    const tbody = $('#itemsTable tbody');
+    const items = getRowsAsObjs();
+    const { by, dir } = STATE.order;
+    items.sort((a,b)=>{
+      const d = dir==='asc' ? 1 : -1;
+      if(by==='desc' || by==='unidad'){
+        return a[by].localeCompare(b[by]) * d;
+      }else{
+        const av = Number.isFinite(a[by]) ? a[by] : (by==='idx'?Number.MAX_SAFE_INTEGER:NaN);
+        const bv = Number.isFinite(b[by]) ? b[by] : (by==='idx'?Number.MAX_SAFE_INTEGER:NaN);
+        if(!Number.isFinite(av) && !Number.isFinite(bv)) return 0;
+        if(!Number.isFinite(av)) return 1*d;
+        if(!Number.isFinite(bv)) return -1*d;
+        return (av - bv) * d;
+      }
+    });
+    // Reensamblar DOM
+    const frag = document.createDocumentFragment();
+    items.forEach(x => frag.appendChild(x.tr));
+    tbody.innerHTML = '';
+    tbody.appendChild(frag);
+
+    // Marcar th activo
+    $$('#itemsTable thead th.sortable').forEach(th=>{
+      const active = th.dataset.sort === by;
+      th.classList.toggle('active', active);
+      const icon = th.querySelector('.bi');
+      if(icon){
+        icon.className = dir==='asc' ? 'bi bi-arrow-up' : 'bi bi-arrow-down';
+      }
+    });
+  }
+
+  $$('#itemsTable thead th.sortable').forEach(th=>{
+    th.addEventListener('click', ()=>{
+      const by = th.dataset.sort;
+      if(STATE.order.by === by){
+        STATE.order.dir = STATE.order.dir==='asc' ? 'desc' : 'asc';
+      }else{
+        STATE.order.by = by;
+        STATE.order.dir = (by==='desc' || by==='unidad') ? 'asc' : 'asc';
+      }
+      sortRows();
+      applyFilter(); // mantiene filtro y recalcula totales
+    });
+  });
+
   // ===== Boot =====
   (function init(){
-    // Marcar fecha de generación (cliente)
+    // Fecha de generación (cliente)
     const hint = $('#genHint'); if(hint){ hint.textContent = 'Generado: ' + new Date().toLocaleString(); }
 
     // Linkificar resumen/contacto si están
     linkify($('#resumenBox'));
     linkify($('#contactoBox'));
 
-    // Si hay items, preparar datos raw y computar
+    // Preparar datos raw y computar
     $$('#itemsTable tbody tr').forEach(tr=>{
       const c = $('.campo-cant', tr); const p = $('.campo-precio', tr);
       if(c) c.dataset.raw = c.textContent.trim();
       if(p) p.dataset.raw = p.textContent.trim();
     });
+
+    // Preferencias persistidas
+    currentLocale   = $('#localeSel')?.value || currentLocale;
+    currentCurrency = $('#currencySel')?.value || currentCurrency;
+
     reformatNums();
+    sortRows(); // arranca con orden por índice asc
+
+    // Atajo: "/" o "f" enfoca el filtro
+    window.addEventListener('keydown', (e)=>{
+      if(['/', 'f', 'F'].includes(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey){
+        const t = e.target; const isTyping = t && (t.tagName==='INPUT' || t.tagName==='TEXTAREA' || t.isContentEditable);
+        if(isTyping) return;
+        e.preventDefault(); $('#filterItems')?.focus();
+      }
+    });
   })();
 
-  // Listeners
-  $('#filterItems')?.addEventListener('input', ()=>{ window.clearTimeout(window.__t); window.__t=setTimeout(applyFilter,150); });
-  $('#localeSel')?.addEventListener('change', (e)=>{ currentLocale = e.target.value || 'es-AR'; reformatNums(); });
-
-  // Descarga del JSON (expuesto en window más arriba)
+  // Listeners de UI
+  $('#filterItems')?.addEventListener('input', ()=>{ clearTimeout(window.__t); window.__t=setTimeout(applyFilter,150); });
+  $('#localeSel')?.addEventListener('change', (e)=>{ currentLocale = e.target.value || 'es-AR'; LS.set('report.locale', currentLocale); reformatNums(); });
+  $('#currencySel')?.addEventListener('change', (e)=>{ currentCurrency = e.target.value || 'ARS'; LS.set('report.currency', currentCurrency); reformatNums(); });
 </script>
 {% endblock %}
