@@ -1431,7 +1431,7 @@ async def chat_enviar_archivo(
 ):
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
-    archivos = [archivo] if archivo && archivo.filename else []
+    archivos = [archivo] if archivo and getattr(archivo, "filename", None) else []
     return await chat_enviar_archivos(request, para=para, texto=texto, archivos=archivos)
 
 @app.get("/chat/adjunto/{filename}")
