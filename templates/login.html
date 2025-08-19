@@ -116,6 +116,7 @@
           <a class="link-small" href="/cambiar-password">¿Olvidaste tu contraseña?</a>
         </div>
 
+        <!-- Nota: mantenemos type="submit", pero CANCELAMOS el submit por JS y usamos form.submit() -->
         <button id="loginBtn" type="submit" class="btn btn-grad w-100" aria-describedby="status">
           <span class="btn-text">Ingresar</span>
           <span class="spinner-border spinner-border-sm ms-2 d-none" role="status" aria-hidden="true"></span>
@@ -166,21 +167,6 @@
     capsHint.classList.toggle('show', !!caps);
   });
 
-  /* ===== Keyboard UX ===== */
-  byId('password').addEventListener('keydown', e=>{
-    if(e.key==='Enter'){ e.preventDefault(); byId('loginForm').requestSubmit(); }
-  });
-  byId('email').addEventListener('keydown', e=>{
-    if(e.key==='Enter'){ e.preventDefault(); byId('password').focus(); }
-  });
-  {% if require_otp %}
-  const otp = byId('otp');
-  if(otp){
-    otp.addEventListener('input', ()=>{ otp.value = otp.value.replace(/\D/g,'').slice(0,6); });
-    otp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); byId('loginForm').requestSubmit(); } });
-  }
-  {% endif %}
-
   /* ===== Remember email ===== */
   const LS='suizo_login_email';
   window.addEventListener('load',()=>{
@@ -204,55 +190,68 @@
   window.addEventListener('offline', ()=>{ updateOnlineUI(); window.showToast?.({title:'Sin conexión', body:'Revisá tu red.', icon:'wifi-off'}); });
   updateOnlineUI();
 
-  /* ===== Submit control ===== */
-  const form = byId('loginForm'); const btn = byId('loginBtn'); const status = byId('status');
+  /* ===== Envío robusto (evita preventDefault globales) ===== */
+  const form = byId('loginForm');
+  const btn  = byId('loginBtn');
+  const status = byId('status');
 
-  // Failsafe: asegurar que la action/method sean las del backend
   function ensureFormAction(){
     if (form.getAttribute('action') !== '/login') form.setAttribute('action','/login');
-    if ((form.getAttribute('method')||'').toLowerCase() !== 'post') form.setAttribute('method','post');
+    const m = (form.getAttribute('method')||'').toLowerCase();
+    if (m !== 'post') form.setAttribute('method','post');
   }
   ensureFormAction();
 
-  // Si algún script externo llamara preventDefault accidentalmente, forzamos submit real con un microtask
-  form.addEventListener('submit', e=>{
-    // validación básica HTML5
-    if(!form.checkValidity()){
-      e.preventDefault(); e.stopPropagation(); form.classList.add('was-validated'); return;
-    }
-    {% if require_otp %}
-    if(otp && !/^[0-9]{6}$/.test(otp.value||'')){ e.preventDefault(); form.classList.add('was-validated'); otp.focus(); return; }
-    {% endif %}
+  function visualBusy(on){
+    btn.disabled = !!on;
+    btn.querySelector('.btn-text').textContent = on ? 'Ingresando...' : 'Ingresar';
+    btn.querySelector('.spinner-border').classList.toggle('d-none', !on);
+    status.textContent = on ? 'Enviando…' : '';
+  }
 
+  function validBasic(){
+    // Aunque el form tenga novalidate, reportValidity corre la validación nativa
+    return form.reportValidity();
+  }
+
+  function rememberEmail(){
     if(byId('remember').checked) localStorage.setItem(LS, (emailEl.value||'').trim());
     else localStorage.removeItem(LS);
+  }
 
-    btn.disabled = true;
-    btn.querySelector('.btn-text').textContent='Ingresando...';
-    btn.querySelector('.spinner-border').classList.remove('d-none');
-    status.textContent='Enviando…';
-
+  // ←— El envío que no puede ser bloqueado por otros scripts:
+  function doSubmit(){
     ensureFormAction();
-    // No cancelamos el submit; si alguien lo canceló antes en fase de captura, reintentar:
-    Promise.resolve().then(()=>{
-      // Si seguimos en la misma URL después de 500ms, forzar submit (defensa extra)
-      setTimeout(()=>{
-        try{
-          if (!document.body || location.pathname.endsWith('/login')) {
-            // Evita loops: solo fuerza si seguimos “parados” en /login
-            form.submit();
-          }
-        }catch(_){}
-      }, 500);
-    });
-  }, false);
+    if(!validBasic()) { form.classList.add('was-validated'); return; }
+    {% if require_otp %}
+    const otp = byId('otp');
+    if(otp && !/^[0-9]{6}$/.test(otp.value||'')){ form.classList.add('was-validated'); otp.focus(); return; }
+    {% endif %}
+    rememberEmail();
+    visualBusy(true);
+    // ¡Atención!: form.submit() NO dispara el evento 'submit', por lo que ningún preventDefault externo lo frena.
+    try { form.submit(); } catch(_) { visualBusy(false); }
+  }
 
-  /* ===== Querystring toasts (opcional) ===== */
-  (function(){
-    const p = new URLSearchParams(location.search);
-    if(p.get('loggedout')==='1') window.showToast?.({title:'Sesión cerrada', icon:'door-closed'});
-    if(p.get('expired')==='1')   window.showToast?.({title:'Sesión expirada', body:'Volvé a ingresar.', icon:'hourglass-top'});
-    if(p.get('error')==='1')     window.showToast?.({title:'Error de login', body:'Revisá tus credenciales.', icon:'exclamation-triangle'});
-  })();
+  // 1) Click en el botón: evitamos el submit nativo y usamos doSubmit()
+  btn.addEventListener('click', (e)=>{ e.preventDefault(); doSubmit(); });
+
+  // 2) Enter en campos: también forzamos doSubmit()
+  byId('password').addEventListener('keydown', e=>{
+    if(e.key==='Enter'){ e.preventDefault(); doSubmit(); }
+  });
+  emailEl.addEventListener('keydown', e=>{
+    if(e.key==='Enter'){ e.preventDefault(); byId('password').focus(); }
+  });
+  {% if require_otp %}
+  const otp = byId('otp');
+  if(otp){
+    otp.addEventListener('input', ()=>{ otp.value = otp.value.replace(/\D/g,'').slice(0,6); });
+    otp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); doSubmit(); } });
+  }
+  {% endif %}
+
+  // 3) Por si algún script ajeno alcanzara a enganchar el 'submit', lo anulamos y redirigimos al doSubmit()
+  form.addEventListener('submit', (e)=>{ e.preventDefault(); doSubmit(); }, true); // capture=true
 </script>
 {% endblock %}
