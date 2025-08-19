@@ -62,6 +62,11 @@
   .chat-chip-file button{ border:none; background:transparent; line-height:1; font-size:14px; }
   .chat-chip-thumb{ width:26px; height:26px; border-radius:6px; object-fit:cover; background:#fff; border:1px solid var(--border); }
 
+  /* Tips / estados */
+  .tip { font-size:12px; color:var(--text-2); }
+  .status-dot{ width:10px; height:10px; border-radius:999px; display:inline-block; margin-right:6px; background:#22c55e; }
+  .status-off{ background:#94a3b8; }
+
   /* Toasts */
   .toast-area{ position:fixed; right:16px; bottom:16px; z-index: 3000; display:flex; flex-direction:column; gap:10px; }
   .toast{ background:#111827; color:#fff; padding:10px 12px; border-radius:12px; box-shadow: var(--shadow); min-width: 220px; max-width: 340px; }
@@ -75,6 +80,10 @@
   .sound-toggle input{ accent-color: var(--brand); cursor:pointer; }
   .sound-vol{ width:120px; height:6px; }
   @media (max-width: 480px){ .sound-vol{ width:80px; } }
+
+  /* Drag & drop sobre la ventana de chat */
+  .drop-hint{ position:absolute; inset:0; display:none; align-items:center; justify-content:center; background:rgba(37,99,235,.08); border:2px dashed #93c5fd; border-radius:12px; font-weight:600; color:#1e3a8a; }
+  .drop-hint.show{ display:flex; }
 </style>
 {% endblock %}
 
@@ -94,14 +103,16 @@
               <button id="btnAbrir" class="btn btn-primary">Abrir</button>
             </div>
             <ul id="sugs" class="chat-auto-list" role="listbox" aria-label="Sugerencias"></ul>
+            <div class="tip mt-2">Atajo: <kbd>Ctrl</kbd>+<kbd>K</kbd> para buscar usuario</div>
           </div>
         </div>
         <div id="listaHilos" class="chat-hilos-list"></div>
       </aside>
 
       <!-- Ventana principal -->
-      <section class="chat-panel chat-window">
+      <section class="chat-panel chat-window" id="chatWindow">
         <div class="chat-head">
+          <span class="status-dot status-off" id="wsDot" title="Estado en vivo"></span>
           <div class="chat-chip">Conversando con: <strong id="conEmail">—</strong></div>
           <button id="btnEliminarChat" class="btn btn-sm btn-outline-danger ms-2" title="Eliminar chat (ocultar)">🗑</button>
           <button id="btnRefrescar" class="btn btn-sm btn-outline-secondary ms-auto">Refrescar</button>
@@ -119,20 +130,23 @@
             <input id="volRange" class="sound-vol" type="range" min="0" max="100" step="1" title="Volumen">
           </span>
 
-          <span class="chat-chip d-none d-md-inline"><span id="yoEmail">...</span></span>
+          <span class="chat-chip d-none d-md-inline" title="Tu usuario"><span id="yoEmail">...</span></span>
         </div>
 
-        <div id="chatBody" class="chat-body">
+        <div id="chatBody" class="chat-body" aria-live="polite">
           <div class="chat-empty">Seleccioná una conversación o creá una nueva desde la izquierda.</div>
         </div>
+        <div class="drop-hint" id="dropHint">Soltá archivos para adjuntar…</div>
 
         <div class="chat-input">
-          <input id="inputMsg" type="text" class="form-control" placeholder="Escribí un mensaje..." />
+          <textarea id="inputMsg" rows="1" class="form-control" placeholder="Escribí un mensaje… (Enter envía, Shift+Enter salto de línea)"></textarea>
           <button id="btnPick" class="btn btn-outline-secondary chat-btn-icon" title="Elegir archivos">📎</button>
           <input id="inputFiles" type="file" multiple hidden />
           <button id="btnEnviar" class="btn btn-primary">Enviar</button>
         </div>
         <div id="chips" class="chat-chips"></div>
+
+        <div class="tip px-3 pb-3">Podés pegar imágenes desde el portapapeles. Tamaño máximo total por mensaje configurable en backend.</div>
       </section>
 
     </div>
@@ -149,6 +163,12 @@
 <script>
   /* ===== Helpers ===== */
   function escapeHtml(str){ return (str||'').toString().replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
+  // Urlify seguro: primero escapamos, luego enlazamos patrones http(s)
+  function urlifySafe(plain){
+    const esc = escapeHtml(plain);
+    const rx = /\bhttps?:\/\/[^\s<>'"]+/g;
+    return esc.replace(rx, url => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
+  }
   async function getJSON(url){ const r=await fetch(url); if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }
   async function postJSON(url,data){
     const r=await fetch(url,{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
@@ -217,8 +237,6 @@
 
   $mute.addEventListener('change', () => setMuted($mute.checked));
   $vol.addEventListener('input',  () => setVolume(parseInt($vol.value,10)||0));
-
-  // init sonido UI
   updateMuteUI(); applyVolume();
 
   /* ===== Config adjuntos ===== */
@@ -232,6 +250,7 @@
   /* ===== Estado ===== */
   let yo = null, con = null, refresco = null, refrescoNoLeidos = null, refrescoHilos = null;
   let selectedFiles = [];
+  const DRAFT_KEY = (email)=> `chat.draft.${email||'__none__'}`;
 
   /* ===== Sidebar: hilos ===== */
   function setActiveHilo(email){
@@ -304,13 +323,14 @@
   /* ===== Mensajes ===== */
   function renderMensajes(mensajes){
     const body = document.getElementById('chatBody');
+    const atBottom = (body.scrollTop + body.clientHeight + 40) >= body.scrollHeight;
     body.innerHTML = '';
     if(!mensajes?.length){ body.innerHTML = '<div class="chat-empty">No hay mensajes aún. ¡Escribí el primero!</div>'; return; }
     mensajes.forEach(m=>{
       const div = document.createElement('div');
       div.className = 'chat-msg' + (m.de === yo ? ' me' : '');
       const meta = `<div class="meta">${escapeHtml(m.de)} • ${m.fecha}</div>`;
-      const txt  = m.texto ? `<div class="txt">${escapeHtml(m.texto)}</div>` : '';
+      const txt  = m.texto ? `<div class="txt">${urlifySafe(m.texto)}</div>` : '';
       let adj = '';
       if (m.adjuntos?.length){
         adj = '<div class="mt-2">';
@@ -328,7 +348,7 @@
       div.innerHTML = meta + txt + adj;
       body.appendChild(div);
     });
-    body.scrollTop = body.scrollHeight;
+    if(atBottom) body.scrollTop = body.scrollHeight;
   }
 
   async function cargarYo(){ const info = await getJSON('/usuario-actual'); yo = info.usuario || 'Desconocido'; document.getElementById('yoEmail').textContent = yo; }
@@ -349,6 +369,9 @@
       await postJSON('/chat/abrir', { con: email });
       con = email; document.getElementById('conEmail').textContent = con;
       setActiveHilo(con);
+      // restaurar borrador si existe
+      const draft = localStorage.getItem(DRAFT_KEY(con));
+      if(draft){ document.getElementById('inputMsg').value = draft; autoResize(); }
       await marcarLeidos(con);
       await cargarMensajes();
       await cargarHilos();
@@ -363,6 +386,7 @@
       if(con === email){
         con=null; document.getElementById('conEmail').textContent='—';
         document.getElementById('chatBody').innerHTML='<div class="chat-empty">Seleccioná una conversación o creá una nueva desde la izquierda.</div>';
+        localStorage.removeItem(DRAFT_KEY(email));
         if(refresco) clearInterval(refresco);
       }
       await cargarHilos(); await cargarNoLeidos();
@@ -377,6 +401,23 @@
 
   $btnPick.onclick = () => $files.click();
   $files.addEventListener('change', ()=>{ addFiles([...( $files.files || [] )]); $files.value=''; });
+
+  // Drag & drop sobre el panel
+  const $window = document.getElementById('chatWindow');
+  const $dropHint = document.getElementById('dropHint');
+  ;['dragenter','dragover'].forEach(ev => $window.addEventListener(ev, e=>{ e.preventDefault(); e.stopPropagation(); $dropHint.classList.add('show'); }));
+  ;['dragleave','drop'].forEach(ev => $window.addEventListener(ev, e=>{ e.preventDefault(); e.stopPropagation(); $dropHint.classList.remove('show'); }));
+  $window.addEventListener('drop', (e)=>{ const fl = [...(e.dataTransfer?.files||[])]; if(fl.length) addFiles(fl); });
+
+  // Pegar imágenes/archivos
+  document.addEventListener('paste', (e)=>{
+    const items = e.clipboardData?.items||[];
+    const files = [];
+    for(const it of items){
+      if(it.kind==='file'){ const f=it.getAsFile(); if(f) files.push(f); }
+    }
+    if(files.length) addFiles(files);
+  });
 
   function addFiles(files){
     for(const f of files){
@@ -413,7 +454,8 @@
     if(!texto) return;
     try{
       await postJSON('/chat/enviar', { para: con, texto });
-      input.value=''; await cargarMensajes(); await cargarHilos();
+      input.value=''; localStorage.removeItem(DRAFT_KEY(con)); autoResize();
+      await cargarMensajes(); await cargarHilos();
     }catch(e){ console.error(e); alert('No se pudo enviar el mensaje.'); }
   }
   async function enviarArchivos(texto){
@@ -430,7 +472,7 @@
         if(!msg){ try{ msg=await resp.text(); }catch(_){} }
         throw new Error(msg || 'No se pudo enviar los adjuntos.');
       }
-      selectedFiles=[]; renderChips(); document.getElementById('inputMsg').value='';
+      selectedFiles=[]; renderChips(); document.getElementById('inputMsg').value=''; localStorage.removeItem(DRAFT_KEY(con)); autoResize();
       await cargarMensajes(); await cargarHilos();
     }catch(e){ console.error(e); alert(e.message || 'No se pudo enviar los adjuntos.'); }
     finally{ toggleSending(false); }
@@ -438,10 +480,21 @@
   function toggleSending(sending){ const btn=document.getElementById('btnEnviar'); btn.disabled=sending; btn.textContent = sending ? 'Enviando…' : 'Enviar'; }
 
   document.getElementById('btnEnviar').onclick = enviar;
-  document.getElementById('inputMsg').addEventListener('keypress', (e)=>{ if(e.key === 'Enter') enviar(); });
+  // Enter envía, Shift+Enter hace salto de línea, Ctrl/Cmd+Enter también envía
+  const $msg = document.getElementById('inputMsg');
+  function autoResize(){ $msg.style.height='auto'; $msg.style.height = Math.min(160, $msg.scrollHeight) + 'px'; }
+  $msg.addEventListener('input', ()=>{ autoResize(); if(con) localStorage.setItem(DRAFT_KEY(con), $msg.value); });
+  $msg.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter' && (e.ctrlKey || e.metaKey)){ e.preventDefault(); enviar(); return; }
+    if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); enviar(); }
+  });
+
   document.getElementById('btnRefrescar').onclick = ()=> { cargarMensajes(); cargarHilos(); };
   document.getElementById('btnAbrir').onclick = ()=>{ const email = $input.value.trim(); if(!email) return; abrirChat(email); };
   document.getElementById('btnEliminarChat').onclick = ()=> ocultar(con);
+
+  // Atajo global: Ctrl+K para foco en buscador
+  window.addEventListener('keydown', (e)=>{ if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); $input.focus(); } });
 
   /* ===== No leídos & auto refresh ===== */
   async function cargarNoLeidos(){
@@ -452,7 +505,7 @@
       badge.textContent = n;
       badge.classList.toggle('bg-danger', n > 0);
       badge.classList.toggle('bg-secondary', n === 0);
-      document.title = (n > 0 ? `(${n}) ` : '') + 'Chat interno';
+      document.title = (n > 0 ? `(${n}) ` : '') + 'Chat interno – Suizo Argentina';
 
       const chatBadge = parent?.document?.getElementById?.('chatBadge') || document.getElementById('chatBadge');
       if(chatBadge){
@@ -480,6 +533,7 @@
       ws = new WebSocket(wsUrl());
       ws.onopen = () => {
         wsTries = 0;
+        document.getElementById('wsDot').classList.remove('status-off');
         if(wsPingTimer) clearInterval(wsPingTimer);
         wsPingTimer = setInterval(()=>{ try{ ws?.send('ping'); }catch(_){ } }, 25000);
       };
@@ -500,6 +554,7 @@
       };
       ws.onerror = () => { try{ ws.close(); }catch(_){ } };
       ws.onclose = () => {
+        document.getElementById('wsDot').classList.add('status-off');
         if(wsPingTimer) clearInterval(wsPingTimer);
         const ms = Math.min(30000, (2 ** Math.min(wsTries++, 6)) * 500);
         setTimeout(connectWS, ms);

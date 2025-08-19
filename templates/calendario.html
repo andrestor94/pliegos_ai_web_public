@@ -3,22 +3,27 @@
 {% block title %}Calendario · Suizo Argentina{% endblock %}
 
 {% block extra_head %}
-  <!-- FullCalendar 6 -->
+  <!-- FullCalendar (si ya lo carga base, no pasa nada por duplicar) -->
   <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/locales-all.global.min.js" defer></script>
 
   <style>
-    /* Integración visual con el theme */
+    /* ---------- Integración visual con el theme ---------- */
     #calWrap { position: relative; }
     #calendar{
-      background:#fff; border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow);
-      padding:14px 14px 64px; /* espacio inferior para los controles flotantes */
+      background: var(--surface);
+      border:1px solid var(--bs-border-color, var(--border));
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      padding:14px 14px 64px; /* espacio inferior para controles flotantes */
       position: relative; z-index: 1;
     }
-    .fc .fc-toolbar-title{ font-weight:700; color:#0f172a; }
-    .fc .fc-button{ border-radius:10px; }
-    .fc-theme-standard .fc-scrollgrid{ border-radius:12px; overflow:hidden; }
+    .fc .fc-toolbar-title{ font-weight:700; color:var(--text); }
+    .fc .fc-button{ border-radius:999px; border-color: var(--border); background: var(--surface); color: var(--text); }
+    .fc .fc-button-primary:not(:disabled).fc-button-active{ background: var(--brand-500); border-color: var(--brand-500); }
+    .fc-theme-standard .fc-scrollgrid{ border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+    .fc .fc-col-header-cell{ background: var(--muted); }
 
     /* Controles externos (abajo izq / abajo der) */
     .cal-ctrl-left, .cal-ctrl-right{
@@ -27,10 +32,10 @@
     }
     .cal-ctrl-left{ left:12px; }
     .cal-ctrl-right{ right:12px; }
-    .cal-ctrl-left .btn, .cal-ctrl-right .btn{ border-radius:10px; }
+    .cal-ctrl-left .btn, .cal-ctrl-right .btn{ border-radius:999px; }
     .btn.is-active{
-      border-color: var(--brand-300, #5274ce) !important;
-      box-shadow: 0 0 0 4px rgba(82,116,206,.15);
+      border-color: var(--brand-300) !important;
+      box-shadow: 0 0 0 4px rgba(var(--ring-color), .22);
     }
 
     .legend{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
@@ -41,37 +46,37 @@
       .cal-ctrl-left{ left:10px; bottom:10px; }
       .cal-ctrl-right{ right:10px; bottom:10px; }
     }
-    [data-theme="dark"] #calendar{ background:var(--panel); }
   </style>
 {% endblock %}
 
 {% block content %}
-  <div class="grid">
-    <section class="cardx col-12">
-      <div class="d-flex flex-wrap gap-2 align-items-center">
-        <h5 class="title mb-0"><i class="bi bi-calendar-event"></i> Calendario</h5>
-        <div class="ms-auto legend">
-          <span class="dot" style="background:#0ea5e9"></span><small class="muted">General</small>
-          <span class="dot" style="background:#22c55e"></span><small class="muted">Incidencias</small>
-          <span class="dot" style="background:#f59e0b"></span><small class="muted">Pliegos</small>
+  <div class="container-xxl">
+    <section class="card-clean shadow-hover mb-2">
+      <div class="card-header d-flex flex-wrap gap-2 align-items-center">
+        <h1 class="h5 m-0 text-brand">
+          <i class="bi bi-calendar-event me-1"></i> Calendario
+        </h1>
+        <div class="ms-auto legend small">
+          <span class="dot" style="background:#0ea5e9"></span><span class="subtle">General</span>
+          <span class="dot" style="background:#22c55e"></span><span class="subtle">Incidencias</span>
+          <span class="dot" style="background:#f59e0b"></span><span class="subtle">Pliegos</span>
         </div>
       </div>
-    </section>
+      <div class="card-body">
+        <div id="calWrap">
+          <div id="calendar" aria-label="Calendario de eventos"></div>
 
-    <section class="col-12">
-      <div id="calWrap">
-        <div id="calendar" aria-label="Calendario de eventos"></div>
-
-        <!-- Controles externos -->
-        <div class="cal-ctrl-left" role="group" aria-label="Cambiar vista">
-          <button type="button" class="btn btn-outline-primary is-active" data-cal-view="dayGridMonth">Mes</button>
-          <button type="button" class="btn btn-outline-primary" data-cal-view="timeGridWeek">Semana</button>
-          <button type="button" class="btn btn-outline-primary" data-cal-view="listWeek">Lista</button>
-        </div>
-        <div class="cal-ctrl-right" role="group" aria-label="Navegación">
-          <button type="button" class="btn btn-outline-primary" aria-label="Anterior" data-cal-nav="prev"><i class="bi bi-chevron-left"></i></button>
-          <button type="button" class="btn btn-outline-primary" data-cal-nav="today">Hoy</button>
-          <button type="button" class="btn btn-outline-primary" aria-label="Siguiente" data-cal-nav="next"><i class="bi bi-chevron-right"></i></button>
+          <!-- Controles externos (compatibles con el hook global de base.html) -->
+          <div class="cal-ctrl-left" role="group" aria-label="Cambiar vista">
+            <button type="button" class="btn btn-outline-primary is-active" data-cal-view="dayGridMonth">Mes</button>
+            <button type="button" class="btn btn-outline-primary" data-cal-view="timeGridWeek">Semana</button>
+            <button type="button" class="btn btn-outline-primary" data-cal-view="listWeek">Lista</button>
+          </div>
+          <div class="cal-ctrl-right" role="group" aria-label="Navegación">
+            <button type="button" class="btn btn-outline-primary" aria-label="Anterior" data-cal-nav="prev"><i class="bi bi-chevron-left"></i></button>
+            <button type="button" class="btn btn-outline-primary" data-cal-nav="today">Hoy</button>
+            <button type="button" class="btn btn-outline-primary" aria-label="Siguiente" data-cal-nav="next"><i class="bi bi-chevron-right"></i></button>
+          </div>
         </div>
       </div>
     </section>
@@ -87,15 +92,15 @@
         </div>
         <div class="modal-body">
           <div class="mb-2">
-            <label class="form-label">Título</label>
+            <label class="form-label" for="evtTitle">Título</label>
             <input id="evtTitle" class="form-control" placeholder="Reunión / Entrega...">
           </div>
           <div class="mb-2">
-            <label class="form-label">Descripción</label>
+            <label class="form-label" for="evtDesc">Descripción</label>
             <textarea id="evtDesc" class="form-control" rows="3"></textarea>
           </div>
           <div class="mb-2">
-            <label class="form-label">Tipo</label>
+            <label class="form-label" for="evtTipo">Tipo</label>
             <select id="evtTipo" class="form-select">
               <option value="#0ea5e9">General</option>
               <option value="#22c55e">Incidencia</option>
@@ -122,15 +127,15 @@
         </div>
         <div class="modal-body">
           <div class="mb-2">
-            <label class="form-label">Título</label>
+            <label class="form-label" for="evtTitleE">Título</label>
             <input id="evtTitleE" class="form-control">
           </div>
           <div class="mb-2">
-            <label class="form-label">Descripción</label>
+            <label class="form-label" for="evtDescE">Descripción</label>
             <textarea id="evtDescE" class="form-control" rows="3"></textarea>
           </div>
           <div class="mb-2">
-            <label class="form-label">Color</label>
+            <label class="form-label" for="evtColorE">Color</label>
             <input id="evtColorE" type="color" class="form-control form-control-color" value="#0ea5e9">
           </div>
           <div class="form-text" id="evtTimeInfo"></div>
@@ -152,7 +157,10 @@
   /* ===== Helpers ===== */
   function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function toIsoOrNull(d){ return d ? new Date(d).toISOString() : null; }
-  function showToast({title="Aviso", body="", icon="info"}){
+  function toast(opts){
+    if (window.showToast) return window.showToast(opts);
+    // fallback mínimo si el global no existe
+    const {title="Aviso", body="", icon="info"} = (opts||{});
     const cont=document.getElementById('toastContainer'); if(!cont) return;
     const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
     el.innerHTML=`<div class="toast-header"><i class="bi bi-${icon} me-1"></i><strong class="me-auto">${title}</strong><small>Ahora</small><button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button></div><div class="toast-body">${body}</div>`;
@@ -166,7 +174,7 @@
       if(!r.ok) throw new Error('HTTP '+r.status);
       return await r.json();
     }catch(e){
-      showToast({title:'Calendario', body:'No se pudo cargar del servidor. Mostrando ejemplo.', icon:'exclamation-triangle'});
+      toast({title:'Calendario', body:'No se pudo cargar del servidor. Mostrando ejemplo.', icon:'exclamation-triangle'});
       const now = new Date();
       const yyyy = now.getFullYear(), mm = String(now.getMonth()+1).padStart(2,'0'), dd = String(now.getDate()).padStart(2,'0');
       return [{ id:'demo-1', title:'Evento demo', start:`${yyyy}-${mm}-${dd}T10:00:00`, end:`${yyyy}-${mm}-${dd}T11:00:00`, color:'#0ea5e9', description:'Solo ejemplo', allDay:false }];
@@ -203,7 +211,7 @@
     const col = evt.backgroundColor || evt.borderColor || '#0ea5e9';
     document.getElementById('evtColorE').value = col;
     document.getElementById('evtTimeInfo').textContent =
-      `${evt.start?.toLocaleString()}${evt.end ? ' → '+evt.end.toLocaleString() : ''}`;
+      `${evt.start?.toLocaleString?.()||'—'}${evt.end ? ' → '+(evt.end.toLocaleString?.()||'—') : ''}`;
     const modal = document.getElementById('modalDetalleEvt');
     modal.dataset.eventId = evt.id;
     new bootstrap.Modal(modal).show();
@@ -236,8 +244,8 @@
             end:   toIsoOrNull(arg.event.end),
             allDay: arg.event.allDay
           });
-          showToast({title:'Evento movido', body:arg.event.title, icon:'check2-circle'});
-        }catch(e){ arg.revert(); showToast({title:'Error', body:'No se pudo mover', icon:'exclamation-triangle'}); }
+          toast({title:'Evento movido', body:escapeHtml(arg.event.title||''), icon:'check2-circle'});
+        }catch(e){ arg.revert(); toast({title:'Error', body:'No se pudo mover', icon:'exclamation-triangle'}); }
       },
       eventResize: async (arg)=>{
         try{
@@ -245,8 +253,8 @@
             start: toIsoOrNull(arg.event.start),
             end:   toIsoOrNull(arg.event.end)
           });
-          showToast({title:'Duración actualizada', body:arg.event.title, icon:'check2-circle'});
-        }catch(e){ arg.revert(); showToast({title:'Error', body:'No se pudo cambiar duración', icon:'exclamation-triangle'}); }
+          toast({title:'Duración actualizada', body:escapeHtml(arg.event.title||''), icon:'check2-circle'});
+        }catch(e){ arg.revert(); toast({title:'Error', body:'No se pudo cambiar duración', icon:'exclamation-triangle'}); }
       },
       events: initialEvents,
       eventDidMount: (info)=>{
@@ -260,24 +268,24 @@
     });
     calendar.render();
 
-    /* Exponer instancia para controles externos */
+    /* Exponer instancia para controles externos y para el hook de base.html */
     el.__fcCalendar = calendar;
     window.AppCalendar = calendar;
     window.__calendar = calendar;
 
-    /* Resaltar botón activo al iniciar */
     markActive(calendar.view.type);
   }
 
-  /* === Wiring de controles externos === */
+  /* === Controles externos (si el hook global ya está, esto igual no interfiere) === */
   function markActive(viewName){
-    const btns = document.querySelectorAll('[data-cal-view]');
-    btns.forEach(b => b.classList.toggle('is-active', b.getAttribute('data-cal-view') === viewName));
+    document.querySelectorAll('[data-cal-view]').forEach(b=>{
+      b.classList.toggle('is-active', b.getAttribute('data-cal-view') === viewName);
+    });
   }
 
   document.addEventListener('click', (ev) => {
-    const viewBtn = ev.target.closest('[data-cal-view]');
-    const navBtn  = ev.target.closest('[data-cal-nav]');
+    const viewBtn = ev.target.closest?.('[data-cal-view]');
+    const navBtn  = ev.target.closest?.('[data-cal-nav]');
     if (!viewBtn && !navBtn) return;
     ev.preventDefault();
 
@@ -286,27 +294,84 @@
 
     if (viewBtn) {
       const view = viewBtn.getAttribute('data-cal-view');
-      if (view) {
-        cal.changeView(view);
-        markActive(view);
-      }
+      if (view) { cal.changeView(view); markActive(view); }
       return;
     }
     if (navBtn) {
       const nav = navBtn.getAttribute('data-cal-nav');
-      switch (nav) {
-        case 'today': cal.today(); break;
-        case 'prev' : cal.prev();  break;
-        case 'next' : cal.next();  break;
-      }
+      if (nav==='today') cal.today();
+      if (nav==='prev')  cal.prev();
+      if (nav==='next')  cal.next();
     }
   });
 
-  // Sincroniza el highlight si la vista cambia por otro lado
+  // Sincroniza el highlight si la vista cambia por otros medios
   document.addEventListener('DOMContentLoaded', () => {
     const cal = window.AppCalendar || document.getElementById('calendar').__fcCalendar;
     if (!cal) return;
-    cal.on('viewDidMount', (arg) => markActive(arg.view.type));
+    cal.on?.('viewDidMount', (arg) => markActive(arg.view.type));
+  });
+
+  /* ===== Crear / Editar / Eliminar ===== */
+  document.getElementById('evtCreateBtn')?.addEventListener('click', async ()=>{
+    const title = document.getElementById('evtTitle').value.trim();
+    const desc  = document.getElementById('evtDesc').value.trim();
+    const color = document.getElementById('evtTipo').value;
+    if(!title) return toast({title:'Calendario', body:'El título es obligatorio.', icon:'exclamation-triangle'});
+
+    const info = _selectCtx; if(!info) return;
+    try{
+      const payload = {
+        title, description: desc, color,
+        start: info.startStr, end: info.endStr || null, allDay: !!info.allDay
+      };
+      const created = await crearEvento(payload);
+      calendar.addEvent({ id: created.id, ...payload });
+      bootstrap.Modal.getInstance(document.getElementById('modalNuevoEvt'))?.hide();
+      calendar.unselect();
+      toast({title:'Evento creado', body:escapeHtml(title), icon:'check2-circle'});
+    }catch(e){
+      toast({title:'Error', body:'No se pudo crear el evento', icon:'exclamation-triangle'});
+    }
+  });
+
+  document.getElementById('evtSaveBtn')?.addEventListener('click', async ()=>{
+    const modal = document.getElementById('modalDetalleEvt');
+    const id = modal.dataset.eventId;
+    const ev = calendar.getEventById(id);
+    if(!ev) return;
+
+    const title = document.getElementById('evtTitleE').value.trim();
+    const desc  = document.getElementById('evtDescE').value.trim();
+    const color = document.getElementById('evtColorE').value || '#0ea5e9';
+
+    try{
+      await actualizarEvento(id, { title, description: desc, color });
+      ev.setProp('title', title||ev.title);
+      ev.setExtendedProp('description', desc);
+      ev.setProp('backgroundColor', color);
+      ev.setProp('borderColor', color);
+      bootstrap.Modal.getInstance(modal)?.hide();
+      toast({title:'Evento actualizado', body:escapeHtml(title||'Evento'), icon:'check2-circle'});
+    }catch(e){
+      toast({title:'Error', body:'No se pudo guardar el evento', icon:'exclamation-triangle'});
+    }
+  });
+
+  document.getElementById('evtDelBtn')?.addEventListener('click', async ()=>{
+    const modal = document.getElementById('modalDetalleEvt');
+    const id = modal.dataset.eventId;
+    const ev = calendar.getEventById(id);
+    if(!ev) return;
+    if(!confirm('¿Eliminar este evento?')) return;
+    try{
+      await eliminarEvento(id);
+      ev.remove();
+      bootstrap.Modal.getInstance(modal)?.hide();
+      toast({title:'Evento eliminado', body:escapeHtml(ev.title||'Evento'), icon:'check2-circle'});
+    }catch(e){
+      toast({title:'Error', body:'No se pudo eliminar', icon:'exclamation-triangle'});
+    }
   });
 
   /* ===== Init ===== */

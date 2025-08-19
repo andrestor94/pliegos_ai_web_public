@@ -24,6 +24,9 @@
   .toolbar{ gap:.5rem; }
   .toolbar .form-control, .toolbar .form-select{ border-radius:10px; }
 
+  .notif-toolbar-extra{ display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+  .notif-toolbar-extra .form-check{ margin:0 .25rem 0 0; }
+
   .notif-item{
     display:grid; grid-template-columns: 28px 1fr auto; gap:10px;
     padding:12px; border-bottom:1px solid var(--border);
@@ -56,6 +59,9 @@
   .sk-bar{ height:12px; background:rgba(148,163,184,.25); border-radius:6px; margin:6px 0; }
   @keyframes shimmer{ 0%{ transform:translateX(-100%);} 100%{ transform:translateX(100%);} }
 
+  .muted{ color:var(--text-2); }
+  .soft-pill{ border-radius:999px; border:1px solid var(--border); background:var(--bg-soft); padding:.2rem .5rem; font-size:.8rem; }
+
   @media (max-width:700px){
     .notif-item{ grid-template-columns: 24px 1fr; }
     .notif-item .actions{ grid-column: 1 / -1; display:flex; gap:.5rem; }
@@ -71,22 +77,32 @@
   </div>
 
   <!-- Filtros / acciones -->
-  <div class="card card-clean shadow-hover mb-3">
+  <div class="card card-clean shadow-hover mb-3" role="region" aria-label="Barra de filtros">
     <div class="card-body">
       <div class="row g-2 align-items-center toolbar">
-        <div class="col-sm-6">
+        <div class="col-lg-5">
           <div class="input-group">
             <span class="input-group-text"><i class="bi bi-search"></i></span>
-            <input id="search" type="text" class="form-control" placeholder="Buscar por título o contenido…">
+            <input id="search" type="text" class="form-control" placeholder="Buscar por título o contenido…" aria-label="Buscar">
           </div>
         </div>
-        <div class="col-sm-3">
-          <select id="filterUnread" class="form-select">
+        <div class="col-6 col-lg-2">
+          <select id="filterUnread" class="form-select" aria-label="Filtro de lectura">
             <option value="all">Todas</option>
             <option value="unread">Solo no leídas</option>
           </select>
         </div>
-        <div class="col-sm-3 d-flex gap-2 justify-content-sm-end">
+        <div class="col-6 col-lg-2">
+          <select id="pageSize" class="form-select" aria-label="Tamaño de página">
+            <option value="10">10 por página</option>
+            <option value="20" selected>20 por página</option>
+            <option value="50">50 por página</option>
+          </select>
+        </div>
+        <div class="col-lg-3 d-flex gap-2 justify-content-lg-end">
+          <button id="btnRefresh" class="btn btn-outline-secondary btn-sm" title="Actualizar">
+            <i class="bi bi-arrow-clockwise"></i> Actualizar
+          </button>
           <button id="btnMarkSelected" class="btn btn-outline-success btn-sm" disabled>
             <i class="bi bi-check2-all"></i> Marcar selección
           </button>
@@ -95,32 +111,72 @@
           </button>
         </div>
       </div>
+
+      <div class="notif-toolbar-extra mt-2">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="selAllPage">
+          <label class="form-check-label" for="selAllPage">Seleccionar todo (página)</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="autoRefresh" checked>
+          <label class="form-check-label" for="autoRefresh">Auto-refresh</label>
+        </div>
+        <span class="soft-pill" id="counter">0 mostradas</span>
+      </div>
     </div>
   </div>
 
   <!-- Lista -->
-  <div class="card card-clean shadow-hover">
+  <div class="card card-clean shadow-hover" role="region" aria-label="Listado de notificaciones">
     <div class="card-body p-0">
-      <div id="list" role="list"><!-- items --></div>
+      <div id="list" role="list" aria-live="polite"><!-- items --></div>
       <div class="p-2 border-top d-flex justify-content-between align-items-center">
-        <div class="small text-muted" id="counter">0 mostradas</div>
-        <button id="loadMore" class="btn btn-outline-secondary btn-sm">Cargar más</button>
+        <div class="small muted" id="footHint">Desplazate para cargar más</div>
+        <div class="d-flex gap-2">
+          <button id="loadMore" class="btn btn-outline-secondary btn-sm">Cargar más</button>
+        </div>
       </div>
     </div>
   </div>
+
+  <!-- Sentinela para autoload -->
+  <div id="sentinel" class="py-1" aria-hidden="true"></div>
 </div>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-  // Helpers mínimos (nos apoyamos en base.html para showToast y estilos)
-  const escapeHtml = (s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  // ===== Helpers mínimos =====
+  const escapeHtml = (s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const $ = (sel)=> document.querySelector(sel);
-
-  // Debounce simple
   function debounce(fn, wait){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), wait); }; }
+  const fmtRel = (()=>{ // relative time helper
+    try{
+      const rtf = new Intl.RelativeTimeFormat('es', { numeric:'auto' });
+      return (iso)=>{
+        if(!iso) return '';
+        const d = new Date(iso); const diff = (d - new Date())/1000; // seconds
+        const abs = Math.abs(diff);
+        const units = [
+          ['year',  31536000],
+          ['month', 2592000],
+          ['week',  604800],
+          ['day',   86400],
+          ['hour',  3600],
+          ['minute',60],
+          ['second',1]
+        ];
+        for(const [u, s] of units){
+          if(abs >= s || u==='second'){
+            return rtf.format(Math.round(diff/s), u);
+          }
+        }
+        return '';
+      };
+    }catch(_){ return ()=>''; }
+  })();
 
-  // Estado de la vista
+  // ===== Estado global =====
   const state = {
     q: '',
     onlyUnread: false,
@@ -129,7 +185,9 @@
     loading: false,
     done: false,
     selected: new Set(),
-    totalShown: 0
+    pageIds: [],     // ids de la página actual (para "seleccionar todo")
+    totalShown: 0,
+    autoTimer: null
   };
 
   // Prefill desde la URL
@@ -153,14 +211,14 @@
   function renderCounter(){
     $('#counter').textContent = `${state.totalShown} mostradas${state.onlyUnread ? ' (no leídas)' : ''}`;
   }
+
   function checkboxChanged(id, checked){
     if(checked) state.selected.add(id); else state.selected.delete(id);
     $('#btnMarkSelected').disabled = state.selected.size === 0;
   }
 
-  function renderSkeleton(n=3){
-    const list = $('#list');
-    list.innerHTML = '';
+  function renderSkeleton(n=4){
+    const list = $('#list'); list.innerHTML = '';
     const frag = document.createDocumentFragment();
     for(let i=0;i<n;i++){
       const sk = document.createElement('div');
@@ -177,17 +235,19 @@
 
   function renderList(items, append){
     const list = $('#list');
-    if(!append) list.innerHTML = '';
+    if(!append){ list.innerHTML = ''; state.pageIds = []; $('#selAllPage').checked = false; }
     if(!items || !items.length){
       if(!append) list.innerHTML = '<div class="empty">No hay notificaciones con esos criterios.</div>';
       return;
     }
     const frag = document.createDocumentFragment();
     items.forEach(n=>{
-      const id = n.id ?? n._id ?? String(Math.random());
+      const id = String(n.id ?? n._id ?? crypto.randomUUID());
+      state.pageIds.push(id);
       const div = document.createElement('div');
       div.className = 'notif-item' + (!n.leida ? ' unread' : '');
       div.setAttribute('role','listitem');
+      div.dataset.id = id;
       div.innerHTML = `
         <div class="form-check mt-1">
           <input class="form-check-input" type="checkbox" id="chk_${id}">
@@ -198,7 +258,7 @@
             ${n.tipo ? `<span class="badge-kind">${escapeHtml(n.tipo)}</span>` : ''}
           </div>
           <div class="notif-body">${escapeHtml(n.cuerpo || '')}</div>
-          <div class="notif-meta">${escapeHtml(n.fecha_legible || '')} ${n.origen ? `• ${escapeHtml(n.origen)}` : ''}</div>
+          <div class="notif-meta">${escapeHtml(n.fecha_legible || '')} ${n.origen ? `• ${escapeHtml(n.origen)}` : ''} ${n.fecha_iso ? `• ${escapeHtml(fmtRel(n.fecha_iso))}` : ''}</div>
         </div>
         <div class="actions d-flex align-items-start gap-1">
           ${!n.leida ? `<button class="btn btn-sm btn-outline-success" data-action="read">Marcar leída</button>` : ''}
@@ -206,25 +266,31 @@
         </div>
       `;
 
-      // Eventos: checkbox selección
+      // Selección
       const chk = div.querySelector(`#chk_${CSS.escape(id)}`);
       chk.addEventListener('change', (e)=> checkboxChanged(id, e.target.checked));
 
-      // Eventos: acciones item
+      // Acciones por item
       div.querySelector('.actions').addEventListener('click', async (e)=>{
         const btn = e.target.closest('button'); if(!btn) return;
         if(btn.dataset.action === 'read'){
-          await markIdsAsRead([id]);
-          div.classList.remove('unread');
-          btn.remove();
+          // Optimista
+          div.classList.remove('unread'); btn.disabled=true;
+          try{
+            await markIdsAsRead([id]);
+            btn.remove();
+          }catch(_){
+            btn.disabled=false; div.classList.add('unread');
+            (window.showToast||console.error)({title:'Error', body:'No se pudo marcar.', icon:'exclamation-triangle'});
+          }
         }else if(btn.dataset.action === 'delete'){
           if(!confirm('¿Eliminar esta notificación?')) return;
           try{
-            // Si tu backend no soporta borrar, podés ocultar este botón.
             const r = await fetch('/notificaciones/eliminar',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id })});
             if(!r.ok) throw new Error();
             div.remove();
             state.totalShown = Math.max(0, state.totalShown - 1);
+            state.selected.delete(id);
             renderCounter();
             (window.showToast||console.log)({title:'Notificación eliminada', icon:'trash'});
           }catch(_){
@@ -260,6 +326,7 @@
       state.totalShown += items.length;
       if(items.length < state.limit) state.done = true;
       $('#loadMore').style.display = state.done ? 'none' : 'inline-block';
+      $('#footHint').textContent = state.done ? 'No hay más resultados' : 'Desplazate para cargar más';
       renderCounter();
     }catch(e){
       if(!append) $('#list').innerHTML = '<div class="empty">No se pudieron cargar las notificaciones.</div>';
@@ -278,6 +345,7 @@
   }
 
   async function markIdsAsRead(ids){
+    if(!ids || !ids.length) return;
     try{
       const r = await fetch('/notificaciones/marcar-leidas',{
         method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ids })
@@ -290,6 +358,7 @@
       else if(typeof window.fetchNotifs === 'function') await window.fetchNotifs();
     }catch(_){
       (window.showToast||console.error)({title:'Error', body:'No se pudieron marcar como leídas.', icon:'exclamation-triangle'});
+      throw _;
     }
   }
 
@@ -305,16 +374,34 @@
     }
   }
 
-  // Eventos UI
+  // ===== Seleccionar todo (página) =====
+  $('#selAllPage').addEventListener('change', (e)=>{
+    const check = e.target.checked;
+    state.pageIds.forEach(id=>{
+      const box = document.getElementById(`chk_${CSS.escape(id)}`);
+      if(box){ box.checked = check; checkboxChanged(id, check); }
+    });
+  });
+
+  // ===== Eventos UI =====
   document.addEventListener('DOMContentLoaded', ()=>{
-    const onSearch = debounce(()=>{ state.q = $('#search').value.trim(); syncURL(); reloadList(true); }, 300);
+    const onSearch = debounce(()=>{ state.q = $('#search').value.trim(); syncURL(); state.offset=0; state.done=false; state.totalShown=0; reloadList(true); }, 300);
     $('#search').addEventListener('input', onSearch);
 
     $('#filterUnread').addEventListener('change', ()=>{
       state.onlyUnread = $('#filterUnread').value === 'unread';
       syncURL();
+      state.offset=0; state.done=false; state.totalShown=0;
       reloadList(true);
     });
+
+    $('#pageSize').addEventListener('change', ()=>{
+      const v = parseInt($('#pageSize').value,10)||20;
+      state.limit = v;
+      state.offset=0; state.done=false; state.totalShown=0;
+      reloadList(true);
+    });
+
     $('#loadMore').addEventListener('click', ()=> fetchList({append:true}));
     $('#btnMarkAll').addEventListener('click', async ()=>{ if(confirm('¿Marcar todas las notificaciones actuales como leídas?')) await markAllAsRead(); });
     $('#btnMarkSelected').addEventListener('click', async ()=>{
@@ -323,11 +410,40 @@
         await reloadList(true);
       }
     });
+    $('#btnRefresh').addEventListener('click', ()=> reloadList(true));
+
+    // Auto-refresh
+    $('#autoRefresh').addEventListener('change', ()=>{
+      if($('#autoRefresh').checked) startAuto(); else stopAuto();
+    });
   });
 
-  // Init (base.html ya carga nav, chat IA, campanita, etc.)
-  window.onload = async ()=>{
+  // ===== Auto-load al hacer scroll (IntersectionObserver) =====
+  const io = new IntersectionObserver((entries)=>{
+    for(const ent of entries){
+      if(ent.isIntersecting && !state.loading && !state.done){
+        fetchList({append:true});
+      }
+    }
+  }, {rootMargin: '256px 0px'});
+  io.observe(document.getElementById('sentinel'));
+
+  // ===== Auto-refresh (20s) =====
+  function startAuto(){
+    stopAuto();
+    state.autoTimer = setInterval(()=>{
+      // Mantiene filtros, resetea paginación para traer novedades arriba
+      state.offset = 0; state.done = false; state.totalShown = 0; reloadList(true);
+    }, 20000);
+  }
+  function stopAuto(){ if(state.autoTimer){ clearInterval(state.autoTimer); state.autoTimer=null; } }
+
+  // ===== Init =====
+  (async ()=>{
+    // Tamaño por defecto desde select
+    state.limit = parseInt($('#pageSize').value,10)||20;
     await reloadList(true);
-  };
+    if($('#autoRefresh').checked) startAuto();
+  })();
 </script>
 {% endblock %}

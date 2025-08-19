@@ -2,75 +2,130 @@
 {% block title %}Auditoría de actividad · Suizo Argentina{% endblock %}
 
 {% block extra_head %}
-  <style>
-    .filters .form-control, .filters .form-select { border-radius: 12px; }
-    .table thead{ background:#f6f7fe; }
-    .pill{ background:#eef2ff; color:#1e40af; border:1px solid #c7d2fe; padding:2px 8px; border-radius:999px; font-size:12px; }
-    .state-activa{ color:#0f766e; background:#ccfbf1; }
-    .state-expirada{ color:#92400e; background:#fef3c7; }
-    .state-cerrada{ color:#334155; background:#e2e8f0; }
-    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:12px; }
-  </style>
+<style>
+  /* ---------- Scoped a la vista ---------- */
+  .act.wrap{ display:grid; gap:.75rem; }
+
+  /* Filtros compactos y redondeados */
+  .act .filters .form-control,
+  .act .filters .form-select{ border-radius:12px; }
+
+  /* Tabla con scroll y header pegajoso */
+  .act .table-wrap{
+    max-height: 65vh;
+    border-radius: var(--radius);
+    overflow: auto;
+  }
+  .act thead th{
+    position: sticky; top: 0; z-index: 1;
+    background: var(--muted);
+  }
+  html[data-theme="dark"] .act thead th{ background:#0f172a; }
+
+  /* Pills y estados usando tokens de marca */
+  .act .pill{
+    background: var(--brand-100);
+    color: var(--brand-500);
+    border: 1px solid var(--bs-border-color, var(--border));
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .act .state-activa{
+    background: rgba(16,185,129,.15);
+    color:#0f766e;
+    border-color: rgba(16,185,129,.3);
+  }
+  .act .state-expirada{
+    background: rgba(245,158,11,.18);
+    color:#92400e;
+    border-color: rgba(245,158,11,.35);
+  }
+  .act .state-cerrada{
+    background: rgba(100,116,139,.20);
+    color:#334155;
+    border-color: rgba(100,116,139,.35);
+  }
+
+  .act .mono{
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
+    font-size:12px;
+  }
+</style>
 {% endblock %}
 
 {% block content %}
-<div class="grid">
-  <section class="cardx col-12">
-    <div class="d-flex align-items-center justify-content-between mb-2">
-      <h5 class="title mb-0"><i class="bi bi-graph-up"></i> Auditoría de actividad <span id="chipCount" class="pill">0 sesiones</span></h5>
+<div class="container-xxl act wrap">
+  <section class="card-clean shadow-hover">
+    <div class="card-header d-flex align-items-center justify-content-between">
+      <h1 class="h5 m-0 text-brand">
+        <i class="bi bi-graph-up me-1"></i> Auditoría de actividad
+        <span id="chipCount" class="pill ms-1">0 sesiones</span>
+      </h1>
       <div class="d-flex gap-2">
-        <button id="btnExport" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i> Exportar CSV</button>
+        <button id="btnExport" class="btn btn-sm btn-outline-secondary" type="button">
+          <i class="bi bi-download"></i> Exportar CSV
+        </button>
         <a href="/admin" class="btn btn-sm btn-outline-secondary">← Volver</a>
       </div>
     </div>
 
     <!-- Filtros -->
-    <div class="filters row g-2 mb-3">
-      <div class="col-12 col-md-4">
-        <input id="fUsuario" class="form-control" placeholder="Usuario (email contiene)">
-      </div>
-      <div class="col-6 col-md-3">
-        <input id="fDesde" type="date" class="form-control" placeholder="Desde">
-      </div>
-      <div class="col-6 col-md-3">
-        <input id="fHasta" type="date" class="form-control" placeholder="Hasta">
-      </div>
-      <div class="col-12 col-md-2 d-flex gap-2">
-        <button id="btnBuscar" class="btn btn-primary w-100"><i class="bi bi-search"></i> Buscar</button>
-        <button id="btnLimpiar" class="btn btn-outline-secondary w-100">Limpiar</button>
-      </div>
-      <div class="col-12">
-        <div class="form-check">
-          <input class="form-check-input" type="checkbox" id="autoRefresh" checked>
-          <label class="form-check-label" for="autoRefresh">Auto-refresh</label>
+    <div class="card-body">
+      <div class="filters row g-2 mb-2 input-compact">
+        <div class="col-12 col-md-4">
+          <label for="fUsuario" class="form-label small text-muted">Usuario (email contiene)</label>
+          <input id="fUsuario" class="form-control" placeholder="usuario@empresa.com">
+        </div>
+        <div class="col-6 col-md-3">
+          <label for="fDesde" class="form-label small text-muted">Desde</label>
+          <input id="fDesde" type="date" class="form-control" placeholder="Desde">
+        </div>
+        <div class="col-6 col-md-3">
+          <label for="fHasta" class="form-label small text-muted">Hasta</label>
+          <input id="fHasta" type="date" class="form-control" placeholder="Hasta">
+        </div>
+        <div class="col-12 col-md-2 d-flex gap-2 align-items-end">
+          <button id="btnBuscar" class="btn btn-primary w-100" type="button">
+            <i class="bi bi-search"></i> Buscar
+          </button>
+          <button id="btnLimpiar" class="btn btn-outline-secondary w-100" type="button">Limpiar</button>
+        </div>
+        <div class="col-12">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="autoRefresh" checked>
+            <label class="form-check-label" for="autoRefresh">Auto-refresh</label>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- Tabla -->
-    <div class="table-responsive">
-      <table class="table align-middle table-hover">
-        <thead>
-          <tr>
-            <th>Estado</th>
-            <th>Usuario</th>
-            <th>Nombre</th>
-            <th>Inicio</th>
-            <th>Último visto</th>
-            <th>Cierre</th>
-            <th>Duración</th>
-            <th>IP</th>
-            <th>Agente</th>
-            <th>SID</th>
-          </tr>
-        </thead>
-        <tbody id="rows">
-          <tr><td colspan="10" class="text-center text-muted py-4">Cargando…</td></tr>
-        </tbody>
-      </table>
-    </div>
+      <!-- Tabla -->
+      <div class="table-wrap">
+        <table class="table align-middle table-hover mb-0">
+          <thead>
+            <tr>
+              <th style="min-width:90px;">Estado</th>
+              <th>Usuario</th>
+              <th>Nombre</th>
+              <th>Inicio</th>
+              <th>Último visto</th>
+              <th>Cierre</th>
+              <th>Duración</th>
+              <th>IP</th>
+              <th>Agente</th>
+              <th>SID</th>
+            </tr>
+          </thead>
+          <tbody id="rows">
+            <tr><td colspan="10" class="text-center text-muted py-4">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
 
-    <div class="small text-muted mt-2" id="footNote"></div>
+      <div class="small text-muted mt-2" id="footNote"></div>
+    </div>
   </section>
 </div>
 {% endblock %}
@@ -84,14 +139,14 @@
   function fmtLocal(iso){
     if(!iso) return '—';
     const d = new Date(iso);
-    if(isNaN(d)) return iso;
-    return d.toLocaleString();
+    if(isNaN(d)) return String(iso);
+    return d.toLocaleString(); // usa locale del navegador
   }
   function humanDur(s){
-    if(s==null) return '—';
+    if(s==null || isNaN(s)) return '—';
     const h = Math.floor(s/3600);
     const m = Math.floor((s%3600)/60);
-    const sec = s%60;
+    const sec = Math.floor(s%60);
     const parts=[];
     if(h) parts.push(h+'h');
     if(m) parts.push(m+'m');
@@ -100,7 +155,7 @@
   }
   function stateBadge(st){
     const cls = st==='activa' ? 'state-activa' : (st==='expirada' ? 'state-expirada':'state-cerrada');
-    const label = st.charAt(0).toUpperCase()+st.slice(1);
+    const label = st ? (st.charAt(0).toUpperCase()+st.slice(1)) : '—';
     return `<span class="pill ${cls}">${label}</span>`;
   }
 
@@ -117,62 +172,86 @@
     try{
       const r = await fetch('/auditoria/actividad?'+q.toString());
       const j = await r.json();
-      const items = j.items||[];
-      chip.textContent = `${items.length} sesiones`;
-      note.textContent = `Timeout de inactividad: ${j.timeout_min} min · Hora del servidor: ${j.now_utc}`;
+      const items = Array.isArray(j.items) ? j.items : [];
+      chip.textContent = `${items.length} ${items.length===1?'sesión':'sesiones'}`;
+      note.textContent = `Timeout de inactividad: ${j.timeout_min} min · Hora del servidor (UTC): ${j.now_utc}`;
 
       if(!items.length){
         rows.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-4">Sin coincidencias</td></tr>`;
         return;
       }
 
-      rows.innerHTML = '';
+      const frag = document.createDocumentFragment();
       items.forEach(it=>{
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td>${stateBadge(it.estado)}</td>
-          <td class="mono">${it.usuario}</td>
-          <td>${it.nombre||'—'}</td>
+          <td class="mono">${(it.usuario||'—')}</td>
+          <td>${(it.nombre||'—')}</td>
           <td class="mono">${fmtLocal(it.login_at)}</td>
           <td class="mono">${fmtLocal(it.last_seen)}</td>
           <td class="mono">${fmtLocal(it.logout_at)}</td>
           <td>${humanDur(it.duracion_seg)}</td>
           <td class="mono">${it.ip||'—'}</td>
-          <td class="mono" title="${it.ua||''}">${(it.ua||'—').slice(0,32)}${(it.ua&&it.ua.length>32)?'…':''}</td>
-          <td class="mono">${it.id}</td>
+          <td class="mono" title="${(it.ua||'').replace(/"/g,'&quot;')}">${(it.ua||'—').slice(0,48)}${(it.ua&&it.ua.length>48)?'…':''}</td>
+          <td class="mono">${it.id||'—'}</td>
         `;
-        rows.appendChild(tr);
+        frag.appendChild(tr);
       });
+      rows.innerHTML = '';
+      rows.appendChild(frag);
+
+      // Guarda data para export (evita leer del DOM)
+      rows.dataset.json = JSON.stringify(items);
     }catch(e){
       rows.innerHTML = `<tr><td colspan="10" class="text-center text-danger py-4">Error al cargar</td></tr>`;
     }
   }
 
-  document.getElementById('btnBuscar').addEventListener('click', cargar);
-  document.getElementById('btnLimpiar').addEventListener('click', ()=>{
+  document.getElementById('btnBuscar')?.addEventListener('click', cargar);
+  document.getElementById('btnLimpiar')?.addEventListener('click', ()=>{
     document.getElementById('fUsuario').value='';
     document.getElementById('fDesde').value='';
     document.getElementById('fHasta').value='';
     cargar();
   });
-  // Export CSV rápido
-  document.getElementById('btnExport').addEventListener('click', ()=>{
-    const rowsEls = [...document.querySelectorAll('#rows tr')];
-    if(!rowsEls.length) return;
-    const headers = ['Estado','Usuario','Nombre','Inicio','Último visto','Cierre','Duración','IP','Agente','SID'];
-    const data = rowsEls.map(tr=>[...tr.children].map(td=>td.innerText.replace(/\n/g,' ').trim()));
-    const csv = [headers, ...data].map(r=>r.map(v=>`"${(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
+
+  // Export CSV (desde la data última cargada)
+  document.getElementById('btnExport')?.addEventListener('click', ()=>{
+    let data = [];
+    try{ data = JSON.parse(rows.dataset.json||'[]'); }catch(_){}
+    if(!Array.isArray(data) || !data.length){
+      // fallback: exportar lo visible del DOM
+      const headers = ['Estado','Usuario','Nombre','Inicio','Último visto','Cierre','Duración','IP','Agente','SID'];
+      const domRows = [...document.querySelectorAll('#rows tr')].map(tr=>[...tr.children].map(td=>td.innerText.replace(/\n/g,' ').trim()));
+      const csvDom = [headers, ...domRows].map(r=>r.map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
+      return downloadCSV(csvDom, 'auditoria_actividad.csv');
+    }
+    const headers = ['estado','usuario','nombre','login_at','last_seen','logout_at','duracion_seg','ip','ua','id'];
+    const esc = v=>`"${String(v??'').replace(/"/g,'""')}"`;
+    const lines = [headers.map(esc).join(',')];
+    data.forEach(it=>{
+      lines.push([
+        it.estado, it.usuario, it.nombre, it.login_at, it.last_seen, it.logout_at,
+        it.duracion_seg, it.ip, it.ua, it.id
+      ].map(esc).join(','));
+    });
+    downloadCSV(lines.join('\n'), `auditoria_actividad_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`);
+  });
+
+  function downloadCSV(csv, filename){
     const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'auditoria_actividad.csv';
+    a.download = filename;
     a.click();
-  });
+    setTimeout(()=> URL.revokeObjectURL(a.href), 500);
+  }
 
-  // auto refresh
-  setInterval(()=>{ if(document.getElementById('autoRefresh').checked) cargar(); }, 15000);
+  // Auto-refresh suave
+  setInterval(()=>{ if(document.getElementById('autoRefresh')?.checked) cargar(); }, 15000);
 
-  // init
+  // Init
   cargar();
 </script>
 {% endblock %}
