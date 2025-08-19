@@ -189,6 +189,7 @@ def ar_time(value: str) -> str:
     except Exception:
         return value
 templates.env.filters["ar_time"] = ar_time
+
 # ================== Guardas/Dependencias de auth/roles ==================
 def require_auth(request: Request):
     if not request.session.get("usuario"):
@@ -546,6 +547,7 @@ def _pr_get(user: str):
 def _pr_clear(user: str):
     with cal_conn() as c:
         c.execute("DELETE FROM pending_ratings WHERE user=?", (user,))
+
 # ================== Login/Logout ==================
 @app.post("/login")
 async def login(request: Request,
@@ -658,11 +660,17 @@ async def cambiar_password_view(request: Request):
     ok = request.query_params.get("ok")
     return templates.TemplateResponse("cambiar_password.html", {"request": request, "error": None, "ok": ok})
 
-# Alias con guion_bajo -> redirige a la ruta canónica con guion
+# Alias con guion_bajo -> redirige a la ruta canónica con guion (GET)
 @app.get("/cambiar_password", response_class=HTMLResponse)
 async def cambiar_password_alias():
     return RedirectResponse("/cambiar-password", status_code=307)
 
+# NUEVO: aceptar barra final en GET
+@app.get("/cambiar-password/")
+async def cambiar_password_trailing_get():
+    return RedirectResponse("/cambiar-password", status_code=307)
+
+# POST canónico
 @app.post("/cambiar-password")
 async def cambiar_password_post(
     request: Request,
@@ -715,7 +723,35 @@ async def cambiar_password_post(
 
     return RedirectResponse("/cambiar-password?ok=1", status_code=303)
 
+# NUEVO: aceptar barra final en POST (reusa la lógica canónica)
+@app.post("/cambiar-password/")
+async def cambiar_password_trailing_post(
+    request: Request,
+    actual: str = Form(...),
+    nueva: str = Form(...),
+    confirmar: str = Form(...)
+):
+    return await cambiar_password_post(request, actual=actual, nueva=nueva, confirmar=confirmar)
 
+# NUEVO: aceptar guion_bajo en POST (compatibilidad)
+@app.post("/cambiar_password")
+async def cambiar_password_underscore_post(
+    request: Request,
+    actual: str = Form(...),
+    nueva: str = Form(...),
+    confirmar: str = Form(...)
+):
+    return await cambiar_password_post(request, actual=actual, nueva=nueva, confirmar=confirmar)
+
+# NUEVO: aceptar guion_bajo + barra final en POST
+@app.post("/cambiar_password/")
+async def cambiar_password_underscore_post_slash(
+    request: Request,
+    actual: str = Form(...),
+    nueva: str = Form(...),
+    confirmar: str = Form(...)
+):
+    return await cambiar_password_post(request, actual=actual, nueva=nueva, confirmar=confirmar)
 # ================== Rating/Análisis ==================
 class RatingIn(BaseModel):
     historial_id: Optional[int] = None
@@ -786,7 +822,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
     if not historial_id:
         h = _buscar_historial_usuario(user, timestamp=payload.timestamp, nombre_pdf=payload.nombre_pdf)
         if h:
-            hid = h.get("historial_id") or h.get("id")
+            hid = h.get("historial_id") | h.get("id")
             if isinstance(hid, int):
                 historial_id = hid
 
@@ -1012,6 +1048,24 @@ async def diag_auth(request: Request):
         "route": str(request.url),
         "headers": headers
     }
+
+# Diagnóstico rápido siempre disponible (no revela info sensible)
+@app.get("/debug/whoami")
+async def debug_whoami(request: Request):
+    sess = request.session or {}
+    return {
+        "logged_in": bool(sess.get("usuario")),
+        "session_keys": sorted(list(sess.keys())),
+        "session_preview": {
+            "usuario": sess.get("usuario"),
+            "rol": sess.get("rol"),
+            "nombre": sess.get("nombre"),
+            "sid_present": bool(sess.get("sid"))
+        },
+        "cookie_present": ("session" in (request.cookies or {})),
+        "route": str(request.url)
+    }
+
 # ================== Incidencias ==================
 @app.get("/incidencias", response_class=HTMLResponse)
 async def vista_incidencias(request: Request):
@@ -1215,8 +1269,6 @@ async def chat_openai_embed(request: Request):
     </body></html>
     """
     return HTMLResponse(html)
-
-
 # ================== Chat interno (UI) ==================
 @app.get("/chat", response_class=HTMLResponse)
 async def chat_view(request: Request):
@@ -1379,7 +1431,7 @@ async def chat_enviar_archivo(
 ):
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
-    archivos = [archivo] if archivo and archivo.filename else []
+    archivos = [archivo] if archivo && archivo.filename else []
     return await chat_enviar_archivos(request, para=para, texto=texto, archivos=archivos)
 
 @app.get("/chat/adjunto/{filename}")
@@ -1777,8 +1829,6 @@ async def legacy_admin_reset_session(request: Request):
     except Exception as e:
         print("❌ legacy_admin_reset_session:", repr(e))
         return JSONResponse({"error": "No se pudo reiniciar la sesión"}, status_code=500)
-
-
 # =====================================================================
 # ========================== CALENDARIO (endpoints) ===================
 # =====================================================================
