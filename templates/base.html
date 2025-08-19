@@ -836,7 +836,7 @@
 
     function showToast({title='Aviso', body='', icon='info', delay=3200}={}){
       const cont=document.getElementById('toastContainer'); if(!cont) return;
-      const esc=(s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&gt;','&quot;':'&quot;','\'':'&#39;'}[c])); 
+      const esc=(s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
       const el=document.createElement('div'); el.className='toast align-items-center'; el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
       el.innerHTML=`<div class="toast-header">
         <i class="bi bi-${esc(icon)} me-1"></i><strong class="me-auto">${esc(title)}</strong>
@@ -1088,7 +1088,7 @@
           markDownloaded(ts);
           setTimeout(()=>{
             const last = loadLast();
-            if(last?.ts === ts && !isDone(ts)) openFor(ts, last.pdf||href.split('/').pop());
+            if(last?.ts === ts && !isDone(last.ts)) openFor(last.ts, last.pdf||href.split('/').pop());
           }, 800);
         }else{
           markViewed(ts);
@@ -1262,87 +1262,87 @@
     })();
 
     /* ============================================
-       === CALENDARIO: controles externos (Mes…) ===
+       === CALENDARIO GLOBAL (panel + subpáginas) ===
        ============================================ */
-    (function calendarControls(){
-      // Obtiene o crea (solo si no existe) la instancia de FullCalendar
-      function getCalendarInstance(){
-        const guess = window.AppCalendar || window.calendar || window.fcCalendar || window.__calendar;
-        if (guess) return guess;
-
-        const el = document.getElementById('calendar');
-        if (!el) return null;
-
-        // Si ya está renderizado (contiene clases fc-*) no lo re-creamos
-        const already = el.querySelector('.fc');
-        if (already) return null;
-
-        if (window.FullCalendar) {
+    (function calendarGlobalControls(){
+      // --- Hook: cuando FullCalendar renderiza, guardamos la instancia
+      function installFullCalendarHook(){
+        const FC = window.FullCalendar;
+        if(!FC || !FC.Calendar || FC.Calendar.__saHooked) return;
+        const origRender = FC.Calendar.prototype.render;
+        FC.Calendar.prototype.render = function(){
+          const out = origRender.apply(this, arguments);
           try{
-            const cal = new FullCalendar.Calendar(el, {
-              initialView: 'dayGridMonth',
-              locale: 'es',
-              headerToolbar: false,
-              height: 'auto'
-            });
-            cal.render();
-            window.__calendar = cal;
-            return cal;
+            this.el.__fcCalendar = this;
+            window.AppCalendar = window.AppCalendar || this;
+            window.__calendar   = window.__calendar   || this;
           }catch(_){}
-        }
-        return null;
+          return out;
+        };
+        FC.Calendar.__saHooked = true;
       }
 
-      // Mapea por texto si faltan data-attrs (Mes/Semana/Lista/Hoy/prev/next)
-      function ensureDataAttrs(){
-        // buscamos el bloque donde está el calendario para no tocar toda la página
-        const fcNode = document.querySelector('.fc') || document.getElementById('calendar');
-        const scope = fcNode ? (fcNode.closest('.cardx, .card, main, body') || document.body) : document.body;
-        const items = scope.querySelectorAll('button, a, [role="button"]');
+      // Localiza la instancia apropiada (soporta data-cal-target)
+      function getCalendarFor(btn){
+        const sel = btn?.getAttribute?.('data-cal-target');
+        if(sel){
+          const target = document.querySelector(sel);
+          if(target?.__fcCalendar) return target.__fcCalendar;
+        }
+        const el = document.getElementById('calendar');
+        if(el?.__fcCalendar) return el.__fcCalendar;
 
-        const txt = (el) => (el.textContent || '').trim().toLowerCase();
+        const scope = btn?.closest?.('.cardx, main, body') || document.body;
+        const fcRoot = scope.querySelector('#calendar, .fc') || document.querySelector('#calendar, .fc');
+        if(fcRoot?.__fcCalendar) return fcRoot.__fcCalendar;
+
+        return window.AppCalendar || window.__calendar || window.calendar || window.fcCalendar || null;
+      }
+
+      // Añade data-attrs por texto/aria si faltan (Mes/Semana/Lista/Hoy/prev/next)
+      function ensureDataAttrs(scope){
+        const root = scope || document;
+        const items = root.querySelectorAll('button, a, [role="button"]');
+        const getTxt = (el)=> (el.textContent || '').trim().toLowerCase();
         items.forEach(el=>{
-          const t = txt(el);
+          const t = getTxt(el);
           if(!el.hasAttribute('data-cal-view')){
-            if(t === 'mes') el.setAttribute('data-cal-view','dayGridMonth');
-            else if(t === 'semana') el.setAttribute('data-cal-view','timeGridWeek');
-            else if(t === 'lista') el.setAttribute('data-cal-view','listWeek');
+            if(t === 'mes')    el.setAttribute('data-cal-view','dayGridMonth');
+            if(t === 'semana') el.setAttribute('data-cal-view','timeGridWeek');
+            if(t === 'lista')  el.setAttribute('data-cal-view','listWeek');
           }
           if(!el.hasAttribute('data-cal-nav')){
             if(t === 'hoy') el.setAttribute('data-cal-nav','today');
-            // setas prev/next por aria-label o íconos
             const aria = (el.getAttribute('aria-label')||'').toLowerCase();
-            if(aria.includes('anterior') || t === '‹' || t === '<' ) el.setAttribute('data-cal-nav','prev');
-            if(aria.includes('siguiente') || t === '›' || t === '>' ) el.setAttribute('data-cal-nav','next');
+            if(aria.includes('anterior'))  el.setAttribute('data-cal-nav','prev');
+            if(aria.includes('siguiente')) el.setAttribute('data-cal-nav','next');
           }
+          if(el.tagName === 'BUTTON' && el.type !== 'button') el.type = 'button';
+          if(el.tagName === 'A' && el.getAttribute('href') === '#') el.setAttribute('role','button');
         });
       }
 
-      // Resalta el botón de vista activa
       function highlightActive(cal){
         try{
           const type = cal?.view?.type;
           document.querySelectorAll('[data-cal-view]').forEach(b=>{
-            const on = b.getAttribute('data-cal-view') === type;
-            b.classList.toggle('is-active', on);
+            b.classList.toggle('is-active', b.getAttribute('data-cal-view') === type);
           });
         }catch(_){}
       }
 
-      // Delegación de eventos: funciona aunque el DOM se rehidrate
+      // Delegación global de clicks
       document.addEventListener('click', function(ev){
-        const btn = ev.target.closest('[data-cal-nav],[data-cal-view]');
+        const btn = ev.target.closest?.('[data-cal-nav],[data-cal-view]');
         if(!btn) return;
 
-        // Evitar submit involuntario
-        if(btn.tagName === 'BUTTON' && btn.type !== 'button') btn.type = 'button';
         const href = btn.getAttribute('href');
-        if(href === '#' || href === '' ) { ev.preventDefault(); }
-        ev.stopPropagation();
+        if(href === '#' || href === '') ev.preventDefault();
 
-        const cal = getCalendarInstance() || window.AppCalendar || window.__calendar || window.calendar || window.fcCalendar;
+        installFullCalendarHook();
+        const cal = getCalendarFor(btn);
         if(!cal){
-          console.warn('No se encontró instancia de FullCalendar (define window.AppCalendar = calendar).');
+          console.warn('[calendar] No se encontró instancia. Si hay varios calendarios, usa data-cal-target="#idDelCalendario".');
           return;
         }
 
@@ -1352,19 +1352,32 @@
           if(nav === 'next')  cal.next();
           if(nav === 'today') cal.today();
         }
+
         const view = btn.getAttribute('data-cal-view');
         if(view){
           try{ cal.changeView(view); }catch(_){}
           highlightActive(cal);
         }
-      });
+      }, true); // captura
 
-      // Inicial: intenta mapear por texto y resaltar vista activa
+      // Inicial
       window.addEventListener('DOMContentLoaded', ()=>{
-        ensureDataAttrs();
-        const cal = window.AppCalendar || window.__calendar || getCalendarInstance();
+        installFullCalendarHook();
+        ensureDataAttrs(document);
+        const el = document.getElementById('calendar');
+        const cal = el?.__fcCalendar || window.AppCalendar || window.__calendar || null;
         if(cal) highlightActive(cal);
       });
+
+      // Re-mapear si el DOM cambia
+      const mo = new MutationObserver((muts)=>{
+        for(const m of muts){
+          if(m.type === 'childList'){
+            ensureDataAttrs(m.target || document);
+          }
+        }
+      });
+      mo.observe(document.body, { childList:true, subtree:true });
     })();
 
   </script>
