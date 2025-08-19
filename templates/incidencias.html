@@ -3,11 +3,12 @@
 
 {% block extra_head %}
 <style>
-  /* ——— Encabezado + coherencia visual con el home ——— */
+  /* ——— Encabezado + coherencia visual ——— */
   .inc-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   .inc-head .hero-title{ margin:0; }
+  .subtle{ color:var(--muted,#667085); }
 
-  /* Campos “neo” como el home */
+  /* Campos “neo” */
   .form-neo .form-control,
   .form-neo .form-select,
   .form-neo textarea {
@@ -23,7 +24,7 @@
     box-shadow:0 0 0 .25rem rgba(139,92,246,.18);
   }
 
-  /* Botones a juego con el home */
+  /* Botones a juego */
   .btn-primary{
     border:none; border-radius:12px;
     background:linear-gradient(135deg, var(--accent-a), var(--accent-b));
@@ -38,7 +39,10 @@
   .btn-soft{ border-radius:12px; border:1px solid var(--border); background:#f6f8ff; }
 
   /* Tabla & chips de adjuntos */
-  .table thead th{ position:sticky; top:0; background:#fff; z-index:1; }
+  .table thead th{ position:sticky; top:0; background:#fff; z-index:1; user-select:none; cursor:default; }
+  .table th.sortable{ cursor:pointer; }
+  .table th.sortable .bi{ opacity:.35; }
+  .table th.sortable.active .bi{ opacity:1; }
   .chips{ display:flex; flex-wrap:wrap; gap:6px; }
   .chip{
     display:inline-flex; align-items:center; gap:6px;
@@ -53,11 +57,23 @@
   .badge-abierto{ background:#fff7ed; color:#9a3412; border:1px solid #fed7aa; }
   .badge-cerrado{ background:#ecfdf5; color:#065f46; border:1px solid #b7f0db; }
 
-  /* Filtro */
+  /* Filtros / búsqueda */
   #filterInput{ max-width:260px; }
+  .inc-toolbar{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .inc-toolbar .form-select, .inc-toolbar .form-control{ border-radius:12px; }
+  .result-count{ color:var(--muted); }
   mark.hl{ background:#fff3bf; padding:0 .15em; border-radius:4px; }
 
+  /* Paginación */
+  .inc-pager{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px; }
+  .inc-pager .range{ color:var(--muted); }
+  .pagination .page-link{ border-radius:10px; }
+
   .file-hint{ color:var(--muted); }
+  .file-list{ margin-top:6px; display:flex; flex-wrap:wrap; gap:6px; }
+  .file-item{ font-size:12px; border:1px solid var(--border); border-radius:999px; padding:4px 8px; background:#fff; }
+  .file-item .rm{ border:none; background:transparent; margin-left:6px; cursor:pointer; }
+  .char-count{ font-size:.9rem; color:var(--muted); }
 </style>
 {% endblock %}
 
@@ -75,10 +91,10 @@
       <span class="subtle">Reportá un problema o solicitud</span>
     </div>
 
-    <form method="post" action="/incidencias" enctype="multipart/form-data" class="row g-3 form-neo">
+    <form method="post" action="/incidencias" enctype="multipart/form-data" class="row g-3 form-neo" id="formInc">
       <div class="col-12 col-md-6">
         <label for="titulo" class="form-label">Título</label>
-        <input type="text" class="form-control" id="titulo" name="titulo" placeholder="Ej: No puedo subir pliegos…" required>
+        <input type="text" class="form-control" id="titulo" name="titulo" placeholder="Ej: No puedo subir pliegos…" required maxlength="200">
       </div>
 
       <div class="col-12 col-md-3">
@@ -95,14 +111,16 @@
       <div class="col-12">
         <label for="descripcion" class="form-label">Descripción</label>
         <textarea class="form-control" id="descripcion" name="descripcion" rows="6"
-          placeholder="Contanos qué pasó, pasos para reproducir y qué esperabas que suceda…" required></textarea>
+          placeholder="Contanos qué pasó, pasos para reproducir y qué esperabas que suceda…" required maxlength="4000"></textarea>
+        <div class="char-count"><span id="descCnt">0</span>/4000</div>
       </div>
 
       <div class="col-12">
         <label for="archivo" class="form-label">Adjuntar archivos (opcional)</label>
         <input class="form-control" type="file" name="archivos" id="archivo" multiple
                accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.csv,.xlsx,.xls,.docx,.doc,.pptx">
-        <div class="form-text file-hint">Imágenes, PDF, Word, Excel, etc.</div>
+        <div class="form-text file-hint">Imágenes, PDF, Word, Excel, etc. Máx. 10 archivos • 25 MB totales.</div>
+        <div id="selFiles" class="file-list" aria-live="polite"></div>
       </div>
 
       <div class="col-12 d-flex gap-2">
@@ -115,29 +133,58 @@
   <!-- Listado -->
   <div class="cardx">
     <div class="d-flex align-items-center justify-content-between mb-2">
-      <div class="title"><i class="bi bi-journal-text"></i> Incidencias registradas</div>
-      <input id="filterInput" class="form-control form-control-sm" placeholder="Filtrar por texto…">
+      <div class="title d-flex align-items-center gap-2">
+        <i class="bi bi-journal-text"></i>
+        <span>Incidencias registradas</span>
+        <small id="resultCnt" class="result-count"></small>
+      </div>
+      <div class="inc-toolbar">
+        <input id="filterInput" class="form-control form-control-sm" placeholder="Filtrar por texto…" title="Buscar en todas las columnas">
+        <select id="filterEstado" class="form-select form-select-sm" title="Filtrar por estado">
+          <option value="">Estado: Todos</option>
+          <option value="Abierto">Abierto</option>
+          <option value="Cerrado">Cerrado</option>
+        </select>
+        <select id="filterTipo" class="form-select form-select-sm" title="Filtrar por categoría">
+          <option value="">Categoría: Todas</option>
+          <option value="Técnica">Técnica</option>
+          <option value="Acceso">Acceso</option>
+          <option value="Datos">Datos</option>
+          <option value="Solicitud">Solicitud</option>
+          <option value="Otro">Otro</option>
+        </select>
+        <select id="pageSize" class="form-select form-select-sm" title="Ítems por página">
+          <option>10</option><option selected>25</option><option>50</option><option>100</option>
+        </select>
+        <button id="btnExport" class="btn btn-outline-primary btn-sm"><i class="bi bi-download me-1"></i> Exportar</button>
+      </div>
     </div>
 
     <div class="table-responsive">
-      <table class="table align-middle mb-0">
+      <table class="table align-middle mb-0" id="incTable">
         <thead>
           <tr>
-            <th class="text-nowrap">ID</th>
-            <th class="text-nowrap">Usuario</th>
-            <th class="text-nowrap">Título</th>
+            <th class="text-nowrap sortable" data-sort="id">ID <i class="bi bi-arrow-down-up"></i></th>
+            <th class="text-nowrap sortable" data-sort="usuario">Usuario <i class="bi bi-arrow-down-up"></i></th>
+            <th class="text-nowrap sortable" data-sort="titulo">Título <i class="bi bi-arrow-down-up"></i></th>
             <th>Descripción</th>
-            <th class="text-nowrap">Categoría</th>
-            <th class="text-nowrap">Fecha</th>
+            <th class="text-nowrap sortable" data-sort="tipo">Categoría <i class="bi bi-arrow-down-up"></i></th>
+            <th class="text-nowrap sortable" data-sort="fecha">Fecha <i class="bi bi-arrow-down-up"></i></th>
             <th class="text-nowrap">Adjuntos</th>
-            <th class="text-nowrap">Estado</th>
+            <th class="text-nowrap sortable" data-sort="estado">Estado <i class="bi bi-arrow-down-up"></i></th>
             <th class="text-nowrap">Acciones</th>
           </tr>
         </thead>
         <tbody id="incTableBody">
           {% for ticket in tickets %}
-          <tr>
-            <td class="text-muted">{{ ticket.id }}</td>
+          <tr data-id="{{ ticket.id }}"
+              data-usuario="{{ ticket.usuario | e }}"
+              data-titulo="{{ ticket.titulo | e }}"
+              data-descripcion="{{ ticket.descripcion | e }}"
+              data-tipo="{{ ticket.tipo | e }}"
+              data-fecha="{{ ticket.fecha_legible | e }}"
+              data-estado="{{ ticket.estado | e }}">
+            <td class="text-muted td-id">{{ ticket.id }}</td>
             <td class="campo-usuario">{{ ticket.usuario }}</td>
             <td class="fw-semibold campo-titulo">{{ ticket.titulo }}</td>
             <td class="small campo-descripcion">{{ ticket.descripcion }}</td>
@@ -159,7 +206,7 @@
                 <span class="text-muted">—</span>
               {% endif %}
             </td>
-            <td>
+            <td class="td-estado">
               {% if ticket.estado == 'Cerrado' %}
                 <span class="badge-state badge-cerrado">Cerrado</span>
               {% else %}
@@ -195,48 +242,242 @@
     {% if tickets|length == 0 %}
       <div class="text-center text-body-secondary py-3">No hay incidencias registradas.</div>
     {% endif %}
+
+    <div class="inc-pager">
+      <div id="rangeInfo" class="range">—</div>
+      <nav aria-label="Paginación incidencias">
+        <ul id="pager" class="pagination pagination-sm mb-0"></ul>
+      </nav>
+    </div>
   </div>
 </div>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-  /* ===== Filtro con resaltado ===== */
+  /* ====== Helpers ====== */
+  const $ = (s,sc)=> (sc||document).querySelector(s);
+  const $$ = (s,sc)=> Array.from((sc||document).querySelectorAll(s));
+  const escHTML = s => (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  function showToastSafe(t,b,icon){ if(window.showToast) showToast({title:t, body:b||'', icon:icon||'info'}); }
+
+  /* ====== Form: contador y validación de adjuntos ====== */
   (function(){
-    const $input = document.getElementById('filterInput');
-    const $body  = document.getElementById('incTableBody');
-    if(!$input || !$body) return;
+    const $desc = $('#descripcion'), $cnt = $('#descCnt');
+    if($desc && $cnt){
+      const upd=()=>{ $cnt.textContent = String(($desc.value||'').length); };
+      $desc.addEventListener('input', upd); upd();
+    }
 
-    let t;
-    const esc = s => (s||'').toString().replace(/[&<>\"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const clearMarks = tr => tr.querySelectorAll('mark.hl').forEach(m=> m.replaceWith(document.createTextNode(m.textContent)));
-    const highlight = (el, term) => {
-      if(!term) return;
-      const re = new RegExp('('+term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','ig');
-      ['.campo-usuario','.campo-titulo','.campo-descripcion','.campo-tipo','.campo-fecha'].forEach(sel=>{
-        const n = el.querySelector(sel); if(!n) return;
-        n.innerHTML = esc(n.textContent).replace(re,'<mark class="hl">$1</mark>');
-      });
-    };
+    const MAX_FILES=10, MAX_TOTAL_MB=25, ALLOWED=/\.(png|jpe?g|gif|webp|pdf|txt|csv|xlsx?|docx?|pptx)$/i;
+    const $file = $('#archivo'), $list = $('#selFiles');
 
-    function apply(){
-      const q = ($input.value||'').trim().toLowerCase();
-      $body.querySelectorAll('tr').forEach(tr=>{
-        clearMarks(tr);
-        const show = !q || tr.innerText.toLowerCase().includes(q);
-        tr.style.display = show ? '' : 'none';
-        if(show && q) highlight(tr, q);
+    function renderList(files){
+      $list.innerHTML = '';
+      [...files].forEach((f,i)=>{
+        const it = document.createElement('span'); it.className='file-item';
+        it.innerHTML = `${escHTML(f.name)} <small class="text-muted">• ${Math.round(f.size/1024)} KB</small> <button type="button" class="rm" title="Quitar" aria-label="Quitar">&times;</button>`;
+        it.querySelector('.rm').onclick = ()=>{
+          const dt=new DataTransfer();
+          [...$file.files].forEach((ff,idx)=>{ if(idx!==i) dt.items.add(ff); });
+          $file.files = dt.files; renderList($file.files);
+        };
+        $list.appendChild(it);
       });
     }
-    $input.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(apply, 160); });
+
+    $file?.addEventListener('change', ()=>{
+      const files=[...$file.files];
+      // filtro de tipos
+      const wrong = files.filter(f=>!ALLOWED.test(f.name));
+      if(wrong.length){
+        showToastSafe('Archivos no permitidos', wrong.map(f=>f.name).join(', '), 'exclamation-triangle');
+      }
+      // límites
+      const tooMany = files.length > MAX_FILES;
+      const totalMB = files.reduce((a,b)=>a+b.size,0)/1024/1024;
+      const tooBig  = totalMB > MAX_TOTAL_MB;
+      if(tooMany || tooBig || wrong.length){
+        const dt=new DataTransfer();
+        files.forEach(f=>{
+          if(ALLOWED.test(f.name)) dt.items.add(f);
+        });
+        // recortar por cantidad y peso total
+        while(dt.files.length > MAX_FILES) dt.items.remove(dt.files.length-1);
+        while([...dt.files].reduce((a,b)=>a+b.size,0)/1024/1024 > MAX_TOTAL_MB && dt.files.length>0){
+          dt.items.remove(dt.files.length-1);
+        }
+        $file.files = dt.files;
+      }
+      renderList($file.files);
+    });
+
+    // Submit UX mínimo
+    $('#formInc')?.addEventListener('submit', ()=>{
+      const btn = $('#formInc button[type="submit"]');
+      if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Enviando…'; }
+    });
   })();
 
-  /* Toasts por querystring (opcional) */
+  /* ====== Listado: búsqueda + filtros + orden + paginación + export ====== */
+  const TBL = $('#incTableBody');
+  const rowsAll = () => $$('#incTableBody tr').map(tr => ({
+    tr,
+    id: Number(tr.dataset.id || tr.querySelector('.td-id')?.textContent || 0),
+    usuario: (tr.dataset.usuario || tr.querySelector('.campo-usuario')?.textContent || '').trim(),
+    titulo: (tr.dataset.titulo || tr.querySelector('.campo-titulo')?.textContent || '').trim(),
+    descripcion: (tr.dataset.descripcion || tr.querySelector('.campo-descripcion')?.textContent || '').trim(),
+    tipo: (tr.dataset.tipo || tr.querySelector('.campo-tipo')?.textContent || '').trim(),
+    fecha: (tr.dataset.fecha || tr.querySelector('.campo-fecha')?.textContent || '').trim(),
+    estado: (tr.dataset.estado || tr.querySelector('.td-estado')?.textContent || '').trim()
+  }));
+
+  const STATE = { term:'', estado:'', tipo:'', order:{by:'fecha', dir:'desc'}, pageSize: parseInt($('#pageSize')?.value||'25',10), page:1, filtered: [] };
+
+  function clearMarksIn(tr){ tr.querySelectorAll('mark.hl').forEach(m=> m.replaceWith(document.createTextNode(m.textContent))); }
+  function highlightRow(tr, term){
+    if(!term) return;
+    const re = new RegExp('('+term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','ig');
+    ['.campo-usuario','.campo-titulo','.campo-descripcion','.campo-tipo','.campo-fecha'].forEach(sel=>{
+      const n = tr.querySelector(sel); if(!n) return;
+      n.innerHTML = escHTML(n.textContent).replace(re,'<mark class="hl">$1</mark>');
+    });
+  }
+
+  function applyFilters(){
+    const all = rowsAll();
+    const term = (STATE.term||'').toLowerCase().trim();
+    const out = all.filter(r=>{
+      if(STATE.estado && r.estado.toLowerCase() !== STATE.estado.toLowerCase()) return false;
+      if(STATE.tipo && r.tipo.toLowerCase() !== STATE.tipo.toLowerCase()) return false;
+      if(term){
+        const hay = (r.usuario+' '+r.titulo+' '+r.descripcion+' '+r.tipo+' '+r.fecha+' '+r.estado+' '+r.id).toLowerCase();
+        if(!hay.includes(term)) return false;
+      }
+      return true;
+    });
+
+    // ordenar
+    out.sort((a,b)=>{
+      const dir = STATE.order.dir === 'asc' ? 1 : -1;
+      const by = STATE.order.by;
+      if(by === 'id'){ return (a.id - b.id) * dir; }
+      if(by === 'usuario' || by === 'titulo' || by === 'tipo' || by === 'estado'){ return a[by].localeCompare(b[by]) * dir; }
+      if(by === 'fecha'){ return a.fecha.localeCompare(b.fecha) * dir; } // asume fecha_legible ordenable; si hay ISO, usar ISO.
+      return 0;
+    });
+
+    STATE.filtered = out;
+    STATE.page = 1;
+    render();
+  }
+
+  function paginate(arr, page, size){ const i=(page-1)*size; return arr.slice(i, i+size); }
+
+  function render(){
+    // ocultar todos
+    rowsAll().forEach(r=>{ r.tr.style.display='none'; clearMarksIn(r.tr); });
+
+    const total = STATE.filtered.length;
+    const ps = STATE.pageSize;
+    const pages = Math.max(1, Math.ceil(total/ps));
+    STATE.page = Math.min(STATE.page, pages);
+
+    // mostrar página
+    const pageRows = paginate(STATE.filtered, STATE.page, ps);
+    pageRows.forEach(r=>{ r.tr.style.display=''; highlightRow(r.tr, STATE.term); });
+
+    // contador
+    $('#resultCnt').textContent = total ? `(${total} ítems)` : '(0 ítems)';
+
+    // rango y pager
+    const start = total ? ((STATE.page-1)*ps + 1) : 0;
+    const end   = total ? Math.min(STATE.page*ps, total) : 0;
+    $('#rangeInfo').textContent = total ? `Mostrando ${start}-${end} de ${total}` : '—';
+
+    renderPager(pages);
+
+    // marcar th activo
+    $$('#incTable thead th.sortable').forEach(th=>{
+      th.classList.toggle('active', th.dataset.sort === STATE.order.by);
+      const icon = th.querySelector('.bi');
+      if(icon){ icon.className = STATE.order.dir === 'asc' ? 'bi bi-arrow-up' : 'bi bi-arrow-down'; }
+    });
+  }
+
+  function renderPager(pages){
+    const $pager = $('#pager'); $pager.innerHTML = '';
+    const make = (label, page, disabled=false, active=false)=>{
+      const li = document.createElement('li'); li.className = `page-item ${disabled?'disabled':''} ${active?'active':''}`;
+      const a = document.createElement('a'); a.className='page-link'; a.href='#'; a.textContent=label;
+      a.onclick=(e)=>{ e.preventDefault(); if(!disabled){ STATE.page = page; render(); } };
+      li.appendChild(a); return li;
+    };
+    $pager.appendChild(make('«', 1, STATE.page===1));
+    $pager.appendChild(make('‹', Math.max(1, STATE.page-1), STATE.page===1));
+    const win=3, s=Math.max(1, STATE.page-win), e=Math.min(pages, STATE.page+win);
+    for(let p=s;p<=e;p++) $pager.appendChild(make(String(p), p, false, p===STATE.page));
+    $pager.appendChild(make('›', Math.min(pages, STATE.page+1), STATE.page===pages));
+    $pager.appendChild(make('»', pages, STATE.page===pages));
+  }
+
+  // UI bindings
   (function(){
-    const p = new URLSearchParams(location.search);
-    if(p.get('created')==='1')  showToast({title:'Incidencia creada', body:'Se registró correctamente.', icon:'check2-circle'});
-    if(p.get('closed')==='1')   showToast({title:'Incidencia cerrada', body:'Se marcó como resuelta.', icon:'check2-circle'});
-    if(p.get('deleted')==='1')  showToast({title:'Incidencia eliminada', body:'Se eliminó correctamente.', icon:'trash'});
+    const $q = $('#filterInput');
+    let dId=null;
+    $q.addEventListener('input', ()=>{ clearTimeout(dId); dId=setTimeout(()=>{ STATE.term = $q.value || ''; applyFilters(); }, 160); });
+    $('#filterEstado').addEventListener('change', e=>{ STATE.estado = e.target.value || ''; applyFilters(); });
+    $('#filterTipo').addEventListener('change', e=>{ STATE.tipo = e.target.value || ''; applyFilters(); });
+    $('#pageSize').addEventListener('change', e=>{ STATE.pageSize = parseInt(e.target.value,10)||25; STATE.page=1; render(); });
+
+    // Orden click
+    $$('#incTable thead th.sortable').forEach(th=>{
+      th.addEventListener('click', ()=>{
+        const by = th.dataset.sort;
+        if(STATE.order.by === by){ STATE.order.dir = (STATE.order.dir === 'asc' ? 'desc' : 'asc'); }
+        else { STATE.order.by = by; STATE.order.dir = (by==='id' ? 'desc' : 'asc'); }
+        applyFilters();
+      });
+    });
+
+    // Export CSV (filtrado actual)
+    $('#btnExport').addEventListener('click', ()=>{
+      const rows = STATE.filtered.map(r=>({
+        id: r.id, usuario: r.usuario, titulo: r.titulo, descripcion: r.descripcion, tipo: r.tipo, fecha: r.fecha, estado: r.estado
+      }));
+      if(!rows.length){ showToastSafe('Exportar', 'No hay resultados para exportar', 'exclamation-triangle'); return; }
+      const headers = Object.keys(rows[0]);
+      const esc = v => `"${String(v??'').replace(/"/g,'""')}"`;
+      const csv = [headers.map(esc).join(',')].concat(rows.map(r=>headers.map(h=>esc(r[h])).join(','))).join('\n');
+      const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download=`incidencias_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
+      a.click(); URL.revokeObjectURL(url);
+      showToastSafe('Exportado', 'Se descargó el CSV del filtro actual', 'check2-circle');
+    });
+
+    // Restaurar criterio desde hash (#q=..., #estado=..., #tipo=...)
+    try{
+      const h = new URLSearchParams(location.hash.replace(/^#/,''));
+      if(h.get('q')){ $q.value = decodeURIComponent(h.get('q')); STATE.term = $q.value; }
+      if(h.get('estado')){ $('#filterEstado').value = h.get('estado'); STATE.estado = h.get('estado'); }
+      if(h.get('tipo')){ $('#filterTipo').value = h.get('tipo'); STATE.tipo = h.get('tipo'); }
+    }catch(_){}
+    // Persistir en hash
+    const persistHash = ()=>{
+      const p = new URLSearchParams();
+      if(STATE.term) p.set('q', STATE.term);
+      if(STATE.estado) p.set('estado', STATE.estado);
+      if(STATE.tipo) p.set('tipo', STATE.tipo);
+      history.replaceState(null,'', '#'+p.toString());
+    };
+    const persistObs = new MutationObserver(persistHash);
+    persistObs.observe($('#incTableBody'), {subtree:false, childList:false}); // solo para tener una ref; llamamos en applyFilters/render
+    const _apply = applyFilters;
+    applyFilters = function(){ _apply(); persistHash(); }; // wrap para persistir
+
+    // Init
+    _apply();
   })();
 </script>
 {% endblock %}

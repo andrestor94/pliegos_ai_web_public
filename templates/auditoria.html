@@ -4,47 +4,86 @@
 
 {% block extra_head %}
   <style>
-    /* Estilos específicos de Auditoría (compatibles con la UI global) */
-    .filters .form-control, .filters .form-select{ border-radius:10px; }
-    .table thead{ background:#f6f7fe; position:sticky; top:0; z-index:1; }
-    .table-responsive{ border-radius:14px; overflow:auto; max-height:65vh; }
-    .badge-accion{
-      background:#e8efff; color:#1e40af; border:1px solid #cfe0ff;
-      border-radius:999px; padding:.35rem .6rem; font-weight:600; font-size:.8rem;
-    }
-    .cell-pre{ max-width:280px; }
-    .btn-icon{ display:inline-flex; align-items:center; gap:.35rem; }
+    /* ---------- Estilos específicos de Auditoría (SCOPED y compatibles con el theme) ---------- */
 
-    /* Modal JSON */
-    pre{ white-space:pre-wrap; font-size:.9rem; margin:0; }
-    .json-box{ background:#0f172a; color:#e2e8f0; border-radius:12px; padding:12px; box-shadow:inset 0 0 0 1px #1f2a44; }
-    .json-box code{ white-space:pre-wrap; }
+    /* Contenedor principal en columna */
+    .auditoria.wrap { display: grid; gap: .75rem; }
+
+    /* Filtros compactos y redondeados */
+    .auditoria .filters .form-control,
+    .auditoria .filters .form-select{
+      border-radius:12px;
+    }
+
+    /* Tabla con header pegajoso dentro del contenedor scroll */
+    .auditoria .table-wrap{
+      max-height: 65vh;
+      border-radius: var(--radius);
+      overflow: auto;
+    }
+    .auditoria thead th{
+      position: sticky; top: 0; z-index: 1;
+      background: var(--muted);
+    }
+    html[data-theme="dark"] .auditoria thead th{ background:#0f172a; }
+
+    /* Pills de acción */
+    .auditoria .badge-accion{
+      background: var(--brand-100);
+      color: var(--brand-500);
+      border: 1px solid var(--bs-border-color, var(--border));
+      border-radius: 999px;
+      padding: .35rem .6rem;
+      font-weight: 700;
+      font-size: .8rem;
+      white-space: nowrap;
+    }
+
+    .auditoria .cell-pre{ max-width: 320px; }
+    .auditoria .btn-icon{ display:inline-flex; align-items:center; gap:.35rem; }
+
+    /* Modal JSON – usa tokens para respetar claro/oscuro */
+    .auditoria .json-box{
+      background: var(--muted);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 12px;
+      box-shadow: inset 0 0 0 1px var(--bs-border-color, var(--border));
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: .9rem;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .auditoria .json-box code{ white-space: pre-wrap; }
   </style>
 {% endblock %}
 
 {% block content %}
-  <div class="grid">
-    <section class="cardx col-12">
-      <div class="d-flex justify-content-between align-items-center">
-        <h5 class="title mb-0"><i class="bi bi-clipboard-data"></i> Registro de Auditoría</h5>
-        <div class="d-flex gap-2">
-          <button id="btnExport" class="btn btn-sm btn-outline-secondary">
-            <i class="bi bi-download me-1"></i>Exportar CSV
-          </button>
-          <a href="/admin" class="btn btn-sm btn-outline-secondary">← Volver</a>
-        </div>
-      </div>
-    </section>
+<div class="container-xxl auditoria wrap">
 
-    <!-- Filtros -->
-    <section class="cardx col-12 filters">
-      <div class="row g-2 align-items-end">
+  <!-- Header -->
+  <section class="card-clean shadow-hover">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h1 class="h5 m-0 text-brand"><i class="bi bi-clipboard-data me-1"></i> Registro de Auditoría</h1>
+      <div class="d-flex gap-2">
+        <button id="btnExport" class="btn btn-sm btn-outline-secondary">
+          <i class="bi bi-download me-1"></i> Exportar CSV
+        </button>
+        <a href="/admin" class="btn btn-sm btn-outline-secondary">← Volver</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Filtros -->
+  <section class="card-clean shadow-hover filters">
+    <div class="card-body">
+      <div class="row g-2 align-items-end input-compact">
         <div class="col-md-4">
-          <label class="form-label small text-muted">Buscar (texto libre)</label>
+          <label class="form-label small text-muted" for="freetext">Buscar (texto libre)</label>
           <input id="freetext" type="text" class="form-control" placeholder="usuario, entidad, IP, etc.">
         </div>
         <div class="col-md-3">
-          <label class="form-label small text-muted">Acción</label>
+          <label class="form-label small text-muted" for="accion">Acción</label>
           <select id="accion" class="form-select">
             <option value="">Todas</option>
             <option>CREAR</option>
@@ -55,36 +94,38 @@
           </select>
         </div>
         <div class="col-md-2">
-          <label class="form-label small text-muted">Desde</label>
+          <label class="form-label small text-muted" for="desde">Desde</label>
           <input id="desde" type="date" class="form-control">
         </div>
         <div class="col-md-2">
-          <label class="form-label small text-muted">Hasta</label>
+          <label class="form-label small text-muted" for="hasta">Hasta</label>
           <input id="hasta" type="date" class="form-control">
         </div>
         <div class="col-md-1 d-grid">
-          <button id="btnLimpiar" class="btn btn-outline-secondary">Limpiar</button>
+          <button id="btnLimpiar" class="btn btn-outline-secondary" type="button">Limpiar</button>
         </div>
       </div>
-    </section>
+    </div>
+  </section>
 
-    {% if logs and logs|length > 0 %}
-    <!-- Tabla -->
-    <section class="cardx col-12">
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <div class="small text-muted">
-          Resultados: <span id="count">0</span>
-          · <span class="text-uppercase">Auditoría inmutable</span> (no se permite eliminar registros)
-        </div>
-        <div class="d-flex align-items-center gap-2">
-          <label class="small text-muted">Por página:</label>
-          <select id="pageSize" class="form-select form-select-sm" style="width:auto">
-            <option>10</option><option selected>25</option><option>50</option><option>100</option>
-          </select>
-        </div>
+  {% if logs and logs|length > 0 %}
+  <!-- Tabla -->
+  <section class="card-clean shadow-hover">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <div class="small text-muted">
+        Resultados: <span id="count">0</span>
+        · <span class="text-uppercase">Auditoría inmutable</span> (no se permite eliminar registros)
       </div>
+      <div class="d-flex align-items-center gap-2">
+        <label for="pageSize" class="small text-muted">Por página:</label>
+        <select id="pageSize" class="form-select form-select-sm" style="width:auto">
+          <option>10</option><option selected>25</option><option>50</option><option>100</option>
+        </select>
+      </div>
+    </div>
 
-      <div class="table-responsive">
+    <div class="card-body pt-2">
+      <div class="table-wrap">
         <table class="table table-hover align-middle mb-0">
           <thead>
             <tr>
@@ -104,35 +145,38 @@
       </div>
 
       <div class="d-flex justify-content-between align-items-center mt-2">
-        <div class="small text-muted" id="rangeInfo"></div>
+        <div class="small text-muted" id="rangeInfo">—</div>
         <nav><ul class="pagination pagination-sm mb-0" id="pager"></ul></nav>
       </div>
-    </section>
-    {% else %}
-      <section class="cardx col-12">
+    </div>
+  </section>
+  {% else %}
+    <section class="card-clean shadow-hover">
+      <div class="card-body">
         <div class="alert alert-warning mb-0">⚠️ No hay registros de auditoría disponibles.</div>
-      </section>
-    {% endif %}
-  </div>
+      </div>
+    </section>
+  {% endif %}
+</div>
 
-  <!-- Modal JSON -->
-  <div class="modal fade" id="jsonModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h6 class="modal-title" id="jsonTitle">Detalles</h6>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
-        </div>
-        <div class="modal-body">
-          <div class="json-box"><code id="jsonCode"></code></div>
-        </div>
-        <div class="modal-footer">
-          <button id="btnCopyJson" class="btn btn-outline-secondary btn-icon"><i class="bi bi-clipboard"></i> Copiar</button>
-          <button class="btn btn-primary" data-bs-dismiss="modal">Cerrar</button>
-        </div>
+<!-- Modal JSON -->
+<div class="modal fade" id="jsonModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title" id="jsonTitle">Detalles</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="json-box"><code id="jsonCode"></code></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnCopyJson" class="btn btn-outline-secondary btn-icon" type="button"><i class="bi bi-clipboard"></i> Copiar</button>
+        <button class="btn btn-primary" data-bs-dismiss="modal" type="button">Cerrar</button>
       </div>
     </div>
   </div>
+</div>
 {% endblock %}
 
 {% block extra_scripts %}
@@ -141,7 +185,7 @@
      IMPORTANTE: cada log debe incluir un campo numérico 'id' único. */
   const RAW = {{ (logs or [])|tojson|safe }};
 
-  /* Helpers locales */
+  /* Helpers */
   function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function debounce(fn, ms){ let id; return (...a)=>{ clearTimeout(id); id=setTimeout(()=>fn(...a), ms); }; }
   const $ = (sel,root=document)=>root.querySelector(sel);
@@ -203,10 +247,10 @@
       rows.forEach(log=>{
         const tr = document.createElement('tr');
         const beforeBtn = (log.before && String(log.before).trim() !== '-') ?
-          `<button class="btn btn-sm btn-outline-secondary btn-icon" data-json='${escapeHtml(JSON.stringify(safeJson(log.before), null, 2))}' data-title="Antes"><i class="bi bi-eye"></i> Ver</button>` :
+          `<button class="btn btn-sm btn-outline-secondary btn-icon" data-json='${escapeHtml(JSON.stringify(safeJson(log.before), null, 2))}' data-title="Antes" type="button"><i class="bi bi-eye"></i> Ver</button>` :
           '<span class="text-muted">-</span>';
         const afterBtn  = (log.after && String(log.after).trim() !== '-') ?
-          `<button class="btn btn-sm btn-outline-secondary btn-icon" data-json='${escapeHtml(JSON.stringify(safeJson(log.after), null, 2))}' data-title="Después"><i class="bi bi-eye"></i> Ver</button>` :
+          `<button class="btn btn-sm btn-outline-secondary btn-icon" data-json='${escapeHtml(JSON.stringify(safeJson(log.after), null, 2))}' data-title="Después" type="button"><i class="bi bi-eye"></i> Ver</button>` :
           '<span class="text-muted">-</span>';
 
         tr.innerHTML = `

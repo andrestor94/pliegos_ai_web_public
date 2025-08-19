@@ -1,8 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Análisis de pliegos – Suizo Argentina{% endblock %}
 
+{% block extra_head %}{% endblock %}
+
 {% block content %}
-<div class="py-3">
+<div class="container-xxl py-3">
   <h1 class="hero-title mb-3">
     <i class="bi bi-file-earmark-text me-2"></i> Análisis de pliegos
   </h1>
@@ -12,18 +14,18 @@
     <!-- ======================================= -->
     <!-- Columna izquierda: Carga + Config + Resultados -->
     <!-- ======================================= -->
-    <section class="card card-clean">
+    <section class="card-clean shadow-hover">
       <div class="card-body">
         <!-- 1) Carga de archivos -->
         <h2 class="h6 mb-2">1) Cargar archivos (PDF / DOCX / Imágenes)</h2>
-        <div id="dzArea" class="dropzone mb-3">
-          Arrastra y suelta aquí o
+        <div id="dzArea" class="dropzone mb-3" aria-label="Zona para arrastrar y soltar archivos">
+          Arrastrá y soltá aquí o
           <label class="btn btn-sm btn-primary ms-1">
             Seleccionar
             <input id="filesInput" type="file" name="files" multiple hidden
                    accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.tiff,.tif"/>
           </label>
-          <div class="small subtle mt-2">También puedes pegar con <kbd>Ctrl</kbd>+<kbd>V</kbd> imágenes copiados del portapapeles.</div>
+          <div class="small subtle mt-2">También podés pegar con <kbd>Ctrl</kbd>+<kbd>V</kbd> imágenes copiadas del portapapeles.</div>
         </div>
 
         <!-- Lista de archivos seleccionados -->
@@ -46,7 +48,7 @@
         <h2 class="h6 mb-2">2) Configuración</h2>
         <form id="cfgForm" class="row g-2 input-compact">
           <div class="col-md-4">
-            <label class="form-label">Tipo de salida</label>
+            <label class="form-label" for="outType">Tipo de salida</label>
             <select id="outType" class="form-select">
               <option value="resumen">Resumen ejecutivo</option>
               <option value="exhaustivo" selected>Informe exhaustivo</option>
@@ -54,14 +56,14 @@
             </select>
           </div>
           <div class="col-md-4">
-            <label class="form-label">Idioma</label>
+            <label class="form-label" for="lang">Idioma</label>
             <select id="lang" class="form-select">
               <option value="es" selected>Español</option>
               <option value="en">Inglés</option>
             </select>
           </div>
           <div class="col-md-4">
-            <label class="form-label">OCR / Escaneados</label>
+            <label class="form-label" for="ocrMode">OCR / Escaneados</label>
             <select id="ocrMode" class="form-select">
               <option value="auto" selected>Automático</option>
               <option value="forzar">Forzar OCR</option>
@@ -89,9 +91,9 @@
         <div class="d-flex align-items-center justify-content-between mb-2">
           <h2 class="h6 m-0">Resultados</h2>
           <div class="segmented">
-            <button class="btn btn-sm btn-light active" data-view="texto">Texto</button>
-            <button class="btn btn-sm btn-light" data-view="estructura">Estructura</button>
-            <button class="btn btn-sm btn-light" data-view="tablas">Tablas</button>
+            <button class="btn btn-sm btn-light active" data-view="texto" type="button">Texto</button>
+            <button class="btn btn-sm btn-light" data-view="estructura" type="button">Estructura</button>
+            <button class="btn btn-sm btn-light" data-view="tablas" type="button">Tablas</button>
           </div>
         </div>
 
@@ -102,8 +104,8 @@
 
         <!-- Vista: Estructura (acordeón) -->
         <div id="view-estructura" class="h-pane-55" style="display:none;">
-          <div class="accordion" id="accEstructura">
-            <!-- Secciones generadas por JS (fechas, presupuesto, garantías, requisitos, etc.) -->
+          <div class="accordion" id="accEstructura" role="tablist" aria-label="Estructura del pliego">
+            <!-- Secciones generadas por JS -->
           </div>
         </div>
 
@@ -132,7 +134,7 @@
     <!-- ======================================= -->
     <!-- Columna derecha: Chat / Log -->
     <!-- ======================================= -->
-    <aside class="card card-clean">
+    <aside class="card-clean shadow-hover">
       <div class="card-body">
         <h2 class="h6 mb-2">Chat de análisis</h2>
         <div id="chatBox" class="border rounded p-2 h-pane-55 bg-body-tertiary">
@@ -140,8 +142,8 @@
           <div class="small text-muted">Sin mensajes aún.</div>
         </div>
         <div class="mt-2 d-flex gap-2">
-          <input id="chatInput" class="form-control" placeholder="Escribe una consulta sobre los archivos…"/>
-          <button id="chatSend" class="btn btn-primary"><i class="bi bi-send"></i></button>
+          <input id="chatInput" class="form-control" placeholder="Escribí una consulta sobre los archivos…"/>
+          <button id="chatSend" class="btn btn-primary" type="button"><i class="bi bi-send"></i></button>
         </div>
 
         <hr class="my-3"/>
@@ -179,7 +181,13 @@ const clearBtn = $("#clearBtn");
 let files = []; // {file, id, status}
 
 function refreshFilesUI(){
-  if(!files.length){ filesWrap.style.display='none'; analyzeBtn.disabled=true; exportPdfBtn.disabled=true; filesTbody.innerHTML=''; return; }
+  if(!files.length){
+    filesWrap.style.display='none';
+    analyzeBtn.disabled=true;
+    exportPdfBtn.disabled=true;
+    filesTbody.innerHTML='';
+    return;
+  }
   filesWrap.style.display='';
   analyzeBtn.disabled=false;
   filesTbody.innerHTML = files.map((f,i)=>`
@@ -187,11 +195,18 @@ function refreshFilesUI(){
       <td>${f.file.name}</td>
       <td>${fmtBytes(f.file.size)}</td>
       <td>${(f.file.type||'').split('/').pop().toUpperCase() || f.file.name.split('.').pop().toUpperCase()}</td>
-      <td><span class="badge ${f.status==='ok'?'bg-success-subtle text-success': f.status==='processing'?'bg-warning-subtle text-warning':'bg-secondary-subtle text-secondary'}">
-        ${f.status||'pendiente'}</span></td>
+      <td>
+        <span class="badge ${f.status==='ok'?'bg-success-subtle text-success': f.status==='processing'?'bg-warning-subtle text-warning':'bg-secondary-subtle text-secondary'}">
+          ${f.status||'pendiente'}
+        </span>
+      </td>
       <td class="d-flex gap-1">
-        <button class="btn btn-sm btn-outline-secondary" data-idx="${i}" data-act="preview"><i class="bi bi-eye"></i></button>
-        <button class="btn btn-sm btn-outline-danger" data-idx="${i}" data-act="remove"><i class="bi bi-x"></i></button>
+        <button class="btn btn-sm btn-outline-secondary" data-idx="${i}" data-act="preview" type="button" aria-label="Previsualizar ${f.file.name}">
+          <i class="bi bi-eye"></i>
+        </button>
+        <button class="btn btn-sm btn-outline-danger" data-idx="${i}" data-act="remove" type="button" aria-label="Quitar ${f.file.name}">
+          <i class="bi bi-x"></i>
+        </button>
       </td>
     </tr>
   `).join('');
@@ -208,7 +223,7 @@ function addFiles(list){
 filesInput?.addEventListener('change', e=> addFiles(e.target.files||[]));
 
 ["dragenter","dragover"].forEach(ev=> dz.addEventListener(ev, e=>{
-  e.preventDefault(); e.stopPropagation(); dz.classList.add('border-primary'); 
+  e.preventDefault(); e.stopPropagation(); dz.classList.add('border-primary');
 }));
 ["dragleave","drop"].forEach(ev=> dz.addEventListener(ev, e=>{
   e.preventDefault(); e.stopPropagation(); dz.classList.remove('border-primary');
@@ -236,7 +251,7 @@ filesTbody?.addEventListener('click', e=>{
     files.splice(idx,1);
     refreshFilesUI();
   }else if(act==='preview'){
-    // Hookea tu visor/endpoint si lo tienes (PDF viewer, etc.)
+    // Hookea tu visor/endpoint si lo tenés (PDF viewer, etc.)
     log(`Previsualizar: ${files[idx].file.name}`);
   }
 });
@@ -271,23 +286,22 @@ analyzeBtn?.addEventListener('click', async ()=>{
   exportPdfBtn.disabled = true;
   log('Iniciando análisis…');
 
-  // Ejemplo: enviar por FormData al backend (ajusta la URL a tu endpoint real)
+  // Envío al backend (ajustá la URL a tu endpoint real)
   const fd = new FormData();
   files.forEach(f => fd.append('files', f.file, f.file.name));
   fd.append('out_type', $("#outType").value);
   fd.append('lang', $("#lang").value);
   fd.append('ocr', $("#ocrMode").value);
 
-  // Marca UI como "processing"
   files = files.map(f => ({...f, status:'processing'}));
   refreshFilesUI();
 
   try{
-    const res = await fetch('/analizar', { method:'POST', body: fd }); // <-- ajusta ruta si es necesario
+    const res = await fetch('/analizar', { method:'POST', body: fd }); // <-- ajustá ruta si es necesario
     if(!res.ok) throw new Error('Error en el análisis');
     const data = await res.json();
 
-    // Espera una respuesta con:
+    // Esperamos:
     // data.texto_html, data.estructura (array de secciones), data.tabla (array de filas)
     $("#textoOut").innerHTML = data.texto_html || '<div class="text-muted">Sin contenido.</div>';
 
@@ -296,8 +310,8 @@ analyzeBtn?.addEventListener('click', async ()=>{
     acc.innerHTML = (data.estructura||[]).map((sec,i)=>`
       <div class="accordion-item">
         <h2 class="accordion-header" id="h${i}">
-          <button class="accordion-button ${i?'collapsed':''}" type="button" data-bs-toggle="collapse" data-bs-target="#c${i}">
-            ${sec.titulo || ('Sección '+(i+1))}
+          <button class="accordion-button ${i?'collapsed':''}" type="button" data-bs-toggle="collapse" data-bs-target="#c${i}" aria-controls="c${i}">
+            ${sec.titulo ? sec.titulo : ('Sección '+(i+1))}
           </button>
         </h2>
         <div id="c${i}" class="accordion-collapse collapse ${i===0?'show':''}" data-bs-parent="#accEstructura">
@@ -336,13 +350,17 @@ exportPdfBtn?.addEventListener('click', async ()=>{
   exportPdfBtn.disabled = true;
   log('Generando PDF…');
   try{
-    // Envía ids/resultado si tu backend lo requiere. Aquí ejemplo básico:
+    // Enviá ids/resultado si tu backend lo requiere. Ejemplo básico:
     const payload = {
       html: $("#textoOut").innerHTML,
       estructura: $("#accEstructura").innerHTML,
       tabla_html: $("#view-tablas").innerHTML
     };
-    const res = await fetch('/generar-pdf', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const res = await fetch('/generar-pdf', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
     if(!res.ok) throw new Error('No se pudo generar el PDF');
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -366,7 +384,7 @@ chatInput?.addEventListener('keydown', e=>{
 function appendMsg(who, text){
   const wrap = document.createElement('div');
   wrap.className = 'mb-2';
-  wrap.innerHTML = `<div class="small ${who==='ai'?'text-primary':'text-body'}"><b>${who==='ai'?'IA':'Yo'}:</b> ${escapeHtml(text)}</div>`;
+  wrap.innerHTML = `<div class="small ${who==='ai'?'text-brand':'text-body'}"><b>${who==='ai'?'IA':'Yo'}:</b> ${escapeHtml(text)}</div>`;
   chatBox.appendChild(wrap); chatBox.scrollTop = chatBox.scrollHeight;
 }
 function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'":'&#39;' }[m])); }
@@ -375,8 +393,12 @@ async function sendChat(){
   appendMsg('me', txt);
   chatInput.value='';
   try{
-    // Conecta a tu endpoint real
-    const r = await fetch('/api/chat-analisis', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: txt }) });
+    // Endpoint de chat para esta vista (ajustá a tu backend real)
+    const r = await fetch('/api/chat-analisis', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ message: txt })
+    });
     const j = await r.json().catch(()=> ({}));
     const reply = j.reply || j.respuesta || j.text || 'Sin respuesta.';
     appendMsg('ai', reply);

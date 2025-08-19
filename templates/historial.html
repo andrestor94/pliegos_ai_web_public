@@ -5,19 +5,27 @@
 <style>
   .hist-head{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
   .hist-head .count{ color:#667085; }
-  .hist-search{ display:flex; gap:8px; margin-left:auto; }
+  .hist-ctrl{ display:flex; gap:8px; align-items:center; margin-left:auto; flex-wrap:wrap; }
+  .hist-ctrl .form-select, .hist-ctrl .form-control{ border-radius:12px; }
+
   .hist-card{
-    background:#fff; border:1px solid var(--border); border-radius:14px;
+    background:var(--card,#fff); border:1px solid var(--border); border-radius:14px;
     padding:16px; margin-bottom:14px; box-shadow:0 4px 16px rgba(4,67,105,.08);
   }
   .hist-card .meta{ color:#667085; }
-  .hist-card .acciones .btn{ margin-right:8px; }
+  .hist-card .acciones .btn{ margin-right:8px; border-radius:10px; }
   .empty-state{
     display:none; text-align:center; color:#6b7280;
-    background:var(--bg-soft); border:1px dashed var(--border);
+    background:var(--bg-soft,#eef2ff); border:1px dashed var(--border);
     border-radius:14px; padding:16px;
   }
   mark.highlight{ background:#fff3bf; padding:0 .15em; border-radius:4px; }
+
+  /* Paginación */
+  .hist-pager{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:6px; }
+  .hist-pager .range{ color:#667085; font-size:.95rem; }
+  .hist-pager .pagination{ margin:0; }
+  .pagination .page-link{ border-radius:10px; }
 </style>
 {% endblock %}
 
@@ -25,10 +33,31 @@
 <div class="container" style="max-width:1000px;">
   <div class="hist-head my-3">
     <h2 class="m-0">📚 Historial de Análisis</h2>
-    <span class="count">({{ historial|length }} ítems)</span>
-    <div class="hist-search ms-auto">
-      <input id="busqueda" class="form-control" placeholder="Buscar… (archivo, usuario, fecha)">
-      <button id="btnLimpiar" class="btn btn-outline-secondary">Limpiar</button>
+    <span class="count"><span id="cntAll">{{ historial|length }}</span> ítems</span>
+
+    <div class="hist-ctrl ms-auto">
+      <div class="input-group" title="Buscar (archivo, usuario, fecha)">
+        <span class="input-group-text"><i class="bi bi-search"></i></span>
+        <input id="busqueda" class="form-control" placeholder="Buscar… (archivo, usuario, fecha)" aria-label="Buscar en historial">
+        <button id="btnLimpiar" class="btn btn-outline-secondary" type="button">Limpiar</button>
+      </div>
+
+      <select id="orden" class="form-select" title="Ordenar por">
+        <option value="ts_desc" selected>Más recientes</option>
+        <option value="ts_asc">Más antiguos</option>
+        <option value="archivo_asc">Archivo (A→Z)</option>
+        <option value="archivo_desc">Archivo (Z→A)</option>
+        <option value="usuario_asc">Usuario (A→Z)</option>
+        <option value="usuario_desc">Usuario (Z→A)</option>
+      </select>
+
+      <select id="pageSize" class="form-select" title="Ítems por página">
+        <option>10</option><option selected>25</option><option>50</option><option>100</option>
+      </select>
+
+      <button id="btnExport" class="btn btn-outline-secondary" title="Exportar CSV filtrado">
+        <i class="bi bi-download me-1"></i> Exportar
+      </button>
     </div>
   </div>
 
@@ -37,7 +66,8 @@
     <div class="hist-card"
          data-archivo="{{ item.nombre_archivo | e }}"
          data-usuario="{{ item.usuario | e }}"
-         data-fecha="{{ item.fecha_legible | e }}">
+         data-fecha="{{ item.fecha_legible | e }}"
+         data-ts="{{ item.timestamp | e }}">
       <p class="mb-1"><strong>📄 Archivo:</strong> <span class="campo-archivo">{{ item.nombre_archivo }}</span></p>
       <p class="mb-1 meta"><strong>🕓 Fecha:</strong> <span class="campo-fecha">{{ item.fecha_legible }}</span></p>
       <p class="mb-0 meta"><strong>👤 Usuario:</strong> <span class="campo-usuario">{{ item.usuario }}</span></p>
@@ -57,68 +87,209 @@
   <div id="sinResultados" class="empty-state">
     <i class="bi bi-search"></i> No se encontraron resultados para el término ingresado.
   </div>
+
+  <div class="hist-pager">
+    <div class="range" id="rangeInfo">—</div>
+    <nav aria-label="Paginación historial">
+      <ul class="pagination pagination-sm mb-0" id="pager"></ul>
+    </nav>
+  </div>
 </div>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-  // ===== Helpers =====
+  /* ===== Helpers ===== */
+  const $ = (s,sc)=> (sc||document).querySelector(s);
+  const $$ = (s,sc)=> Array.from((sc||document).querySelectorAll(s));
+  const $q = $('#busqueda');
+  const $btnLimpiar = $('#btnLimpiar');
+  const $empty = $('#sinResultados');
+  const $orden = $('#orden');
+  const $pageSize = $('#pageSize');
+  const $pager = $('#pager');
+  const $range = $('#rangeInfo');
+  const $wrap = $('#contenedor-historial');
+
   function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-  const $q = document.getElementById('busqueda');
-  const $btnLimpiar = document.getElementById('btnLimpiar');
-  const $empty = document.getElementById('sinResultados');
-  const items = () => Array.from(document.querySelectorAll('#contenedor-historial .hist-card'));
+  function toastOk(t,b){ if(window.showToast) showToast({title:t, body:b||'', icon:'check2-circle'}); else alert(t+(b?': '+b:'')); }
+  function toastWarn(t,b){ if(window.showToast) showToast({title:t, body:b||'', icon:'exclamation-triangle'}); else alert(t+(b?': '+b:'')); }
 
   function clearHighlights(el){
-    el.querySelectorAll('mark.highlight').forEach(m=>{
-      m.replaceWith(document.createTextNode(m.textContent));
-    });
+    el.querySelectorAll('mark.highlight').forEach(m=> m.replaceWith(document.createTextNode(m.textContent)));
   }
   function highlight(el, term){
     if(!term) return;
-    const re = new RegExp('('+term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','ig');
+    const re = new RegExp('('+term.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\$&')+')','ig');
     ['.campo-archivo','.campo-usuario','.campo-fecha'].forEach(sel=>{
       const node = el.querySelector(sel); if(!node) return;
       node.innerHTML = escapeHtml(node.textContent).replace(re,'<mark class="highlight">$1</mark>');
     });
   }
 
-  let debounceId=null;
-  function filtrar(){
-    const term = ($q.value||'').trim().toLowerCase();
-    let visibles = 0;
-    items().forEach(box=>{
-      clearHighlights(box);
-      const hay = (box.dataset.archivo + ' ' + box.dataset.usuario + ' ' + box.dataset.fecha)
-                  .toLowerCase()
-                  .includes(term);
-      box.style.display = hay ? 'block' : 'none';
-      if(hay){ visibles++; highlight(box, term); }
-    });
-    $empty.style.display = visibles ? 'none' : 'block';
-  }
-  $q.addEventListener('input', ()=>{ clearTimeout(debounceId); debounceId = setTimeout(filtrar, 180); });
-  $btnLimpiar.addEventListener('click', ()=>{ $q.value=''; filtrar(); });
+  /* ===== Dataset (desde DOM) ===== */
+  const DATA = $$('#contenedor-historial .hist-card').map(el=>{
+    return {
+      el,
+      archivo: el.dataset.archivo || '',
+      usuario: el.dataset.usuario || '',
+      fecha:   el.dataset.fecha   || '',
+      ts:      Number(el.dataset.ts || '0') || 0
+    };
+  });
 
-  // ===== Eliminar item =====
+  /* ===== Estado ===== */
+  const STATE = {
+    term: '',
+    order: 'ts_desc',
+    pageSize: parseInt($pageSize.value,10) || 25,
+    page: 1,
+    filtered: DATA.slice()
+  };
+
+  /* ===== Filtro + orden ===== */
+  function applyFilters(){
+    const term = (STATE.term||'').toLowerCase().trim();
+    const out = DATA.filter(it=>{
+      if(!term) return true;
+      return (it.archivo + ' ' + it.usuario + ' ' + it.fecha).toLowerCase().includes(term);
+    });
+
+    // Orden
+    out.sort((a,b)=>{
+      switch(STATE.order){
+        case 'ts_asc': return a.ts - b.ts;
+        case 'ts_desc': return b.ts - a.ts;
+        case 'archivo_asc': return a.archivo.localeCompare(b.archivo);
+        case 'archivo_desc': return b.archivo.localeCompare(a.archivo);
+        case 'usuario_asc': return a.usuario.localeCompare(b.usuario);
+        case 'usuario_desc': return b.usuario.localeCompare(a.usuario);
+        default: return 0;
+      }
+    });
+
+    STATE.filtered = out;
+    STATE.page = 1;
+    render();
+  }
+
+  function paginate(arr, page, size){ const i=(page-1)*size; return arr.slice(i, i+size); }
+
+  function render(){
+    const total = STATE.filtered.length;
+    const ps = STATE.pageSize;
+    const pages = Math.max(1, Math.ceil(total/ps));
+    STATE.page = Math.min(STATE.page, pages);
+
+    // ocultar todos
+    DATA.forEach(it=>{ it.el.style.display = 'none'; clearHighlights(it.el); });
+
+    // mostrar página
+    const rows = paginate(STATE.filtered, STATE.page, ps);
+    rows.forEach(it=>{ it.el.style.display='block'; highlight(it.el, STATE.term); });
+
+    // estado vacío / rango
+    $empty.style.display = total ? 'none' : 'block';
+    const start = total ? ((STATE.page-1)*ps + 1) : 0;
+    const end   = total ? Math.min(STATE.page*ps, total) : 0;
+    $range.textContent = total ? `Mostrando ${start}-${end} de ${total}` : '—';
+
+    // pager
+    renderPager(pages);
+  }
+
+  function renderPager(pages){
+    $pager.innerHTML = '';
+    const make = (label, page, disabled=false, active=false)=>{
+      const li = document.createElement('li'); li.className = `page-item ${disabled?'disabled':''} ${active?'active':''}`;
+      const a  = document.createElement('a'); a.className='page-link'; a.href='#'; a.textContent=label;
+      a.onclick = (e)=>{ e.preventDefault(); if(!disabled){ STATE.page = page; render(); window.scrollTo({top:0,behavior:'smooth'}); } };
+      li.appendChild(a); return li;
+    };
+    $pager.appendChild(make('«', 1, STATE.page===1));
+    $pager.appendChild(make('‹', Math.max(1, STATE.page-1), STATE.page===1));
+
+    const win = 3;
+    const s = Math.max(1, STATE.page - win);
+    const e = Math.min(pages, STATE.page + win);
+    for(let p=s; p<=e; p++) $pager.appendChild(make(String(p), p, false, p===STATE.page));
+
+    $pager.appendChild(make('›', Math.min(pages, STATE.page+1), STATE.page===pages));
+    $pager.appendChild(make('»', pages, STATE.page===pages));
+  }
+
+  /* ===== Búsqueda (debounce) ===== */
+  let debounceId=null;
+  function onSearch(){
+    clearTimeout(debounceId);
+    debounceId = setTimeout(()=>{
+      STATE.term = ($q.value||'').trim();
+      applyFilters();
+      // persistimos en la URL (hash) para volver más fácil
+      try{ history.replaceState(null,'', STATE.term ? `#q=${encodeURIComponent(STATE.term)}` : '#'); }catch(_){}
+    }, 160);
+  }
+  $q.addEventListener('input', onSearch);
+  $btnLimpiar.addEventListener('click', ()=>{ $q.value=''; STATE.term=''; applyFilters(); });
+
+  /* ===== Orden/paginación ===== */
+  $orden.addEventListener('change', ()=>{ STATE.order = $orden.value; applyFilters(); });
+  $pageSize.addEventListener('change', ()=>{ STATE.pageSize = parseInt($pageSize.value,10)||25; STATE.page=1; render(); });
+
+  /* ===== Export CSV (filtrado actual) ===== */
+  $('#btnExport').addEventListener('click', ()=>{
+    const rows = STATE.filtered.map(it=>({
+      archivo: it.archivo, usuario: it.usuario, fecha: it.fecha
+    }));
+    if(!rows.length){ toastWarn('Exportar', 'No hay resultados para exportar'); return; }
+    const headers = Object.keys(rows[0]);
+    const esc = v => `"${String(v??'').replace(/"/g,'""')}"`;
+    const csv = [headers.map(esc).join(',')].concat(rows.map(r=>headers.map(h=>esc(r[h])).join(','))).join('\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download=`historial_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    toastOk('Exportado', 'Se descargó el CSV del filtro actual');
+  });
+
+  /* ===== Eliminar item ===== */
   async function eliminar(timestamp){
     if(!confirm('¿Seguro que deseas eliminar este análisis?')) return;
     try{
-      const r = await fetch(`/eliminar/${timestamp}`, { method:'DELETE' });
+      const r = await fetch(`/eliminar/${encodeURIComponent(timestamp)}`, { method:'DELETE' });
       if(!r.ok) throw new Error('No se pudo eliminar');
-      // quitar del DOM y refrescar filtro
-      const card = document.querySelector(`.hist-card button[onclick*="${timestamp}"]`)?.closest('.hist-card');
-      if(card) card.remove();
-      filtrar();
-      // showToast viene de base.html
-      showToast({title:'Eliminado', body:'El análisis fue eliminado.', icon:'trash'});
+      // quitar del DOM y del dataset
+      const idx = DATA.findIndex(it=> String(it.ts) === String(timestamp));
+      if(idx>=0){
+        DATA[idx].el.remove();
+        DATA.splice(idx,1);
+      }
+      // Reaplicar filtros/orden (manteniendo término/orden/página si se puede)
+      applyFilters();
+      toastOk('Eliminado', 'El análisis fue eliminado.');
     }catch(e){
-      showToast({title:'Error', body:'No se pudo eliminar.', icon:'exclamation-triangle'});
+      toastWarn('Error', 'No se pudo eliminar.');
     }
   }
-  window.eliminar = eliminar; // expone para los botones inline
+  window.eliminar = eliminar; // para los botones inline
 
-  // ===== Init =====
-  document.addEventListener('DOMContentLoaded', filtrar);
+  /* ===== Atajos ===== */
+  // / o Ctrl+K enfoca búsqueda, ESC limpia
+  document.addEventListener('keydown', (e)=>{
+    if((e.key==='/' && document.activeElement !== $q) || (e.key.toLowerCase()==='k' && (e.ctrlKey||e.metaKey))){
+      e.preventDefault(); $q.focus(); $q.select();
+    }
+    if(e.key==='Escape' && document.activeElement === $q){
+      $q.value=''; STATE.term=''; applyFilters();
+    }
+  });
+
+  /* ===== Init ===== */
+  (function init(){
+    // restaurar búsqueda desde hash (#q=...)
+    const m = location.hash.match(/#q=([^&]+)/);
+    if(m){ try{ $q.value = decodeURIComponent(m[1]); STATE.term = $q.value; }catch(_){ } }
+    applyFilters();
+  })();
 </script>
 {% endblock %}

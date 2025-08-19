@@ -189,7 +189,6 @@ def ar_time(value: str) -> str:
     except Exception:
         return value
 templates.env.filters["ar_time"] = ar_time
-
 # ================== Guardas/Dependencias de auth/roles ==================
 def require_auth(request: Request):
     if not request.session.get("usuario"):
@@ -437,7 +436,14 @@ async def home(request: Request):
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_form(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+    # Si ya estás logueado, te llevo al home.
+    if request.session.get("usuario"):
+        return RedirectResponse("/", status_code=303)
+    # Permite mostrar estado por query (opcional)
+    msg = None
+    if request.query_params.get("logout") == "1":
+        msg = "Sesión cerrada."
+    return templates.TemplateResponse("login.html", {"request": request, "error": None, "mensaje": msg})
 
 # =====================================================================
 # ========================== CALENDARIO (DB utilitaria) ===============
@@ -540,13 +546,27 @@ def _pr_get(user: str):
 def _pr_clear(user: str):
     with cal_conn() as c:
         c.execute("DELETE FROM pending_ratings WHERE user=?", (user,))
-
 # ================== Login/Logout ==================
 @app.post("/login")
 async def login(request: Request,
                 email: str = Form(...),
                 password: str = Form(...),
                 remember: Optional[str] = Form(default=None)):  # "on" si tildan Recordarme
+    """
+    Normalización:
+      - recorta espacios y pasa a lower
+      - si no trae '@', agrega dominio por defecto (LOGIN_DEFAULT_DOMAIN, por defecto suizo.com)
+    """
+    raw = (email or "").strip().lower()
+    if "@" not in raw and " " not in raw:
+        domain = (os.getenv("LOGIN_DEFAULT_DOMAIN", "suizo.com") or "").strip().lower()
+        if domain:
+            email = f"{raw}@{domain}"
+        else:
+            email = raw  # fallback
+    else:
+        email = raw
+
     usuario = obtener_usuario_por_email(email)
 
     # usuario tuple esperado: (id, nombre, email, password, rol, activo)
@@ -554,13 +574,20 @@ async def login(request: Request,
     if isinstance(usuario, (list, tuple)) and len(usuario) >= 6:
         is_active = bool(usuario[5])
 
-    if usuario and usuario[3] == password and is_active:
+    # Limpiar la sesión previa para evitar fijación de sesión
+    try:
+        request.session.clear()
+    except Exception:
+        pass
+
+    if usuario and str(usuario[3]) == str(password) and is_active:
         request.session["usuario"] = usuario[2]
         request.session["email"] = usuario[2]
         request.session["rol"] = usuario[4]
         request.session["nombre"] = usuario[1] or usuario[2]
         request.session["remember"] = bool(remember)
 
+        # Registrar sesión en tabla local (calendar.sqlite3)
         sid = uuid.uuid4().hex
         request.session["sid"] = sid
         nombre_s = request.session.get("nombre") or usuario[1] or usuario[2]
@@ -593,7 +620,14 @@ async def login(request: Request,
         err = "Tu usuario está desactivado. Consultá con un administrador."
     else:
         err = "Credenciales incorrectas"
-    return templates.TemplateResponse("login.html", {"request": request, "error": err}, status_code=401)
+
+    # Mantener la UX del login (mensajes + status)
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "error": err,
+        "mensaje": None
+    }, status_code=401)
+
 
 @app.post("/logout")
 async def logout_post(request: Request):
@@ -614,6 +648,7 @@ async def logout_get(request: Request):
             c.execute("UPDATE sessions SET logout_at=?, closed_reason=? WHERE id=?", (now_iso, "logout", sid))
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
+
 
 # ================== Cambiar contraseña (vista + alias + post) ==================
 @app.get("/cambiar-password", response_class=HTMLResponse)
@@ -655,7 +690,7 @@ async def cambiar_password_post(
         )
 
     # Validación de contraseña actual (según tu esquema plano)
-    if str(row[3]) != actual:
+    if str(row[3]) != str(actual):
         return templates.TemplateResponse(
             "cambiar_password.html",
             {"request": request, "error": "La contraseña actual es incorrecta."},
@@ -664,7 +699,6 @@ async def cambiar_password_post(
 
     actor_user_id, ip = _actor_info(request)
     try:
-        # Tu función actualiza por email
         actualizar_password(email.lower(), nueva, actor_user_id=actor_user_id, ip=ip)
     except Exception as e:
         print("❌ cambiar_password_post:", repr(e))
@@ -680,6 +714,7 @@ async def cambiar_password_post(
         pass
 
     return RedirectResponse("/cambiar-password?ok=1", status_code=303)
+
 
 # ================== Rating/Análisis ==================
 class RatingIn(BaseModel):
@@ -782,6 +817,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
 
     return {"ok": True, "message": "Valoración registrada"}
 
+
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
     usuario = request.session.get("usuario", "Anónimo")
@@ -849,6 +885,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         "analisis_id": analisis_id
     }
 
+
 # ================== Historial ==================
 @app.get("/historial")
 async def ver_historial():
@@ -879,6 +916,7 @@ async def eliminar_archivo(timestamp: str):
     if os.path.exists(ruta):
         os.remove(ruta)
     return {"mensaje": "Eliminado correctamente"}
+
 
 # ================== Usuario actual ==================
 @app.get("/usuario-actual")
@@ -945,6 +983,35 @@ async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
 
     return {"ok": True, "avatar_url": url}
 
+
+# ================== Diagnóstico (controlado por env) ==================
+@app.get("/__diag/auth")
+async def diag_auth(request: Request):
+    """
+    Habilitar con ENABLE_DIAG=1 (no expone secretos).
+    Útil para verificar si la cookie de sesión se está guardando.
+    """
+    if (os.getenv("ENABLE_DIAG", "0") != "1"):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    sess = request.session or {}
+    headers = {
+        "user_agent": request.headers.get("user-agent", ""),
+        "accept": request.headers.get("accept", "")
+    }
+    return {
+        "logged_in": bool(sess.get("usuario")),
+        "session_keys": sorted(list(sess.keys())),
+        "session_preview": {
+            "usuario": sess.get("usuario"),
+            "rol": sess.get("rol"),
+            "nombre": sess.get("nombre"),
+            "sid_present": bool(sess.get("sid"))
+        },
+        "cookie_present": ("session" in (request.cookies or {})),
+        "route": str(request.url),
+        "headers": headers
+    }
 # ================== Incidencias ==================
 @app.get("/incidencias", response_class=HTMLResponse)
 async def vista_incidencias(request: Request):
@@ -1028,6 +1095,7 @@ async def eliminar_incidencia_form(request: Request, id: int):
     actor_user_id, ip = _actor_info(request)
     eliminar_ticket(id, actor_user_id=actor_user_id, ip=ip)
     return RedirectResponse("/incidencias", status_code=303)
+
 
 # ================== API puente (Chat OpenAI) ==================
 @app.post("/chat-openai")
@@ -1148,12 +1216,14 @@ async def chat_openai_embed(request: Request):
     """
     return HTMLResponse(html)
 
+
 # ================== Chat interno (UI) ==================
 @app.get("/chat", response_class=HTMLResponse)
 async def chat_view(request: Request):
     if not request.session.get("usuario"):
         return RedirectResponse("/login")
     return templates.TemplateResponse("chat.html", {"request": request})
+
 
 # ================== Chat interno (API) ==================
 def _is_no_table_error(e: Exception) -> bool:
@@ -1447,6 +1517,7 @@ async def chat_abrir(request: Request):
         print("❌ Error chat_abrir:", repr(e))
         return JSONResponse({"error": "No se pudo abrir el hilo"}, status_code=500)
 
+
 # ================== Auditoría (vista audit_logs) ==================
 @app.get("/auditoria", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def ver_auditoria(request: Request):
@@ -1468,11 +1539,13 @@ async def auditoria_eliminar_masivo_disabled(request: Request):
 async def auditoria_purgar_disabled(request: Request):
     return JSONResponse({"error": "Operación no permitida: la auditoría es inmutable"}, status_code=405)
 
+
 # ========= Panel de Administración =========
 @app.get("/admin", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def admin_panel(request: Request):
     # Renderiza el panel de administración (botón del topbar apunta aquí)
     return templates.TemplateResponse("admin.html", {"request": request})
+
 
 # ========= Admin: API de usuarios (para admin.html) =========
 DEFAULT_NEW_USER_PASSWORD = os.getenv("DEFAULT_NEW_USER_PASSWORD", "1234")
@@ -1586,8 +1659,8 @@ async def admin_users_delete(request: Request, email: str, hard: bool = Query(de
         print("❌ admin_users_delete:", repr(e))
         return JSONResponse({"error": "No se pudo eliminar el usuario"}, status_code=500)
 
-# ======= LEGACY/COMPAT: endpoints antiguos que usa admin.html =======
 
+# ======= LEGACY/COMPAT: endpoints antiguos que usa admin.html =======
 async def _json_or_form(request: Request) -> dict:
     """Acepta JSON o form-data/x-www-form-urlencoded."""
     ctype = (request.headers.get("content-type") or "").lower()
@@ -1705,7 +1778,6 @@ async def legacy_admin_reset_session(request: Request):
         print("❌ legacy_admin_reset_session:", repr(e))
         return JSONResponse({"error": "No se pudo reiniciar la sesión"}, status_code=500)
 
-# ======= FIN LEGACY =======
 
 # =====================================================================
 # ========================== CALENDARIO (endpoints) ===================
@@ -1805,12 +1877,13 @@ async def cal_delete(evt_id: str, request: Request):
             return JSONResponse({"error":"Evento no encontrado"}, status_code=404)
     await notify_async(request.session.get("usuario","Desconocido"), "Evento eliminado", f"ID: {evt_id}")
     return {"ok": True}
-# ================== Notificaciones ==================
+
+
+# ================== Notificaciones (HTML o JSON según Accept) ==================
 def _wants_html(req: Request) -> bool:
     acc = (req.headers.get("accept") or "").lower()
     return "text/html" in acc and "application/json" not in acc
 
-# <<< FIX: sin response_class -> devuelve JSON o HTML según Accept >>>
 @app.get("/notificaciones")
 async def notificaciones(request: Request,
                          q: Optional[str] = Query(default=None),
@@ -1908,10 +1981,10 @@ async def notif_delete(request: Request):
         c.execute("DELETE FROM notificaciones WHERE id=? AND user=?", (notif_id, user))
     return {"ok": True}
 
+
 # =====================================================================
 # ========================== PRESENCIA / ONLINE =======================
 # =====================================================================
-
 SESSION_TIMEOUT_MIN = 10
 
 def init_presence_db():
@@ -2004,6 +2077,7 @@ async def usuarios_activos(request: Request):
         "request": request,
         "items": data.get("items", [])
     })
+
 
 # ========================== Auditoría de Actividad (admins) =================
 def _parse_iso(ts: Optional[str]):
