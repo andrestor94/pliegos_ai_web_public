@@ -442,7 +442,83 @@
     }
     [class*="container"], [class*="Container"]{ min-width: 0; }
   </style>
+
   {% block extra_head %}{% endblock %}
+
+  <!-- ===== HOTFIX UI (prioridad alta, sin tocar vistas) ===== -->
+  <style>
+    /* 1) Tokens Bootstrap: bordes + paddings coherentes */
+    :root{
+      --bs-border-radius: .85rem;
+      --bs-border-radius-sm: .65rem;
+      --bs-border-radius-lg: 1rem;
+      --bs-btn-padding-y: .55rem;
+      --bs-btn-padding-x: .95rem;
+      --bs-btn-border-radius: .85rem;
+    }
+
+    /* 2) Evitar que flex/grid empujen y rompan el layout */
+    .row, [class*="col-"], .d-flex, .input-group, .form-group { min-width: 0; }
+
+    /* 3) Inputs con más aire y radios */
+    .form-control, .form-select{
+      padding: .6rem .9rem;
+      border-radius: .85rem;
+    }
+
+    /* 4) Botones e icon buttons: altura y alineación */
+    .btn, .icon-btn, .pill{
+      min-height: 40px;
+      border-radius: .85rem;
+      gap: .5rem;
+      line-height: 1.1;
+    }
+    .icon-btn i, .btn i { line-height: 1; }
+
+    /* 5) Sidebar: fijar tamaño de botón/icono */
+    .side-btn{ width: 44px; height: 44px; line-height: 1; }
+    .side-btn i{ font-size: 20px; line-height: 1; }
+
+    /* 6) Tarjetas/paneles: recortar overflow en bordes redondeados */
+    .card, .cardx, .modal-content, .section-card{
+      border-radius: 18px;
+      overflow: hidden;
+    }
+
+    /* 7) Tablas (admin/auditoría) */
+    .table { table-layout: auto; }
+    .table th, .table td{ padding: 10px 14px; vertical-align: middle; }
+    .table-responsive, .content .table{ max-width: 100%; overflow-x: auto; }
+
+    /* 8) Calendario: toolbar flexible */
+    .fc .fc-toolbar { flex-wrap: wrap; gap: 8px; }
+    .fc .fc-toolbar-title{ font-size: clamp(1rem, 2.4vw, 1.25rem); }
+    .fc .fc-button{
+      padding: .35rem .65rem;
+      border-radius: .65rem;
+    }
+
+    /* 9) Contenido general */
+    .content{ overflow: auto; }
+    .content *{ min-width: 0; }
+    .content img, .content svg, .content canvas{ max-width: 100%; height: auto; }
+
+    /* 10) Rutas sensibles: marco amable si la vista no usa .section-card */
+    body[data-route^="/admin"] .content > :not(.page-wrap),
+    body[data-route^="/auditoria"] .content > :not(.page-wrap),
+    body[data-route^="/calendario"] .content > :not(.page-wrap),
+    body[data-route^="/cambiar-password"] .content > :not(.page-wrap){
+      border: 1px solid var(--bs-border-color, var(--border));
+      border-radius: 18px;
+      padding: 16px;
+      background: var(--surface);
+    }
+
+    /* 11) En móvil: scroll horizontal controlado en acciones del header */
+    @media (max-width:575.98px){
+      .header-actions{ overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    }
+  </style>
 </head>
 <body data-auth="{{ '1' if request and request.url.path.startswith('/login') else '' }}"
       data-route="{{ request.url.path if request else '' }}"
