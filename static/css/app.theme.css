@@ -317,7 +317,7 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
 
 /* ---------- Sticky helpers ---------- */
 .sticky-topbar{ position: sticky; top: 0; z-index: 10; background: var(--surface); border-bottom: 1px solid var(--border); }
-.sticky-footer{ position: sticky; bottom:  0; z-index: 5; background: var(--surface); border-top: 1px solid var(--border); }
+.sticky-footer{ position: sticky; bottom: 0; z-index: 5; background: var(--surface); border-top: 1px solid var(--border); }
 
 /* ---------- MOBILE FIXES EXTRA ---------- */
 /* Fuerza apilado si algún CSS externo impone anchos fijos */
@@ -401,79 +401,4 @@ body[data-route^="/chat"] .conversations [class*="text-white"],
 body[data-route^="/chat"] .conversations [class*="opacity-"]{
   color: var(--text-2) !important; /* legible en claro y oscuro */
   opacity: 1 !important;           /* elimina transparencia */
-}
-
-/* =========================================================
-   PARCHE ADITIVO: desbordes + “hover-lift” SOLO en contenido
-   - Evita que íconos/textos se salgan de tarjetas
-   - Neutraliza el levantado en hover que generaba el problema
-   - No afecta sidebar/topbar/overlays
-   ========================================================= */
-.content .card,
-.content .card-clean,
-.content .cardx,
-.content .section-card,
-.content .card > .card-body,
-.content .card-clean > .card-body,
-.content .cardx > .card-body{
-  overflow: hidden;                 /* recorte dentro del borde */
-  border-radius: inherit;           /* respeta el radio del contenedor */
-}
-
-/* Anula “levantar” localmente (mantiene la sombra mejorada) */
-.content .shadow-hover:hover,
-.content .card:hover,
-.content .card-clean:hover,
-.content .cardx:hover,
-.content .section-card:hover,
-.content .list-group-item:hover{
-  transform: none !important;
-  translate: none !important;
-  box-shadow: var(--shadow-md);
-}
-
-/* Flex: deja encoger contenido para que no empuje y desborde */
-.content .row > [class^="col"],
-.content .row > [class*=" col"],
-.content .d-flex > *,
-.content .input-group,
-.content .form-group,
-.content .form-control,
-.content .form-select,
-.content .btn,
-.content .badge,
-.content .pill{
-  min-width: 0;
-  max-width: 100%;
-}
-
-/* Celdas de Acciones (admin/auditoría) envuelven correctamente */
-td.acciones, .acciones, .acciones-cell{
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-/* Tablas dentro de tarjetas: que recorten en bordes redondeados */
-.content .card .table-responsive,
-.content .card-clean .table-responsive,
-.content .cardx .table-responsive{
-  overflow: hidden;
-  border-radius: inherit;
-}
-
-/* FullCalendar: sin “lift” en botones */
-.content .fc .fc-button:hover{
-  transform: none !important;
-  translate: none !important;
-}
-
-/* Badges/chips no expanden celdas */
-.content .badge{
-  display: inline-flex;
-  align-items: center;
-  gap: .35rem;
-  white-space: nowrap;
-  max-width: 100%;
 }
