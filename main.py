@@ -180,6 +180,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="generated_pdfs")
 
 templates = Jinja2Templates(directory="templates")
+templates.env.auto_reload = True  # 👈 recarga automática de plantillas en dev
 templates.env.globals['os'] = os
 
 # Filtro Jinja para mostrar UTC como hora local AR
@@ -752,6 +753,7 @@ async def cambiar_password_underscore_post_slash(
     confirmar: str = Form(...)
 ):
     return await cambiar_password_post(request, actual=actual, nueva=nueva, confirmar=confirmar)
+
 # ================== Rating/Análisis ==================
 class RatingIn(BaseModel):
     historial_id: Optional[int] = None
@@ -822,7 +824,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
     if not historial_id:
         h = _buscar_historial_usuario(user, timestamp=payload.timestamp, nombre_pdf=payload.nombre_pdf)
         if h:
-            hid = h.get("historial_id") | h.get("id")
+            hid = h.get("historial_id") or h.get("id")  # 👈 bugfix: usar 'or' en lugar de '|'
             if isinstance(hid, int):
                 historial_id = hid
 
@@ -853,6 +855,10 @@ async def enviar_rating(request: Request, payload: RatingIn):
 
     return {"ok": True, "message": "Valoración registrada"}
 
+# Alias de compatibilidad para clientes viejos que envían a /analizar
+@app.post("/analizar")
+async def analizar_alias(request: Request, archivos: List[UploadFile] = File(...)):
+    return await analizar_pliego(request, archivos=archivos)
 
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
@@ -1591,7 +1597,6 @@ async def auditoria_eliminar_masivo_disabled(request: Request):
 async def auditoria_purgar_disabled(request: Request):
     return JSONResponse({"error": "Operación no permitida: la auditoría es inmutable"}, status_code=405)
 
-
 # ========= Panel de Administración =========
 @app.get("/admin", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def admin_panel(request: Request):
@@ -1977,6 +1982,7 @@ async def notificaciones(request: Request,
             "titulo": r["titulo"],
             "cuerpo": r["cuerpo"],
             "fecha_legible": iso_utc_to_ar_str(r["created_at"]),
+            "fecha_iso": r["created_at"],     # 👈 agregado para tiempo relativo en UI
             "leida": bool(r["leida"])
         } for r in cur.fetchall()]
 
