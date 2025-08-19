@@ -3,8 +3,7 @@
 
 {% block extra_head %}
 <style>
-  .login-wrap{ width:min(440px, 92vw); position:relative; }
-
+  .login-wrap{ width:min(440px, 92vw); position:relative; margin: 0 auto; }
   .brand-login{
     display:flex; align-items:center; justify-content:center; gap:.6rem;
     margin-bottom:12px; color:var(--text); font-weight:700; letter-spacing:.2px;
@@ -40,6 +39,14 @@
 
   .foot{ text-align:center; color:var(--muted); font-size:.85rem; margin-top:12px; }
   .sr-only{ position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); border:0; }
+
+  .links-row{ display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .link-small{ font-size:.9rem; }
+  .offline-banner{
+    display:none; margin-top:10px; border:1px dashed #f59e0b; color:#92400e;
+    background:#fff7ed; padding:8px 10px; border-radius:10px; font-size:.9rem;
+  }
+  .offline-banner.show{ display:block; }
 </style>
 {% endblock %}
 
@@ -51,6 +58,10 @@
 
   {% if mensaje %}<div class="alert alert-success mb-3" role="alert">{{ mensaje }}</div>{% endif %}
   {% if error %}  <div class="alert alert-danger mb-3" role="alert">{{ error }}</div>{% endif %}
+
+  <div id="offlineNote" class="offline-banner" role="status" aria-live="polite">
+    <i class="bi bi-wifi-off"></i> Estás sin conexión. Comprobá tu red antes de ingresar.
+  </div>
 
   <div class="cardx">
     <div class="cardx-body">
@@ -67,8 +78,8 @@
         <div class="mb-3">
           <label class="form-label" for="email">Correo electrónico</label>
           <input autofocus type="email" class="form-control" id="email" name="email"
-                 placeholder="usuario@suizo.com" required autocomplete="username" inputmode="email">
-          <div class="form-text muted">Usá tu correo corporativo.</div>
+                 placeholder="usuario@suizo.com" required autocomplete="username" inputmode="email" aria-describedby="emailHelp">
+          <div id="emailHelp" class="form-text muted">Usá tu correo corporativo.</div>
           <div class="invalid-feedback">Ingresá un email válido.</div>
         </div>
 
@@ -87,11 +98,22 @@
         </div>
         <div id="capsHint" class="caps-hint mb-2"><i class="bi bi-exclamation-triangle"></i> Bloq Mayús está activado.</div>
 
-        <div class="d-flex justify-content-start align-items-center mb-3">
-          <div class="form-check">
+        {% if require_otp %}
+        <div class="mb-3">
+          <label class="form-label" for="otp">Código 2FA</label>
+          <input type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+                 class="form-control" id="otp" name="otp" placeholder="000000" autocomplete="one-time-code">
+          <div class="form-text muted">Ingresá el código del autenticador.</div>
+          <div class="invalid-feedback">Ingresá un código de 6 dígitos.</div>
+        </div>
+        {% endif %}
+
+        <div class="links-row mb-3">
+          <div class="form-check m-0">
             <input class="form-check-input" type="checkbox" id="remember" name="remember">
             <label class="form-check-label" for="remember">Recordarme</label>
           </div>
+          <a class="link-small" href="/cambiar-password">¿Olvidaste tu contraseña?</a>
         </div>
 
         <button id="loginBtn" type="submit" class="btn btn-grad w-100" aria-describedby="status">
@@ -108,74 +130,108 @@
 
 {% block extra_scripts %}
 <script>
-  const $$=(s)=>document.querySelector(s);
-  document.getElementById('yy').textContent = new Date().getFullYear();
+  /* ===== Helpers ===== */
+  const $ = s => document.querySelector(s);
+  const byId = id => document.getElementById(id);
+  byId('yy').textContent = new Date().getFullYear();
 
+  /* ===== requestSubmit fallback (iOS/Safari viejos) ===== */
+  if (!HTMLFormElement.prototype.requestSubmit) {
+    HTMLFormElement.prototype.requestSubmit = function() { this.submit(); };
+  }
+
+  /* ===== Password show/hide ===== */
   function toggleVis(el){
-    const i=$$('#password'); const pass=i.type==='password';
-    i.type=pass?'text':'password';
-    el.querySelector('i').className=pass?'bi bi-eye-slash':'bi bi-eye';
+    const i = byId('password'); const pass = i.type === 'password';
+    i.type = pass ? 'text' : 'password';
+    const ic = el.querySelector('i'); if(ic) ic.className = pass ? 'bi bi-eye-slash' : 'bi bi-eye';
     i.focus();
   }
   let _pressTimer=null;
   function pressShow(e){
-    const i=$$('#password');
+    const i=byId('password');
     if(i.type==='password'){ i.type='text'; e.currentTarget.querySelector('i').className='bi bi-eye-slash'; }
     clearTimeout(_pressTimer); _pressTimer=setTimeout(()=>{},1500);
   }
   function releaseShow(){
     clearTimeout(_pressTimer);
-    const i=$$('#password'); const btn=document.querySelector('.input-group-text i');
+    const i=byId('password'); const btn=document.querySelector('.input-group-text i');
     if(i.type==='text'){ i.type='password'; if(btn) btn.className='bi bi-eye'; }
   }
 
-  const capsHint=$$('#capsHint');
-  $$('#password').addEventListener('keyup', e=>{
-    const caps=e.getModifierState&&e.getModifierState('CapsLock');
-    capsHint.classList.toggle('show',!!caps);
+  /* ===== CapsLock hint ===== */
+  const capsHint = byId('capsHint');
+  byId('password').addEventListener('keyup', e=>{
+    const caps = e.getModifierState && e.getModifierState('CapsLock');
+    capsHint.classList.toggle('show', !!caps);
   });
 
-  $$('#password').addEventListener('keydown', e=>{
-    if(e.key==='Enter'){ e.preventDefault(); $$('#loginForm').requestSubmit(); }
+  /* ===== Keyboard UX ===== */
+  byId('password').addEventListener('keydown', e=>{
+    if(e.key==='Enter'){ e.preventDefault(); byId('loginForm').requestSubmit(); }
   });
-  $$('#email').addEventListener('keydown', e=>{
-    if(e.key==='Enter'){ e.preventDefault(); $$('#password').focus(); }
+  byId('email').addEventListener('keydown', e=>{
+    if(e.key==='Enter'){ e.preventDefault(); byId('password').focus(); }
   });
+  {% if require_otp %}
+  const otp = byId('otp');
+  if(otp){
+    otp.addEventListener('input', ()=>{ otp.value = otp.value.replace(/\D/g,'').slice(0,6); });
+    otp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); byId('loginForm').requestSubmit(); } });
+  }
+  {% endif %}
 
+  /* ===== Remember email ===== */
   const LS='suizo_login_email';
   window.addEventListener('load',()=>{
     const s=localStorage.getItem(LS);
-    if(s){ $$('#email').value=s; $$('#remember').checked=true; }
+    if(s){ byId('email').value=s; byId('remember').checked=true; }
   });
 
-  const form=$$('#loginForm'); const btn=$$('#loginBtn'); const status=document.getElementById('status');
-  form.addEventListener('submit',e=>{
+  /* ===== Auto-completar dominio si falta ===== */
+  const emailEl = byId('email');
+  emailEl.addEventListener('blur',()=>{
+    const v = emailEl.value.trim();
+    if(v && !v.includes('@') && v.indexOf(' ')===-1) emailEl.value = v + '@suizo.com';
+  });
+
+  /* ===== Offline awareness (solo aviso; NO bloquea el submit) ===== */
+  const offlineNote = byId('offlineNote');
+  function updateOnlineUI(){
+    offlineNote.classList.toggle('show', !navigator.onLine);
+  }
+  window.addEventListener('online',  ()=>{ updateOnlineUI(); showToast?.({title:'Conexión restablecida', icon:'wifi'}); });
+  window.addEventListener('offline', ()=>{ updateOnlineUI(); showToast?.({title:'Sin conexión', body:'Revisá tu red.', icon:'wifi-off'}); });
+  updateOnlineUI();
+
+  /* ===== Submit control ===== */
+  const form = byId('loginForm'); const btn = byId('loginBtn'); const status = byId('status');
+  form.addEventListener('submit', e=>{
+    // validación básica HTML5
     if(!form.checkValidity()){
       e.preventDefault(); e.stopPropagation(); form.classList.add('was-validated'); return;
     }
-    if($$('#remember').checked) localStorage.setItem(LS, $$('#email').value.trim());
+    // OTP pattern si está presente
+    {% if require_otp %}
+    if(otp && !/^[0-9]{6}$/.test(otp.value||'')){ e.preventDefault(); form.classList.add('was-validated'); otp.focus(); return; }
+    {% endif %}
+
+    if(byId('remember').checked) localStorage.setItem(LS, (emailEl.value||'').trim());
     else localStorage.removeItem(LS);
 
-    btn.disabled=true;
+    // lock UI visual (NO se hace preventDefault)
+    btn.disabled = true;
     btn.querySelector('.btn-text').textContent='Ingresando...';
     btn.querySelector('.spinner-border').classList.remove('d-none');
     status.textContent='Enviando…';
-
-    setTimeout(()=>{
-      if(btn.disabled){
-        btn.disabled=false;
-        btn.querySelector('.btn-text').textContent='Ingresar';
-        btn.querySelector('.spinner-border').classList.add('d-none');
-        status.textContent='Tiempo de espera agotado.';
-        showToast({title:'Demora inusual', body:'La red tardó demasiado.', icon:'hourglass-split'});
-      }
-    },15000);
   });
 
-  const email=$$('#email');
-  email.addEventListener('blur',()=>{
-    const v=email.value.trim();
-    if(v && !v.includes('@') && v.indexOf(' ')===-1) email.value=v+'@suizo.com';
-  });
+  /* ===== Querystring toasts (opcional) ===== */
+  (function(){
+    const p = new URLSearchParams(location.search);
+    if(p.get('loggedout')==='1') showToast?.({title:'Sesión cerrada', icon:'door-closed'});
+    if(p.get('expired')==='1')   showToast?.({title:'Sesión expirada', body:'Volvé a ingresar.', icon:'hourglass-top'});
+    if(p.get('error')==='1')     showToast?.({title:'Error de login', body:'Revisá tus credenciales.', icon:'exclamation-triangle'});
+  })();
 </script>
 {% endblock %}
