@@ -9,11 +9,11 @@
     .segmented .btn.active{ background:var(--pill); border-color:var(--accent-a); color:var(--accent-a); }
 
     /* ✅ asegura altura visible del calendario en todas las vistas */
-    #calendar{ min-height:360px; }
-    #calendar .fc .fc-view-harness{ min-height:420px !important; }
+    #calMini{ min-height:360px; }
+    #calMini .fc .fc-view-harness{ min-height:420px !important; }
 
     /* Compactado de la toolbar interna */
-    #calendar.calendar-compact .fc .fc-toolbar{ margin:8px 0 12px; }
+    #calMini.calendar-compact .fc .fc-toolbar{ margin:8px 0 12px; }
   </style>
 {% endblock %}
 
@@ -64,17 +64,41 @@
     <div class="col-12 col-xl-8">
       <div class="cardx calendar-card">
         <div class="title mb-2"><i class="bi bi-calendar3 me-2"></i> Calendario</div>
-        <div id="calendar" class="calendar-compact"></div>
+
+        <!-- Contenedor del mini-calendario -->
+        <div id="calMini" class="calendar-compact"></div>
+
+        <!-- Controles externos -->
         <div class="d-flex align-items-center gap-2 mt-2">
           <div class="segmented">
-            <button class="btn btn-sm btn-light active" data-calview="dayGridMonth">Mes</button>
-            <button class="btn btn-sm btn-light" data-calview="timeGridWeek">Semana</button>
-            <button class="btn btn-sm btn-light" data-calview="listWeek">Lista</button>
+            <button class="btn btn-sm btn-light active"
+                    type="button"
+                    data-cal-view="dayGridMonth"
+                    data-cal-target="#calMini">Mes</button>
+            <button class="btn btn-sm btn-light"
+                    type="button"
+                    data-cal-view="timeGridWeek"
+                    data-cal-target="#calMini">Semana</button>
+            <button class="btn btn-sm btn-light"
+                    type="button"
+                    data-cal-view="listWeek"
+                    data-cal-target="#calMini">Lista</button>
           </div>
           <div class="ms-auto d-flex align-items-center gap-2">
-            <button class="btn btn-sm btn-outline-secondary" id="prevBtn"><i class="bi bi-chevron-left"></i></button>
-            <button class="btn btn-sm btn-outline-secondary" id="todayBtn">Hoy</button>
-            <button class="btn btn-sm btn-outline-secondary" id="nextBtn"><i class="bi bi-chevron-right"></i></button>
+            <button class="btn btn-sm btn-outline-secondary"
+                    type="button"
+                    aria-label="Anterior"
+                    data-cal-nav="prev"
+                    data-cal-target="#calMini"><i class="bi bi-chevron-left"></i></button>
+            <button class="btn btn-sm btn-outline-secondary"
+                    type="button"
+                    data-cal-nav="today"
+                    data-cal-target="#calMini">Hoy</button>
+            <button class="btn btn-sm btn-outline-secondary"
+                    type="button"
+                    aria-label="Siguiente"
+                    data-cal-nav="next"
+                    data-cal-target="#calMini"><i class="bi bi-chevron-right"></i></button>
           </div>
         </div>
       </div>
@@ -125,10 +149,10 @@
     if(el) el.textContent = fmt.format(new Date());
   })();
 
-  // ===== FullCalendar =====
+  // ===== FullCalendar (mini en panel) =====
   let calendar;
   (function(){
-    const el=document.getElementById('calendar');
+    const el=document.getElementById('calMini');
     if(!el) return;
     calendar = new FullCalendar.Calendar(el, {
       height:'auto',
@@ -156,6 +180,11 @@
       eventTimeFormat:{hour:'2-digit',minute:'2-digit',meridiem:false},
     });
     calendar.render();
+
+    // 👇 Exponer instancia para que los botones externos funcionen (manejador global en base.html)
+    el.__fcCalendar = calendar;
+    window.MiniCalendar = calendar; // opcional: debug
+
     // fuerza recálculo inicial y en cambios de tamaño
     setTimeout(()=>{ try{ calendar.updateSize(); }catch(_){} }, 80);
     window.addEventListener('resize', ()=>{ try{ calendar.updateSize(); }catch(_){} });
