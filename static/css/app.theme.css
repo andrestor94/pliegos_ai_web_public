@@ -283,3 +283,52 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
 @media (prefers-reduced-motion: reduce){
   *{ transition:none !important; animation:none !important; }
 }
+
+/* =========================================================
+   ===== FIX DE CONTRASTE PARA EL CHAT INTERNO (/chat) =====
+   - Algunos textos aparecían en blanco/traslúcido.
+   - Forzamos color legible en listados, mensajes e inputs.
+   - Scoping por ruta: NO afecta otras vistas.
+   ========================================================= */
+body[data-route^="/chat"] .text-white,
+body[data-route^="/chat"] .text-light{
+  color: var(--text) !important;
+  /* evita textos blancos heredados de utilidades Bootstrap */
+}
+
+/* Lista de conversaciones y panel principal */
+body[data-route^="/chat"] .chat-header,
+body[data-route^="/chat"] .chat-header * ,
+body[data-route^="/chat"] .chat-body,
+body[data-route^="/chat"] .chat-body * ,
+body[data-route^="/chat"] .conversations,
+body[data-route^="/chat"] .conversations * ,
+body[data-route^="/chat"] .empty-state,
+body[data-route^="/chat"] .empty-state * {
+  color: var(--text);
+}
+
+/* Burbujas de mensajes (propios y de la IA/otro) */
+body[data-route^="/chat"] .msg,
+body[data-route^="/chat"] .msg *{
+  color: var(--text);
+}
+
+/* Composer y buscadores (texto + placeholder) */
+body[data-route^="/chat"] input,
+body[data-route^="/chat"] textarea,
+body[data-route^="/chat"] .form-control{
+  color: var(--text);
+  background: var(--surface);
+}
+body[data-route^="/chat"] input::placeholder,
+body[data-route^="/chat"] textarea::placeholder,
+body[data-route^="/chat"] .form-control::placeholder{
+  color: var(--text-2);
+  opacity: 1;
+}
+/* Compatibilidad extra (algunos navegadores antiguos) */
+body[data-route^="/chat"] input::-webkit-input-placeholder,
+body[data-route^="/chat"] textarea::-webkit-input-placeholder{ color: var(--text-2); }
+body[data-route^="/chat"] input:-ms-input-placeholder,
+body[data-route^="/chat"] textarea:-ms-input-placeholder{ color: var(--text-2); }
