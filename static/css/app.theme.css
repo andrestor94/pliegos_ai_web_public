@@ -332,3 +332,17 @@ body[data-route^="/chat"] input::-webkit-input-placeholder,
 body[data-route^="/chat"] textarea::-webkit-input-placeholder{ color: var(--text-2); }
 body[data-route^="/chat"] input:-ms-input-placeholder,
 body[data-route^="/chat"] textarea:-ms-input-placeholder{ color: var(--text-2); }
+
+/* ===== Fix extra: correo/subtítulo en lista de conversaciones ===== */
+body[data-route^="/chat"] .conversations small,
+body[data-route^="/chat"] .conversations .small,
+body[data-route^="/chat"] .conversations .text-muted,
+body[data-route^="/chat"] .conversations .text-white-50,
+body[data-route^="/chat"] .conversations .text-white-75,
+body[data-route^="/chat"] .conversations .opacity-50,
+body[data-route^="/chat"] .conversations .opacity-75,
+body[data-route^="/chat"] .conversations [class*="text-white"],
+body[data-route^="/chat"] .conversations [class*="opacity-"]{
+  color: var(--text-2) !important; /* legible en claro y oscuro */
+  opacity: 1 !important;           /* elimina transparencia */
+}
