@@ -7,7 +7,7 @@
   .ua-head .hero-title{ margin:0; }
 
   .avatar{
-    width:36px; height:36px; border-radius:999px; display:grid; place-items:center;
+    width:38px; height:38px; border-radius:999px; display:grid; place-items:center;
     font-weight:700; background:linear-gradient(135deg, var(--accent-a), var(--accent-b));
     color:#fff; box-shadow:0 6px 16px rgba(139,92,246,.28);
   }
@@ -20,6 +20,19 @@
   .ua-chip{ border:1px solid var(--border); border-radius:999px; padding:.2rem .55rem; font-size:.8rem; color:#475569; background:#fff; }
   .ua-list .cardx{ transition:transform .08s ease, box-shadow .2s ease; }
   .ua-list .cardx:hover{ transform:translateY(-1px); box-shadow:0 16px 36px rgba(20,15,55,.14); }
+
+  .toolbar{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .toolbar .form-control, .toolbar .form-select, .toolbar .btn{ border-radius:10px; }
+
+  /* skeleton */
+  .skeleton{ border:1px solid var(--border); border-radius:14px; padding:12px; position:relative; overflow:hidden; }
+  .sk-bar{ height:12px; background:rgba(148,163,184,.25); border-radius:6px; margin:.35rem 0; }
+  .skeleton::after{
+    content:""; position:absolute; inset:0;
+    background:linear-gradient(90deg, transparent, rgba(180,190,210,.2), transparent);
+    animation: shimmer 1.1s infinite;
+  }
+  @keyframes shimmer{ 0%{ transform:translateX(-100%);} 100%{ transform:translateX(100%);} }
 
   @media (prefers-color-scheme: dark){
     .ua-chip{ background:#0b1220; }
@@ -36,16 +49,41 @@
 
   <div class="cardx mb-3">
     <div class="d-flex align-items-center justify-content-between">
-      <div class="title"><i class="bi bi-activity me-2"></i> Presencia en tiempo (≈5 min)</div>
-      <div class="d-flex align-items-center gap-2">
-        <input id="filterInput" class="form-control form-control-sm" placeholder="Filtrar por nombre o email…" style="max-width:260px">
+      <div class="title d-flex align-items-center gap-2">
+        <i class="bi bi-activity"></i> Presencia
+        <span id="countChip" class="ua-chip">0 en línea</span>
         <span class="ua-chip"><span class="status-dot"></span> En línea</span>
       </div>
+      <div class="toolbar">
+        <div class="input-group">
+          <span class="input-group-text"><i class="bi bi-search"></i></span>
+          <input id="filterInput" class="form-control form-control-sm" placeholder="Filtrar por nombre o email…">
+        </div>
+        <select id="minutesSel" class="form-select form-select-sm" title="Ventana de presencia">
+          <option value="5" selected>Últ. 5 min</option>
+          <option value="10">Últ. 10 min</option>
+          <option value="15">Últ. 15 min</option>
+          <option value="30">Últ. 30 min</option>
+          <option value="60">Últ. 60 min</option>
+        </select>
+        <select id="sortSel" class="form-select form-select-sm" title="Ordenar por">
+          <option value="seen_desc" selected>Orden: último visto</option>
+          <option value="name_asc">Orden: nombre (A→Z)</option>
+        </select>
+        <div class="form-check ms-1">
+          <input class="form-check-input" type="checkbox" id="autoRefresh" checked>
+          <label class="form-check-label small" for="autoRefresh">Auto-refresh</label>
+        </div>
+        <button id="btnRefresh" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-clockwise"></i> Refrescar</button>
+        <button id="btnCopy" class="btn btn-outline-primary btn-sm" title="Copiar lista"><i class="bi bi-clipboard"></i></button>
+        <button id="btnCsv" class="btn btn-outline-primary btn-sm" title="Exportar CSV"><i class="bi bi-filetype-csv"></i></button>
+      </div>
     </div>
+    <div class="small text-muted mt-2" id="lastUpd">—</div>
   </div>
 
   <div id="uaList" class="ua-list grid">
-    <!-- Se llena por JS -->
+    <!-- JS -->
   </div>
 
   {% if not items or items|length == 0 %}
@@ -56,10 +94,19 @@
 
 {% block extra_scripts %}
 <script>
-  // Datos iniciales del servidor
+  // ===== Datos iniciales del servidor (por si el backend los inyecta) =====
   const INITIAL = {{ (items or []) | tojson }};
+  // ===== DOM =====
   const uaList  = document.getElementById('uaList');
   const filter  = document.getElementById('filterInput');
+  const minutesSel = document.getElementById('minutesSel');
+  const sortSel = document.getElementById('sortSel');
+  const countChip = document.getElementById('countChip');
+  const lastUpd = document.getElementById('lastUpd');
+
+  // ===== Helpers =====
+  const esc = (s)=> (s||'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const debounce = (fn,ms)=>{ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; };
 
   function initials(nameOrMail){
     const s = (nameOrMail||'').trim();
@@ -68,10 +115,9 @@
       const p = s.split(' ').filter(Boolean);
       return (p[0][0]||'').toUpperCase() + (p[p.length-1][0]||'').toUpperCase();
     }
-    if(s.includes('@')) return s[0].toUpperCase();
+    if(s.includes('@')) return (s[0]||'?').toUpperCase();
     return s.slice(0,2).toUpperCase();
   }
-
   function timeAgo(iso){
     try{
       const d = new Date(iso);
@@ -83,62 +129,165 @@
       return `${h}h`;
     }catch{ return '—'; }
   }
+  function fmtLocal(iso){
+    try{ const d=new Date(iso); return isNaN(d)?'—':d.toLocaleString(); }catch{ return '—'; }
+  }
 
+  // ===== Estado =====
+  const state = {
+    items: Array.isArray(INITIAL) ? INITIAL : [],
+    minutes: parseInt(minutesSel.value,10)||5,
+    sort: sortSel.value,
+    lastFetch: null
+  };
+
+  // ===== Render =====
   function render(items){
     if(!uaList) return;
     const q = (filter?.value||'').toLowerCase().trim();
+
+    // sorting
+    const sorted = [...items].sort((a,b)=>{
+      if(state.sort === 'name_asc'){
+        const A=(a.nombre||a.email||'').toLowerCase();
+        const B=(b.nombre||b.email||'').toLowerCase();
+        return A.localeCompare(B);
+      }
+      // default: seen_desc
+      const da = new Date(a.last_seen||0).getTime();
+      const db = new Date(b.last_seen||0).getTime();
+      return db - da;
+    });
+
+    const filtered = sorted.filter(u => !q || (String(u.nombre||'').toLowerCase().includes(q) || String(u.email||'').toLowerCase().includes(q)));
     uaList.innerHTML = '';
 
-    const grid = document.createDocumentFragment();
-
-    items
-      .filter(u => !q || (String(u.nombre||'').toLowerCase().includes(q) || String(u.email||'').toLowerCase().includes(q)))
-      .forEach(u=>{
+    if(!filtered.length){
+      uaList.innerHTML = '<div class="cardx"><div class="text-muted">Sin coincidencias con el filtro.</div></div>';
+    }else{
+      const frag = document.createDocumentFragment();
+      filtered.forEach(u=>{
         const card = document.createElement('div');
         card.className = 'cardx col-12';
+        const uaTitle = esc(u.ua||'');
         card.innerHTML = `
           <div class="ua-card">
-            <div class="avatar" title="${(u.nombre||u.email||'').replace(/"/g,'&quot;')}">${initials(u.nombre||u.email)}</div>
+            <div class="avatar" title="${esc(u.nombre||u.email||'')}">${initials(u.nombre||u.email)}</div>
             <div class="flex-grow-1">
-              <div><strong>${(u.nombre||u.email||'').replace(/</g,'&lt;')}</strong> <span class="ua-meta">· ${(u.email||'').replace(/</g,'&lt;')}</span></div>
-              <div class="ua-meta"><span class="status-dot"></span> activo hace ${timeAgo(u.last_seen)}</div>
+              <div><strong>${esc(u.nombre||u.email||'')}</strong> <span class="ua-meta">· ${esc(u.email||'')}</span></div>
+              <div class="ua-meta"><span class="status-dot"></span> activo hace ${timeAgo(u.last_seen)} <span class="text-muted">(${fmtLocal(u.last_seen)})</span></div>
             </div>
             <div class="text-end small ua-meta d-none d-md-block">
-              <div>${(u.ip||'').replace(/</g,'&lt;')}</div>
-              <div class="text-truncate" style="max-width:320px">${(u.ua||'').replace(/</g,'&lt;')}</div>
+              <div>${esc(u.ip||'')}</div>
+              <div class="text-truncate" style="max-width:320px" title="${uaTitle}">${uaTitle || '—'}</div>
             </div>
           </div>`;
-        grid.appendChild(card);
+        frag.appendChild(card);
       });
+      uaList.appendChild(frag);
+    }
 
-    uaList.appendChild(grid);
-
-    if(!items.length){
-      uaList.innerHTML = '<div class="cardx"><div class="text-muted">No hay usuarios activos ahora.</div></div>';
+    // contador + last updated
+    countChip.textContent = `${filtered.length} en línea`;
+    if(state.lastFetch){
+      const secs = Math.max(0, Math.round((Date.now()-state.lastFetch)/1000));
+      lastUpd.textContent = `Actualizado hace ${secs}s · Ventana: ${state.minutes} min`;
     }
   }
 
-  async function fetchOnline(){
-    try{
-      const r = await fetch('/presence/online');
-      const j = await r.json();
-      return Array.isArray(j.items) ? j.items : [];
-    }catch{ return []; }
+  // Skeleton
+  function showSkeleton(n=4){
+    uaList.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    for(let i=0;i<n;i++){
+      const sk = document.createElement('div');
+      sk.className = 'skeleton';
+      sk.innerHTML = `
+        <div class="sk-bar" style="width:28%; height:16px"></div>
+        <div class="sk-bar" style="width:52%"></div>
+        <div class="sk-bar" style="width:38%"></div>`;
+      frag.appendChild(sk);
+    }
+    uaList.appendChild(frag);
   }
 
-  // Inicial
-  render(INITIAL);
+  // ===== API =====
+  async function fetchOnline(){
+    try{
+      const r = await fetch(`/presence/online?minutes=${encodeURIComponent(state.minutes)}`);
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const j = await r.json();
+      return Array.isArray(j.items) ? j.items : [];
+    }catch{
+      (window.showToast||console.error)({title:'Presencia', body:'No se pudo consultar el servidor.', icon:'exclamation-triangle'});
+      return [];
+    }
+  }
 
-  // Filtro
-  filter?.addEventListener('input', async ()=>{
+  // ===== Acciones =====
+  const doRefresh = async ()=>{
+    showSkeleton(3);
     const items = await fetchOnline();
+    state.items = items;
+    state.lastFetch = Date.now();
     render(items);
+  };
+
+  // CSV & Copy
+  function downloadCSV(rows, name){
+    const escv=v=>`"${String(v??'').replace(/"/g,'""')}"`;
+    const csv = rows.map(r=>r.map(escv).join(',')).join('\n');
+    const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); URL.revokeObjectURL(a.href);
+  }
+  document.getElementById('btnCsv').addEventListener('click', ()=>{
+    const rows = [['Nombre','Email','IP','Último visto','Agente']];
+    (state.items||[]).forEach(u=>{
+      rows.push([u.nombre||u.email||'', u.email||'', u.ip||'', u.last_seen? new Date(u.last_seen).toLocaleString():'', u.ua||'']);
+    });
+    const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+    downloadCSV(rows, `usuarios_activos_${stamp}.csv`);
+  });
+  document.getElementById('btnCopy').addEventListener('click', async ()=>{
+    try{
+      const lines = (state.items||[]).map(u=> `${u.nombre||u.email||'-'} · ${u.email||'-'} · ${u.ip||'-'} · ${u.last_seen?new Date(u.last_seen).toLocaleString():'-'}`);
+      await navigator.clipboard.writeText(lines.join('\n'));
+      (window.showToast||console.log)({title:'Copiado', body:'Lista copiada al portapapeles.', icon:'clipboard'});
+    }catch(_){
+      (window.showToast||console.error)({title:'Error', body:'No se pudo copiar.', icon:'exclamation-triangle'});
+    }
   });
 
-  // Poll cada 20s
-  setInterval(async ()=>{
-    const items = await fetchOnline();
-    render(items);
-  }, 20_000);
+  // UI events
+  document.getElementById('btnRefresh').addEventListener('click', doRefresh);
+  minutesSel.addEventListener('change', async ()=>{
+    state.minutes = parseInt(minutesSel.value,10)||5;
+    await doRefresh();
+  });
+  sortSel.addEventListener('change', ()=>{ state.sort = sortSel.value; render(state.items); });
+  filter?.addEventListener('input', debounce(()=> render(state.items), 160));
+
+  // Auto refresh
+  const autoChk = document.getElementById('autoRefresh');
+  let timer = null;
+  function setAuto(){
+    if(timer){ clearInterval(timer); timer=null; }
+    if(autoChk.checked){
+      timer = setInterval(doRefresh, 20_000);
+    }
+  }
+  autoChk.addEventListener('change', setAuto);
+
+  // ===== Init =====
+  (async function init(){
+    if(Array.isArray(INITIAL) && INITIAL.length){
+      state.lastFetch = Date.now();
+      render(INITIAL);
+    }else{
+      showSkeleton(4);
+    }
+    await doRefresh();
+    setAuto();
+  })();
 </script>
 {% endblock %}

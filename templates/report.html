@@ -12,14 +12,19 @@
   .report-section + .report-section{ margin-top:18px; }
   .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
 
-  .table thead{ background:var(--bg-soft); }
+  .table thead{ background:var(--bg-soft); position:sticky; top:0; z-index:1; }
   .badge-doc{ background:#e8efff; color:#1e40af; border:1px solid #cfe0ff; border-radius:999px; padding:.15rem .5rem; font-weight:600; }
+  .toolbar{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .toolbar .form-control, .toolbar .form-select{ border-radius:10px; }
+
+  .highlight{ background:#fff3bf; border-radius:3px; padding:0 .15em; }
 
   /* Impresión */
   @media print{
-    header, .fab, .report-actions, .notif-fab, .toast-container{ display:none!important; }
+    header, .fab, .report-actions, .notif-fab, .toast-container, .tools-row{ display:none!important; }
     main.container{ max-width: 100%!important; margin:0!important; }
     .card{ box-shadow:none!important; border:1px solid #ddd; }
+    .table thead{ position:static; }
   }
 </style>
 {% endblock %}
@@ -30,19 +35,44 @@
     <h1 class="hero-title mb-0"><i class="bi bi-file-earmark-text me-2"></i> Informe de Licitación</h1>
     <div class="report-actions d-flex gap-2">
       <a href="/" class="btn btn-outline-secondary btn-sm">← Volver</a>
+      <button class="btn btn-outline-secondary btn-sm" id="btnCopy"><i class="bi bi-clipboard"></i> Copiar</button>
       <button class="btn btn-outline-primary btn-sm" onclick="descargarJSON()" title="Descargar JSON"><i class="bi bi-braces"></i> JSON</button>
+      <button class="btn btn-outline-primary btn-sm" id="btnCsv" title="Exportar ítems CSV"><i class="bi bi-filetype-csv"></i> Ítems CSV</button>
       <button class="btn btn-primary btn-sm" onclick="window.print()" title="Imprimir / PDF"><i class="bi bi-printer"></i> Imprimir</button>
     </div>
   </div>
 
-  <div class="card card-clean shadow-hover">
-    <div class="card-header"><strong>Resumen</strong></div>
+  <!-- Herramientas -->
+  <div class="tools-row card card-clean shadow-hover mb-3">
+    <div class="card-body">
+      <div class="toolbar">
+        <div class="input-group" style="max-width:280px;">
+          <span class="input-group-text"><i class="bi bi-search"></i></span>
+          <input id="filterItems" class="form-control form-control-sm" placeholder="Filtrar ítems… (descr./unidad)">
+        </div>
+        <div class="input-group" style="width:auto;">
+          <span class="input-group-text"><i class="bi bi-translate"></i></span>
+          <select id="localeSel" class="form-select form-select-sm" style="width:auto">
+            <option value="es-AR" selected>Formato: es-AR</option>
+            <option value="en-US">Formato: en-US</option>
+          </select>
+        </div>
+        <div class="ms-auto small text-muted" id="itemsInfo">—</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card card-clean shadow-hover" id="reportCard">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong>Resumen</strong>
+      <span class="small text-muted" id="genHint"></span>
+    </div>
     <div class="card-body">
       <div class="report-kv">
         <div class="k">Tipo</div><div class="v">{{ data.tipo or '—' }}</div>
-        <div class="k">Objeto</div><div class="v">{{ data.objeto or '—' }}</div>
+        <div class="k">Objeto</div><div class="v" id="vObjeto">{{ data.objeto or '—' }}</div>
         <div class="k">Organismo</div><div class="v">{{ data.organismo or '—' }}</div>
-        <div class="k">Presupuesto</div><div class="v">{{ data.presupuesto or '—' }}</div>
+        <div class="k">Presupuesto</div><div class="v" id="vPresupuesto">{{ data.presupuesto or '—' }}</div>
         <div class="k">Fecha</div><div class="v">{{ data.fecha or '—' }}</div>
         {% if data.expediente %}
           <div class="k">Expediente</div><div class="v">{{ data.expediente }}</div>
@@ -55,7 +85,7 @@
       {% if data.resumen %}
       <div class="report-section">
         <label class="form-label text-muted">Resumen / Observaciones</label>
-        <div class="p-3 rounded-3 border mono" style="background:var(--bg-soft); white-space:pre-wrap;">{{ data.resumen }}</div>
+        <div id="resumenBox" class="p-3 rounded-3 border mono" style="background:var(--bg-soft); white-space:pre-wrap;">{{ data.resumen }}</div>
       </div>
       {% endif %}
 
@@ -72,12 +102,15 @@
 
       {% if data.items and data.items|length > 0 %}
       <div class="report-section">
-        <label class="form-label text-muted">Ítems</label>
+        <div class="d-flex align-items-center justify-content-between">
+          <label class="form-label text-muted mb-0">Ítems</label>
+          <div class="small text-muted" id="totalsBadge">—</div>
+        </div>
         <div class="table-responsive">
-          <table class="table align-middle">
+          <table class="table align-middle" id="itemsTable">
             <thead>
               <tr>
-                <th>#</th>
+                <th style="width:64px">#</th>
                 <th>Descripción</th>
                 <th class="text-nowrap">Unidad</th>
                 <th class="text-end text-nowrap">Cantidad</th>
@@ -88,13 +121,20 @@
               {% for it in data.items %}
               <tr>
                 <td class="text-muted">{{ it.id or loop.index }}</td>
-                <td>{{ it.descripcion or it.desc or '—' }}</td>
-                <td class="text-nowrap">{{ it.unidad or it.u or '—' }}</td>
-                <td class="text-end">{{ it.cantidad or it.cant or '—' }}</td>
-                <td class="text-end">{{ it.precio or it.precio_ref or '—' }}</td>
+                <td class="campo-desc">{{ it.descripcion or it.desc or '—' }}</td>
+                <td class="text-nowrap campo-un">{{ it.unidad or it.u or '—' }}</td>
+                <td class="text-end campo-cant">{{ it.cantidad or it.cant or '—' }}</td>
+                <td class="text-end campo-precio">{{ it.precio or it.precio_ref or '—' }}</td>
               </tr>
               {% endfor %}
             </tbody>
+            <tfoot>
+              <tr>
+                <th colspan="3" class="text-end">Totales</th>
+                <th class="text-end" id="tCant">—</th>
+                <th class="text-end" id="tMonto">—</th>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </div>
@@ -103,7 +143,7 @@
       {% if data.contacto or data.consultas %}
       <div class="report-section">
         <label class="form-label text-muted">Contacto</label>
-        <div>{{ data.contacto or data.consultas }}</div>
+        <div id="contactoBox">{{ data.contacto or data.consultas }}</div>
       </div>
       {% endif %}
     </div>
@@ -117,7 +157,55 @@
 {% block extra_scripts %}
 {% if data %}<script id="reportData" type="application/json">{{ data|tojson }}</script>{% endif %}
 <script>
-  // Descarga del JSON del informe
+  // ===== Helpers =====
+  const $ = (s,sc)=> (sc||document).querySelector(s);
+  const $$ = (s,sc)=> Array.from((sc||document).querySelectorAll(s));
+  const escapeHtml = (s)=> (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const parseNum = (v)=>{
+    if(v==null) return NaN;
+    if(typeof v==='number') return v;
+    const s=String(v).replace(/[^0-9,.\-]/g,'').replace(/(\d)[,](\d{3}\b)/g,'$1$2'); // quita separadores miles con coma
+    const m = s.match(/^-?\d+(?:[.,]\d+)?$/);
+    if(!m) return NaN;
+    return Number(s.replace(',','.'));
+  };
+  const sum = (arr)=> arr.reduce((a,b)=> a+(Number.isFinite(b)?b:0), 0);
+
+  // Linkificar texto simple (URLs / emails)
+  function linkify(el){
+    if(!el) return;
+    const txt = el.textContent;
+    const urlRE = /\b(https?:\/\/[^\s]+)\b/gi;
+    const mailRE= /\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g;
+    let html = escapeHtml(txt).replace(urlRE, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+    html = html.replace(mailRE, '<a href="mailto:$1">$1</a>');
+    el.innerHTML = html;
+  }
+
+  // ===== CSV =====
+  function downloadCSV(rows, name){
+    const esc = v=> `"${String(v??'').replace(/"/g,'""')}"`;
+    const csv = rows.map(r=> r.map(esc).join(',')).join('\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name; a.click(); URL.revokeObjectURL(a.href);
+  }
+
+  // ===== Copiar =====
+  $('#btnCopy')?.addEventListener('click', async ()=>{
+    try{
+      const el = $('#reportCard').cloneNode(true);
+      // Quitamos controles que no aportan al texto
+      el.querySelectorAll('button, .form-label, .table tfoot').forEach(n=> n.remove?.());
+      await navigator.clipboard.writeText(el.innerText.trim());
+      (window.showToast||console.log)({title:'Copiado', body:'Contenido copiado al portapapeles.', icon:'clipboard'});
+    }catch(_){
+      (window.showToast||console.error)({title:'Error', body:'No se pudo copiar.', icon:'exclamation-triangle'});
+    }
+  });
+
+  // ===== Export JSON =====
   function descargarJSON(){
     try{
       const el = document.getElementById('reportData');
@@ -128,13 +216,112 @@
       a.href = url;
       a.download = `informe_licitacion_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.json`;
       document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      a.click(); a.remove(); URL.revokeObjectURL(url);
       (window.showToast||console.log)({title:'Descarga iniciada', body:'Exportado como JSON.', icon:'download'});
     }catch(e){
       (window.showToast||console.error)({title:'Error', body:'No se pudo exportar el JSON.', icon:'exclamation-triangle'});
     }
   }
+  window.descargarJSON = descargarJSON;
+
+  // ===== Totales / formateo / filtro =====
+  const localeSel = $('#localeSel');
+  let currentLocale = localeSel?.value || 'es-AR';
+
+  function nf(opts){ try{ return new Intl.NumberFormat(currentLocale, opts); }catch(_){ return new Intl.NumberFormat('es-AR', opts); } }
+
+  function recompute(){
+    const rows = $$('#itemsTable tbody tr');
+    const cant = rows.map(tr => parseNum($('.campo-cant', tr)?.textContent));
+    const precio= rows.map(tr => parseNum($('.campo-precio', tr)?.textContent));
+    // total monto si hay cantidad y precio
+    const totCant = sum(cant);
+    const totMonto = sum(rows.map((_,i)=> (Number.isFinite(cant[i]) && Number.isFinite(precio[i])) ? cant[i]*precio[i] : 0));
+    $('#tCant').textContent  = Number.isFinite(totCant) ? nf({maximumFractionDigits:2}).format(totCant) : '—';
+    $('#tMonto').textContent = Number.isFinite(totMonto) ? nf({style:'currency', currency:'ARS', maximumFractionDigits:2}).format(totMonto) : '—';
+    $('#totalsBadge').textContent = (Number.isFinite(totCant)||Number.isFinite(totMonto))
+      ? `Ítems: ${rows.length} · Cantidad total: ${$('#tCant').textContent} · Monto estimado: ${$('#tMonto').textContent}`
+      : `Ítems: ${rows.length}`;
+    $('#itemsInfo').textContent = `Mostrando ${rows.length} ítems`;
+  }
+
+  // Re-formatea columnas numéricas al cambiar locale (no altera valores de fuente)
+  function reformatNums(){
+    $$('#itemsTable tbody tr').forEach(tr=>{
+      const c = $('.campo-cant', tr);
+      const p = $('.campo-precio', tr);
+      const nv = parseNum(c?.dataset.raw || c?.textContent);
+      const pv = parseNum(p?.dataset.raw || p?.textContent);
+      if(c){ if(!c.dataset.raw) c.dataset.raw = c.textContent.trim(); c.textContent = Number.isFinite(nv) ? nf({maximumFractionDigits:2}).format(nv) : c.dataset.raw; }
+      if(p){ if(!p.dataset.raw) p.dataset.raw = p.textContent.trim(); p.textContent = Number.isFinite(pv) ? nf({style:'currency', currency:'ARS', maximumFractionDigits:2}).format(pv) : p.dataset.raw; }
+    });
+    recompute();
+  }
+
+  function clearHighlights(){
+    $$('#itemsTable .highlight').forEach(m=> m.replaceWith(document.createTextNode(m.textContent)));
+  }
+  function highlightCell(el, term){
+    const txt = el.textContent;
+    const re = new RegExp('('+term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','ig');
+    el.innerHTML = escapeHtml(txt).replace(re,'<mark class="highlight">$1</mark>');
+  }
+  function applyFilter(){
+    const term = ($('#filterItems')?.value || '').trim().toLowerCase();
+    clearHighlights();
+    $$('#itemsTable tbody tr').forEach(tr=>{
+      const desc = $('.campo-desc', tr)?.textContent.toLowerCase() || '';
+      const uni  = $('.campo-un', tr)?.textContent.toLowerCase() || '';
+      const show = !term || desc.includes(term) || uni.includes(term);
+      tr.style.display = show ? '' : 'none';
+      if(show && term){
+        highlightCell($('.campo-desc', tr), term);
+        highlightCell($('.campo-un', tr), term);
+      }
+    });
+    recompute();
+  }
+
+  // ===== CSV de ítems =====
+  $('#btnCsv')?.addEventListener('click', ()=>{
+    const head = ['#','Descripción','Unidad','Cantidad','PrecioRef'];
+    const rows = [head];
+    $$('#itemsTable tbody tr').forEach(tr=>{
+      if(tr.style.display==='none') return; // respeta el filtro
+      rows.push([
+        tr.children[0]?.innerText.trim() || '',
+        $('.campo-desc', tr)?.innerText.trim() || '',
+        $('.campo-un', tr)?.innerText.trim() || '',
+        $('.campo-cant', tr)?.innerText.trim() || '',
+        $('.campo-precio', tr)?.innerText.trim() || ''
+      ]);
+    });
+    const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+    downloadCSV(rows, `items_informe_${stamp}.csv`);
+  });
+
+  // ===== Boot =====
+  (function init(){
+    // Marcar fecha de generación (cliente)
+    const hint = $('#genHint'); if(hint){ hint.textContent = 'Generado: ' + new Date().toLocaleString(); }
+
+    // Linkificar resumen/contacto si están
+    linkify($('#resumenBox'));
+    linkify($('#contactoBox'));
+
+    // Si hay items, preparar datos raw y computar
+    $$('#itemsTable tbody tr').forEach(tr=>{
+      const c = $('.campo-cant', tr); const p = $('.campo-precio', tr);
+      if(c) c.dataset.raw = c.textContent.trim();
+      if(p) p.dataset.raw = p.textContent.trim();
+    });
+    reformatNums();
+  })();
+
+  // Listeners
+  $('#filterItems')?.addEventListener('input', ()=>{ window.clearTimeout(window.__t); window.__t=setTimeout(applyFilter,150); });
+  $('#localeSel')?.addEventListener('change', (e)=>{ currentLocale = e.target.value || 'es-AR'; reformatNums(); });
+
+  // Descarga del JSON (expuesto en window más arriba)
 </script>
 {% endblock %}
