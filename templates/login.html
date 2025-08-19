@@ -47,7 +47,6 @@
 <div class="login-wrap">
   <div class="brand-login" aria-label="Marca">
     <img src="/static/logo-suizo.png" alt="Logo Suizo"/>
-    <span>Suizo Argentina <b>— Licitaciones IA</b></span>
   </div>
 
   {% if mensaje %}<div class="alert alert-success mb-3" role="alert">{{ mensaje }}</div>{% endif %}
@@ -88,12 +87,11 @@
         </div>
         <div id="capsHint" class="caps-hint mb-2"><i class="bi bi-exclamation-triangle"></i> Bloq Mayús está activado.</div>
 
-        <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="d-flex justify-content-start align-items-center mb-3">
           <div class="form-check">
             <input class="form-check-input" type="checkbox" id="remember" name="remember">
             <label class="form-check-label" for="remember">Recordarme</label>
           </div>
-          <a class="small" href="/cambiar-password">Cambiar contraseña</a>
         </div>
 
         <button id="loginBtn" type="submit" class="btn btn-grad w-100" aria-describedby="status">
