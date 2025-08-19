@@ -6,29 +6,29 @@
   /* ——— Encabezado + coherencia visual ——— */
   .inc-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   .inc-head .hero-title{ margin:0; }
-  .subtle{ color:var(--muted,#667085); }
+  .subtle{ color:var(--text-2); }
 
   /* Campos “neo” */
   .form-neo .form-control,
   .form-neo .form-select,
   .form-neo textarea {
     border-radius:14px;
-    border:1px solid var(--border);
-    background:#fff;
+    border:1px solid var(--bs-border-color, var(--border));
+    background: var(--surface);
     box-shadow:0 1px 0 rgba(15,18,34,.02);
   }
   .form-neo .form-control:focus,
   .form-neo .form-select:focus,
   .form-neo textarea:focus {
-    border-color:rgba(139,92,246,.55);
-    box-shadow:0 0 0 .25rem rgba(139,92,246,.18);
+    border-color: var(--brand-300);
+    box-shadow: 0 0 0 .25rem rgba(var(--ring-color), .18);
   }
 
   /* Botones a juego */
   .btn-primary{
     border:none; border-radius:12px;
-    background:linear-gradient(135deg, var(--accent-a), var(--accent-b));
-    box-shadow:0 10px 24px rgba(139,92,246,.24);
+    background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+    box-shadow: var(--shadow);
   }
   .btn-outline-primary{
     border-radius:12px; border-color:var(--accent-a); color:var(--accent-a);
@@ -36,24 +36,27 @@
   .btn-outline-primary:hover{
     color:#fff; background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); border-color:transparent;
   }
-  .btn-soft{ border-radius:12px; border:1px solid var(--border); background:#f6f8ff; }
+  .btn-soft{ border-radius:12px; border:1px solid var(--bs-border-color, var(--border)); background:var(--muted); }
 
   /* Tabla & chips de adjuntos */
-  .table thead th{ position:sticky; top:0; background:#fff; z-index:1; user-select:none; cursor:default; }
+  .table thead th{
+    position:sticky; top:0; background:var(--muted); z-index:1; user-select:none; cursor:default;
+  }
+  html[data-theme="dark"] .table thead th{ background:#0f172a; }
   .table th.sortable{ cursor:pointer; }
   .table th.sortable .bi{ opacity:.35; }
   .table th.sortable.active .bi{ opacity:1; }
   .chips{ display:flex; flex-wrap:wrap; gap:6px; }
   .chip{
     display:inline-flex; align-items:center; gap:6px;
-    padding:4px 8px; border-radius:999px; background:#fff;
-    border:1px solid var(--border); font-size:12px;
+    padding:4px 8px; border-radius:999px; background:var(--surface);
+    border:1px solid var(--bs-border-color, var(--border)); font-size:12px;
   }
   .chip a{ text-decoration:none; }
   .chip .bi{ font-size:14px; }
 
   /* Badges de estado */
-  .badge-state{ border-radius:999px; font-weight:600; padding:.35rem .6rem; }
+  .badge-state{ border-radius:999px; font-weight:700; padding:.35rem .6rem; }
   .badge-abierto{ background:#fff7ed; color:#9a3412; border:1px solid #fed7aa; }
   .badge-cerrado{ background:#ecfdf5; color:#065f46; border:1px solid #b7f0db; }
 
@@ -61,91 +64,100 @@
   #filterInput{ max-width:260px; }
   .inc-toolbar{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .inc-toolbar .form-select, .inc-toolbar .form-control{ border-radius:12px; }
-  .result-count{ color:var(--muted); }
+  .result-count{ color:var(--text-2); }
   mark.hl{ background:#fff3bf; padding:0 .15em; border-radius:4px; }
 
   /* Paginación */
   .inc-pager{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px; }
-  .inc-pager .range{ color:var(--muted); }
+  .inc-pager .range{ color:var(--text-2); }
   .pagination .page-link{ border-radius:10px; }
 
-  .file-hint{ color:var(--muted); }
+  .file-hint{ color:var(--text-2); }
   .file-list{ margin-top:6px; display:flex; flex-wrap:wrap; gap:6px; }
-  .file-item{ font-size:12px; border:1px solid var(--border); border-radius:999px; padding:4px 8px; background:#fff; }
+  .file-item{ font-size:12px; border:1px solid var(--bs-border-color, var(--border)); border-radius:999px; padding:4px 8px; background:var(--surface); }
   .file-item .rm{ border:none; background:transparent; margin-left:6px; cursor:pointer; }
-  .char-count{ font-size:.9rem; color:var(--muted); }
+  .char-count{ font-size:.9rem; color:var(--text-2); }
+
+  /* Contenedores consistentes con el theme */
+  .card-clean .title{ font-weight:700; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="py-3">
+<div class="container-xxl py-3">
   <div class="inc-head mb-3">
     <h1 class="hero-title"><i class="bi bi-tools me-2"></i> Gestión de incidencias</h1>
     <a href="/" class="btn btn-soft">← Volver</a>
   </div>
 
   <!-- Crear incidencia -->
-  <div class="cardx mb-3">
-    <div class="d-flex align-items-center justify-content-between mb-2">
-      <div class="title"><i class="bi bi-wrench-adjustable-circle"></i> Nueva incidencia</div>
+  <section class="card-clean shadow-hover mb-3">
+    <div class="card-header d-flex align-items-center justify-content-between">
+      <div class="title d-flex align-items-center gap-2">
+        <i class="bi bi-wrench-adjustable-circle"></i>
+        <span>Nueva incidencia</span>
+      </div>
       <span class="subtle">Reportá un problema o solicitud</span>
     </div>
 
-    <form method="post" action="/incidencias" enctype="multipart/form-data" class="row g-3 form-neo" id="formInc">
-      <div class="col-12 col-md-6">
-        <label for="titulo" class="form-label">Título</label>
-        <input type="text" class="form-control" id="titulo" name="titulo" placeholder="Ej: No puedo subir pliegos…" required maxlength="200">
-      </div>
+    <div class="card-body">
+      <form method="post" action="/incidencias" enctype="multipart/form-data" class="row g-3 form-neo" id="formInc" novalidate>
+        <div class="col-12 col-md-6">
+          <label for="titulo" class="form-label">Título</label>
+          <input type="text" class="form-control" id="titulo" name="titulo" placeholder="Ej: No puedo subir pliegos…" required maxlength="200" aria-describedby="titleCount">
+          <div id="titleCount" class="char-count mt-1"><span id="titCnt">0</span>/200</div>
+        </div>
 
-      <div class="col-12 col-md-3">
-        <label for="tipo" class="form-label">Categoría</label>
-        <select class="form-select" id="tipo" name="tipo" required>
-          <option value="Técnica" selected>Técnica</option>
-          <option value="Acceso">Acceso</option>
-          <option value="Datos">Datos</option>
-          <option value="Solicitud">Solicitud</option>
-          <option value="Otro">Otro</option>
-        </select>
-      </div>
+        <div class="col-12 col-md-3">
+          <label for="tipo" class="form-label">Categoría</label>
+          <select class="form-select" id="tipo" name="tipo" required>
+            <option value="Técnica" selected>Técnica</option>
+            <option value="Acceso">Acceso</option>
+            <option value="Datos">Datos</option>
+            <option value="Solicitud">Solicitud</option>
+            <option value="Otro">Otro</option>
+          </select>
+        </div>
 
-      <div class="col-12">
-        <label for="descripcion" class="form-label">Descripción</label>
-        <textarea class="form-control" id="descripcion" name="descripcion" rows="6"
-          placeholder="Contanos qué pasó, pasos para reproducir y qué esperabas que suceda…" required maxlength="4000"></textarea>
-        <div class="char-count"><span id="descCnt">0</span>/4000</div>
-      </div>
+        <div class="col-12">
+          <label for="descripcion" class="form-label">Descripción</label>
+          <textarea class="form-control" id="descripcion" name="descripcion" rows="6"
+            placeholder="Contanos qué pasó, pasos para reproducir y qué esperabas que suceda…" required maxlength="4000" aria-describedby="descHelp"></textarea>
+          <div id="descHelp" class="char-count"><span id="descCnt">0</span>/4000</div>
+        </div>
 
-      <div class="col-12">
-        <label for="archivo" class="form-label">Adjuntar archivos (opcional)</label>
-        <input class="form-control" type="file" name="archivos" id="archivo" multiple
-               accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.csv,.xlsx,.xls,.docx,.doc,.pptx">
-        <div class="form-text file-hint">Imágenes, PDF, Word, Excel, etc. Máx. 10 archivos • 25 MB totales.</div>
-        <div id="selFiles" class="file-list" aria-live="polite"></div>
-      </div>
+        <div class="col-12">
+          <label for="archivo" class="form-label">Adjuntar archivos (opcional)</label>
+          <input class="form-control" type="file" name="archivos" id="archivo" multiple
+                 accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.csv,.xlsx,.xls,.docx,.doc,.pptx" aria-describedby="fileHint">
+          <div id="fileHint" class="form-text file-hint">Imágenes, PDF, Word, Excel, etc. Máx. 10 archivos • 25 MB totales.</div>
+          <div id="selFiles" class="file-list" aria-live="polite"></div>
+        </div>
 
-      <div class="col-12 d-flex gap-2">
-        <button type="submit" class="btn btn-primary"><i class="bi bi-plus-circle me-1"></i> Crear incidencia</button>
-        <button type="reset" class="btn btn-outline-secondary"><i class="bi bi-eraser me-1"></i> Limpiar</button>
-      </div>
-    </form>
-  </div>
+        <div class="col-12 d-flex gap-2">
+          <button type="submit" class="btn btn-primary"><i class="bi bi-plus-circle me-1"></i> Crear incidencia</button>
+          <button type="reset" class="btn btn-outline-secondary"><i class="bi bi-eraser me-1"></i> Limpiar</button>
+        </div>
+      </form>
+    </div>
+  </section>
 
   <!-- Listado -->
-  <div class="cardx">
-    <div class="d-flex align-items-center justify-content-between mb-2">
+  <section class="card-clean shadow-hover">
+    <div class="card-header d-flex align-items-center justify-content-between">
       <div class="title d-flex align-items-center gap-2">
         <i class="bi bi-journal-text"></i>
         <span>Incidencias registradas</span>
         <small id="resultCnt" class="result-count"></small>
       </div>
       <div class="inc-toolbar">
-        <input id="filterInput" class="form-control form-control-sm" placeholder="Filtrar por texto…" title="Buscar en todas las columnas">
-        <select id="filterEstado" class="form-select form-select-sm" title="Filtrar por estado">
+        <input id="filterInput" class="form-control form-control-sm" placeholder="Filtrar por texto…" title="Buscar en todas las columnas" aria-label="Filtro de texto">
+        <select id="filterEstado" class="form-select form-select-sm" title="Filtrar por estado" aria-label="Filtro por estado">
           <option value="">Estado: Todos</option>
           <option value="Abierto">Abierto</option>
           <option value="Cerrado">Cerrado</option>
         </select>
-        <select id="filterTipo" class="form-select form-select-sm" title="Filtrar por categoría">
+        <select id="filterTipo" class="form-select form-select-sm" title="Filtrar por categoría" aria-label="Filtro por categoría">
           <option value="">Categoría: Todas</option>
           <option value="Técnica">Técnica</option>
           <option value="Acceso">Acceso</option>
@@ -153,103 +165,106 @@
           <option value="Solicitud">Solicitud</option>
           <option value="Otro">Otro</option>
         </select>
-        <select id="pageSize" class="form-select form-select-sm" title="Ítems por página">
+        <select id="pageSize" class="form-select form-select-sm" title="Ítems por página" aria-label="Ítems por página">
           <option>10</option><option selected>25</option><option>50</option><option>100</option>
         </select>
-        <button id="btnExport" class="btn btn-outline-primary btn-sm"><i class="bi bi-download me-1"></i> Exportar</button>
+        <button id="btnExport" class="btn btn-outline-primary btn-sm" type="button"><i class="bi bi-download me-1"></i> Exportar</button>
       </div>
     </div>
 
-    <div class="table-responsive">
-      <table class="table align-middle mb-0" id="incTable">
-        <thead>
-          <tr>
-            <th class="text-nowrap sortable" data-sort="id">ID <i class="bi bi-arrow-down-up"></i></th>
-            <th class="text-nowrap sortable" data-sort="usuario">Usuario <i class="bi bi-arrow-down-up"></i></th>
-            <th class="text-nowrap sortable" data-sort="titulo">Título <i class="bi bi-arrow-down-up"></i></th>
-            <th>Descripción</th>
-            <th class="text-nowrap sortable" data-sort="tipo">Categoría <i class="bi bi-arrow-down-up"></i></th>
-            <th class="text-nowrap sortable" data-sort="fecha">Fecha <i class="bi bi-arrow-down-up"></i></th>
-            <th class="text-nowrap">Adjuntos</th>
-            <th class="text-nowrap sortable" data-sort="estado">Estado <i class="bi bi-arrow-down-up"></i></th>
-            <th class="text-nowrap">Acciones</th>
-          </tr>
-        </thead>
-        <tbody id="incTableBody">
-          {% for ticket in tickets %}
-          <tr data-id="{{ ticket.id }}"
-              data-usuario="{{ ticket.usuario | e }}"
-              data-titulo="{{ ticket.titulo | e }}"
-              data-descripcion="{{ ticket.descripcion | e }}"
-              data-tipo="{{ ticket.tipo | e }}"
-              data-fecha="{{ ticket.fecha_legible | e }}"
-              data-estado="{{ ticket.estado | e }}">
-            <td class="text-muted td-id">{{ ticket.id }}</td>
-            <td class="campo-usuario">{{ ticket.usuario }}</td>
-            <td class="fw-semibold campo-titulo">{{ ticket.titulo }}</td>
-            <td class="small campo-descripcion">{{ ticket.descripcion }}</td>
-            <td><span class="badge bg-primary-subtle text-primary campo-tipo">{{ ticket.tipo }}</span></td>
-            <td class="text-nowrap campo-fecha">{{ ticket.fecha_legible }}</td>
-            <td class="small campo-adjuntos">
-              {% if ticket.adjuntos %}
-                <div class="chips">
-                  {% for file in ticket.adjuntos %}
-                    <span class="chip">
-                      <i class="bi bi-paperclip"></i>
-                      <a href="/static/adjuntos_incidencias/{{ file }}" target="_blank" rel="noopener">
-                        {{ file.split('_')[-1] }}
-                      </a>
-                    </span>
-                  {% endfor %}
-                </div>
-              {% else %}
-                <span class="text-muted">—</span>
-              {% endif %}
-            </td>
-            <td class="td-estado">
-              {% if ticket.estado == 'Cerrado' %}
-                <span class="badge-state badge-cerrado">Cerrado</span>
-              {% else %}
-                <span class="badge-state badge-abierto">Abierto</span>
-              {% endif %}
-            </td>
-            <td class="text-nowrap">
-              {% if ticket.estado != 'Cerrado' %}
-              <form method="post" action="/incidencias/cerrar/{{ ticket.id }}" class="d-inline">
-                <button type="submit" class="btn btn-sm btn-outline-success">
-                  <i class="bi bi-check2-circle me-1"></i> Cerrar
-                </button>
-              </form>
-              {% else %}
-              <span class="text-muted small">—</span>
-              {% endif %}
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table align-middle mb-0" id="incTable" aria-describedby="resultCnt">
+          <thead>
+            <tr>
+              <th class="text-nowrap sortable" data-sort="id" scope="col" aria-label="Ordenar por ID">ID <i class="bi bi-arrow-down-up"></i></th>
+              <th class="text-nowrap sortable" data-sort="usuario" scope="col" aria-label="Ordenar por usuario">Usuario <i class="bi bi-arrow-down-up"></i></th>
+              <th class="text-nowrap sortable" data-sort="titulo" scope="col" aria-label="Ordenar por título">Título <i class="bi bi-arrow-down-up"></i></th>
+              <th scope="col">Descripción</th>
+              <th class="text-nowrap sortable" data-sort="tipo" scope="col" aria-label="Ordenar por categoría">Categoría <i class="bi bi-arrow-down-up"></i></th>
+              <th class="text-nowrap sortable" data-sort="fecha" scope="col" aria-label="Ordenar por fecha">Fecha <i class="bi bi-arrow-down-up"></i></th>
+              <th class="text-nowrap" scope="col">Adjuntos</th>
+              <th class="text-nowrap sortable" data-sort="estado" scope="col" aria-label="Ordenar por estado">Estado <i class="bi bi-arrow-down-up"></i></th>
+              <th class="text-nowrap" scope="col">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="incTableBody">
+            {% for ticket in tickets %}
+            <tr data-id="{{ ticket.id }}"
+                data-usuario="{{ ticket.usuario | e }}"
+                data-titulo="{{ ticket.titulo | e }}"
+                data-descripcion="{{ ticket.descripcion | e }}"
+                data-tipo="{{ ticket.tipo | e }}"
+                data-fecha="{{ ticket.fecha_legible | e }}"
+                data-fecha_iso="{{ ticket.fecha_iso | default('', true) | e }}"
+                data-estado="{{ ticket.estado | e }}">
+              <td class="text-muted td-id">{{ ticket.id }}</td>
+              <td class="campo-usuario">{{ ticket.usuario }}</td>
+              <td class="fw-semibold campo-titulo">{{ ticket.titulo }}</td>
+              <td class="small campo-descripcion">{{ ticket.descripcion }}</td>
+              <td><span class="badge bg-primary-subtle text-primary campo-tipo">{{ ticket.tipo }}</span></td>
+              <td class="text-nowrap campo-fecha">{{ ticket.fecha_legible }}</td>
+              <td class="small campo-adjuntos">
+                {% if ticket.adjuntos %}
+                  <div class="chips">
+                    {% for file in ticket.adjuntos %}
+                      <span class="chip">
+                        <i class="bi bi-paperclip"></i>
+                        <a href="/static/adjuntos_incidencias/{{ file }}" target="_blank" rel="noopener">
+                          {{ file.split('_')[-1] }}
+                        </a>
+                      </span>
+                    {% endfor %}
+                  </div>
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td class="td-estado">
+                {% if ticket.estado == 'Cerrado' %}
+                  <span class="badge-state badge-cerrado">Cerrado</span>
+                {% else %}
+                  <span class="badge-state badge-abierto">Abierto</span>
+                {% endif %}
+              </td>
+              <td class="text-nowrap">
+                {% if ticket.estado != 'Cerrado' %}
+                <form method="post" action="/incidencias/cerrar/{{ ticket.id }}" class="d-inline act-close-form">
+                  <button type="submit" class="btn btn-sm btn-outline-success">
+                    <i class="bi bi-check2-circle me-1"></i> Cerrar
+                  </button>
+                </form>
+                {% else %}
+                <span class="text-muted small">—</span>
+                {% endif %}
 
-              {% if usuario_actual.rol == 'admin' %}
-              <form method="post" action="/incidencias/eliminar/{{ ticket.id }}" class="d-inline ms-1"
-                    onsubmit="return confirm('¿Eliminar incidencia #{{ ticket.id }}?');">
-                <button type="submit" class="btn btn-sm btn-outline-danger">
-                  <i class="bi bi-trash me-1"></i> Eliminar
-                </button>
-              </form>
-              {% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+                {% if usuario_actual.rol == 'admin' %}
+                <form method="post" action="/incidencias/eliminar/{{ ticket.id }}" class="d-inline ms-1 act-del-form"
+                      onsubmit="return confirm('¿Eliminar incidencia #{{ ticket.id }}?');">
+                  <button type="submit" class="btn btn-sm btn-outline-danger">
+                    <i class="bi bi-trash me-1"></i> Eliminar
+                  </button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if tickets|length == 0 %}
+        <div class="text-center text-body-secondary py-3">No hay incidencias registradas.</div>
+      {% endif %}
+
+      <div class="inc-pager">
+        <div id="rangeInfo" class="range">—</div>
+        <nav aria-label="Paginación incidencias">
+          <ul id="pager" class="pagination pagination-sm mb-0"></ul>
+        </nav>
+      </div>
     </div>
-
-    {% if tickets|length == 0 %}
-      <div class="text-center text-body-secondary py-3">No hay incidencias registradas.</div>
-    {% endif %}
-
-    <div class="inc-pager">
-      <div id="rangeInfo" class="range">—</div>
-      <nav aria-label="Paginación incidencias">
-        <ul id="pager" class="pagination pagination-sm mb-0"></ul>
-      </nav>
-    </div>
-  </div>
+  </section>
 </div>
 {% endblock %}
 
@@ -261,13 +276,14 @@
   const escHTML = s => (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function showToastSafe(t,b,icon){ if(window.showToast) showToast({title:t, body:b||'', icon:icon||'info'}); }
 
-  /* ====== Form: contador y validación de adjuntos ====== */
+  /* ====== Form: contadores y validación de adjuntos ====== */
   (function(){
-    const $desc = $('#descripcion'), $cnt = $('#descCnt');
-    if($desc && $cnt){
-      const upd=()=>{ $cnt.textContent = String(($desc.value||'').length); };
-      $desc.addEventListener('input', upd); upd();
-    }
+    const $tit = $('#titulo'), $titCnt = $('#titCnt');
+    const $desc = $('#descripcion'), $descCnt = $('#descCnt');
+    const updTit=()=>{ if($tit && $titCnt) $titCnt.textContent = String(($tit.value||'').length); };
+    const updDesc=()=>{ if($desc && $descCnt) $descCnt.textContent = String(($desc.value||'').length); };
+    $tit?.addEventListener('input', updTit); updTit();
+    $desc?.addEventListener('input', updDesc); updDesc();
 
     const MAX_FILES=10, MAX_TOTAL_MB=25, ALLOWED=/\.(png|jpe?g|gif|webp|pdf|txt|csv|xlsx?|docx?|pptx)$/i;
     const $file = $('#archivo'), $list = $('#selFiles');
@@ -288,21 +304,16 @@
 
     $file?.addEventListener('change', ()=>{
       const files=[...$file.files];
-      // filtro de tipos
       const wrong = files.filter(f=>!ALLOWED.test(f.name));
       if(wrong.length){
         showToastSafe('Archivos no permitidos', wrong.map(f=>f.name).join(', '), 'exclamation-triangle');
       }
-      // límites
       const tooMany = files.length > MAX_FILES;
       const totalMB = files.reduce((a,b)=>a+b.size,0)/1024/1024;
       const tooBig  = totalMB > MAX_TOTAL_MB;
       if(tooMany || tooBig || wrong.length){
         const dt=new DataTransfer();
-        files.forEach(f=>{
-          if(ALLOWED.test(f.name)) dt.items.add(f);
-        });
-        // recortar por cantidad y peso total
+        files.forEach(f=>{ if(ALLOWED.test(f.name)) dt.items.add(f); });
         while(dt.files.length > MAX_FILES) dt.items.remove(dt.files.length-1);
         while([...dt.files].reduce((a,b)=>a+b.size,0)/1024/1024 > MAX_TOTAL_MB && dt.files.length>0){
           dt.items.remove(dt.files.length-1);
@@ -312,15 +323,43 @@
       renderList($file.files);
     });
 
+    // Reset UX
+    $('#formInc')?.addEventListener('reset', ()=>{
+      setTimeout(()=>{ $list.innerHTML=''; updTit(); updDesc(); }, 0);
+    });
+
     // Submit UX mínimo
     $('#formInc')?.addEventListener('submit', ()=>{
       const btn = $('#formInc button[type="submit"]');
-      if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Enviando…'; }
+      if(btn){
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Enviando…';
+      }
     });
   })();
 
   /* ====== Listado: búsqueda + filtros + orden + paginación + export ====== */
   const TBL = $('#incTableBody');
+
+  // Parser de fecha robusto: usa data-fecha_iso si existe; si no, intenta dd/mm/aaaa
+  function parseDateToTs(row){
+    const iso = row.tr?.dataset?.fecha_iso || row.fecha_iso;
+    if(iso){
+      const d = new Date(iso);
+      if(!isNaN(d)) return d.getTime();
+    }
+    const leg = row.fecha || '';
+    // dd/mm/aaaa hh:mm opcional
+    const m = leg.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?:[ T](\d{1,2}):(\d{2}))?/);
+    if(m){
+      const dd=+m[1], mm=+m[2]-1, yyyy=+m[3]<100?2000+(+m[3]):+m[3], hh=+(m[4]||0), mi=+(m[5]||0);
+      const d = new Date(yyyy, mm, dd, hh, mi);
+      if(!isNaN(d)) return d.getTime();
+    }
+    const d2 = new Date(leg); // último intento (depende de locale)
+    return isNaN(d2) ? 0 : d2.getTime();
+  }
+
   const rowsAll = () => $$('#incTableBody tr').map(tr => ({
     tr,
     id: Number(tr.dataset.id || tr.querySelector('.td-id')?.textContent || 0),
@@ -329,6 +368,7 @@
     descripcion: (tr.dataset.descripcion || tr.querySelector('.campo-descripcion')?.textContent || '').trim(),
     tipo: (tr.dataset.tipo || tr.querySelector('.campo-tipo')?.textContent || '').trim(),
     fecha: (tr.dataset.fecha || tr.querySelector('.campo-fecha')?.textContent || '').trim(),
+    fecha_iso: (tr.dataset.fecha_iso || '').trim(),
     estado: (tr.dataset.estado || tr.querySelector('.td-estado')?.textContent || '').trim()
   }));
 
@@ -363,7 +403,7 @@
       const by = STATE.order.by;
       if(by === 'id'){ return (a.id - b.id) * dir; }
       if(by === 'usuario' || by === 'titulo' || by === 'tipo' || by === 'estado'){ return a[by].localeCompare(b[by]) * dir; }
-      if(by === 'fecha'){ return a.fecha.localeCompare(b.fecha) * dir; } // asume fecha_legible ordenable; si hay ISO, usar ISO.
+      if(by === 'fecha'){ return (parseDateToTs(a) - parseDateToTs(b)) * dir; }
       return 0;
     });
 
@@ -430,14 +470,16 @@
     $('#filterTipo').addEventListener('change', e=>{ STATE.tipo = e.target.value || ''; applyFilters(); });
     $('#pageSize').addEventListener('change', e=>{ STATE.pageSize = parseInt(e.target.value,10)||25; STATE.page=1; render(); });
 
-    // Orden click
+    // Orden click + accesible por teclado
     $$('#incTable thead th.sortable').forEach(th=>{
+      th.tabIndex = 0;
       th.addEventListener('click', ()=>{
         const by = th.dataset.sort;
         if(STATE.order.by === by){ STATE.order.dir = (STATE.order.dir === 'asc' ? 'desc' : 'asc'); }
         else { STATE.order.by = by; STATE.order.dir = (by==='id' ? 'desc' : 'asc'); }
         applyFilters();
       });
+      th.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); th.click(); } });
     });
 
     // Export CSV (filtrado actual)
@@ -463,7 +505,7 @@
       if(h.get('estado')){ $('#filterEstado').value = h.get('estado'); STATE.estado = h.get('estado'); }
       if(h.get('tipo')){ $('#filterTipo').value = h.get('tipo'); STATE.tipo = h.get('tipo'); }
     }catch(_){}
-    // Persistir en hash
+    // Persistir en hash tras cada render
     const persistHash = ()=>{
       const p = new URLSearchParams();
       if(STATE.term) p.set('q', STATE.term);
@@ -471,10 +513,13 @@
       if(STATE.tipo) p.set('tipo', STATE.tipo);
       history.replaceState(null,'', '#'+p.toString());
     };
-    const persistObs = new MutationObserver(persistHash);
-    persistObs.observe($('#incTableBody'), {subtree:false, childList:false}); // solo para tener una ref; llamamos en applyFilters/render
     const _apply = applyFilters;
     applyFilters = function(){ _apply(); persistHash(); }; // wrap para persistir
+
+    // Evitar doble submit en “Cerrar/Eliminar”
+    document.querySelectorAll('.act-close-form, .act-del-form').forEach(f=>{
+      f.addEventListener('submit', function(){ const b=this.querySelector('button[type="submit"]'); if(b){ b.disabled=true; b.classList.add('disabled'); } });
+    });
 
     // Init
     _apply();

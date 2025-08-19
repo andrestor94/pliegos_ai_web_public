@@ -3,39 +3,47 @@
 
 {% block extra_head %}
 <style>
-  :root{
-    --text: var(--ink, #0f1222);
-    --text-2: var(--muted, #667085);
-    --card: var(--panel, #ffffff);
-    --bg: #f6f7fe;
-    --bg-soft: #eef2ff;
-    --bg-strong: #e4e9ff;
-    --brand: #2563eb;
-    --brand-soft: #e8f0ff;
-    --border-strong: #d9def0;
-    --border: var(--border-strong, #e5e9f2);
-    --shadow: 0 8px 24px rgba(2,6,23,.06);
-  }
-
+  /* Usa los tokens globales del theme de base.html */
   .chat-app{ display:grid; grid-template-columns: 320px 1fr; gap:16px; }
   @media (max-width: 900px){ .chat-app{ grid-template-columns: 1fr; } }
 
-  .chat-panel{ background: var(--card); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; border:1px solid var(--border); }
-  .chat-panel .chat-title{ margin:0; padding:14px 16px; color: var(--brand); border-bottom: 1px solid var(--border); font-weight:600; }
+  .chat-panel{
+    background: var(--surface);
+    border-radius: 16px;
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+    border:1px solid var(--bs-border-color, var(--border));
+  }
+  .chat-panel .chat-title{
+    margin:0; padding:14px 16px;
+    color: var(--brand-500);
+    border-bottom:1px solid var(--bs-border-color, var(--border));
+    font-weight:600;
+  }
 
   .chat-hilos{ display:flex; flex-direction:column; }
-  .chat-hilos .top { padding:12px; border-bottom:1px solid var(--border); }
+  .chat-hilos .top { padding:12px; border-bottom:1px solid var(--bs-border-color, var(--border)); }
   .chat-auto-wrap{ position:relative; }
-  .chat-auto-list{ position:absolute; z-index:1000; top:100%; left:0; right:0; background:var(--card); border:1px solid var(--border); border-radius:12px; margin-top:.25rem; list-style:none; padding:.25rem 0; display:none; max-height:280px; overflow:auto; box-shadow:var(--shadow); }
+  .chat-auto-list{
+    position:absolute; z-index:1000; top:100%; left:0; right:0;
+    background:var(--surface);
+    border:1px solid var(--bs-border-color, var(--border));
+    border-radius:12px; margin-top:.25rem; list-style:none; padding:.25rem 0;
+    display:none; max-height:280px; overflow:auto; box-shadow:var(--shadow-sm);
+  }
   .chat-auto-li{ padding:.5rem .75rem; cursor:pointer; }
-  .chat-auto-li .nm{ font-weight:600; }
+  .chat-auto-li .nm{ font-weight:600; color:var(--text); }
   .chat-auto-li .em{ font-size:.85rem; color:var(--text-2); }
-  .chat-auto-li.active, .chat-auto-li:hover{ background:var(--bg-soft); }
+  .chat-auto-li.active, .chat-auto-li:hover{ background:var(--muted); }
 
   .chat-hilos-list { overflow:auto; }
-  .chat-hilo-item { position:relative; padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; display:flex; gap:8px; align-items:center; }
-  .chat-hilo-item:hover{ background:var(--bg-soft); }
-  .chat-hilo-item.active{ background:var(--bg-strong); }
+  .chat-hilo-item {
+    position:relative; padding:10px 12px;
+    border-bottom:1px solid var(--bs-border-color, var(--border));
+    cursor:pointer; display:flex; gap:8px; align-items:center;
+  }
+  .chat-hilo-item:hover{ background:var(--muted); }
+  .chat-hilo-item.active{ background: color-mix(in srgb, var(--brand-100) 40%, transparent); }
   .chat-hilo-item .info { flex:1; min-width:0; }
   .chat-hilo-item .nombre{ font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .chat-hilo-item .fecha{ font-size:12px; color:var(--text-2); }
@@ -46,44 +54,85 @@
   .hilo-badge.hidden{ display:none; }
 
   .chat-window{ display:flex; flex-direction:column; }
-  .chat-head { padding:8px 12px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; }
-  .chat-chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; background:var(--bg-soft); border-radius:999px; font-size:14px;}
-  .chat-body { flex:1; overflow:auto; padding:16px; background:var(--bg); }
-  .chat-msg { max-width: 70%; margin-bottom:12px; padding:10px 12px; border-radius:14px; background:#fff; box-shadow: 0 2px 8px rgba(0,0,0,.04);}
-  .chat-msg.me { margin-left:auto; background:var(--brand-soft); }
+  .chat-head {
+    padding:8px 12px; border-bottom:1px solid var(--bs-border-color, var(--border));
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+    background: var(--surface);
+  }
+  .chat-chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; background:var(--muted); border-radius:999px; font-size:14px;}
+  .chat-body { flex:1; overflow:auto; padding:16px; background: var(--app-bg, #f6f7fb); position:relative; }
+  .chat-msg {
+    max-width: 70%; margin-bottom:12px; padding:10px 12px; border-radius:14px;
+    background:var(--surface); box-shadow: var(--shadow-xs);
+    border:1px solid var(--bs-border-color, var(--border));
+  }
+  .chat-msg.me { margin-left:auto; background: var(--brand-50); border-color: color-mix(in srgb, var(--brand-500) 20%, var(--border)); }
   .chat-msg .meta{ font-size:12px; color:var(--text-2); margin-bottom:4px;}
   .chat-empty { color:var(--text-2); padding:16px; }
 
-  .chat-input { border-top:1px solid var(--border); padding:10px; background:#fff; display:flex; gap:8px; align-items:flex-start; }
+  .msg-date-divider{
+    text-align:center; margin:10px 0 14px; position:relative; color:var(--text-2); font-size:12px;
+  }
+  .msg-date-divider::before{
+    content:''; position:absolute; left:0; right:0; top:50%; height:1px;
+    background: var(--bs-border-color, var(--border));
+  }
+  .msg-date-divider span{
+    position:relative; background:var(--app-bg, #f6f7fb); padding:0 .5rem;
+  }
+
+  .chat-input {
+    border-top:1px solid var(--bs-border-color, var(--border));
+    padding:10px; background:var(--surface); display:flex; gap:8px; align-items:flex-start;
+  }
   .chat-btn-icon{ display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; border-radius:10px; }
+  .chat-input .form-control{ border-radius:10px; }
 
   .chat-chips{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; padding:0 12px 8px; }
-  .chat-chip-file{ display:inline-flex; align-items:center; gap:8px; padding:5px 8px; background:var(--bg-soft); border-radius:999px; font-size:12px; }
+  .chat-chip-file{
+    display:inline-flex; align-items:center; gap:8px; padding:5px 8px; background:var(--muted); border:1px dashed var(--bs-border-color, var(--border));
+    border-radius:999px; font-size:12px;
+  }
   .chat-chip-file button{ border:none; background:transparent; line-height:1; font-size:14px; }
-  .chat-chip-thumb{ width:26px; height:26px; border-radius:6px; object-fit:cover; background:#fff; border:1px solid var(--border); }
+  .chat-chip-thumb{ width:26px; height:26px; border-radius:6px; object-fit:cover; background:#fff; border:1px solid var(--bs-border-color, var(--border)); }
 
-  /* Tips / estados */
   .tip { font-size:12px; color:var(--text-2); }
   .status-dot{ width:10px; height:10px; border-radius:999px; display:inline-block; margin-right:6px; background:#22c55e; }
   .status-off{ background:#94a3b8; }
 
-  /* Toasts */
   .toast-area{ position:fixed; right:16px; bottom:16px; z-index: 3000; display:flex; flex-direction:column; gap:10px; }
   .toast{ background:#111827; color:#fff; padding:10px 12px; border-radius:12px; box-shadow: var(--shadow); min-width: 220px; max-width: 340px; }
   .toast .t{ font-weight:600; margin-bottom:4px; }
   .toast .x{ float:right; border:none; background:transparent; color:#fff; opacity:.7; }
   .toast .x:hover{ opacity:1; }
 
-  /* Toggle sonido */
   .sound-wrap{ display:flex; align-items:center; gap:8px; }
   .sound-toggle{ display:inline-flex; align-items:center; gap:6px; cursor:pointer; user-select:none; }
-  .sound-toggle input{ accent-color: var(--brand); cursor:pointer; }
+  .sound-toggle input{ accent-color: var(--brand-500); cursor:pointer; }
   .sound-vol{ width:120px; height:6px; }
   @media (max-width: 480px){ .sound-vol{ width:80px; } }
 
-  /* Drag & drop sobre la ventana de chat */
   .drop-hint{ position:absolute; inset:0; display:none; align-items:center; justify-content:center; background:rgba(37,99,235,.08); border:2px dashed #93c5fd; border-radius:12px; font-weight:600; color:#1e3a8a; }
   .drop-hint.show{ display:flex; }
+
+  /* Scroll-to-bottom botón */
+  .scroll-bottom{
+    position:absolute; right:12px; bottom:12px; z-index:5;
+    border:1px solid var(--bs-border-color, var(--border));
+    background:var(--surface); border-radius:999px; padding:6px 10px; box-shadow:var(--shadow-xs);
+    display:none;
+  }
+  .scroll-bottom.show{ display:inline-flex; align-items:center; gap:6px; }
+
+  /* Barra de progreso de adjuntos */
+  .send-progress{ width:100%; height:6px; border-radius:999px; background:var(--muted); overflow:hidden; }
+  .send-progress > div{ height:100%; width:0%; background: var(--brand-500); transition: width .2s ease; }
+
+  /* Focus visible */
+  .chat-panel :is(button, a, input, textarea):focus-visible{
+    outline: 2px solid var(--brand-300);
+    outline-offset: 2px;
+  }
 </style>
 {% endblock %}
 
@@ -98,32 +147,32 @@
         <div class="top">
           <div class="chat-auto-wrap">
             <div class="input-group">
-              <span class="input-group-text">@</span>
-              <input id="nuevoPara" type="text" class="form-control" placeholder="Nombre o email..." autocomplete="off" />
-              <button id="btnAbrir" class="btn btn-primary">Abrir</button>
+              <span class="input-group-text" aria-hidden="true">@</span>
+              <input id="nuevoPara" type="text" class="form-control" placeholder="Nombre o email..." autocomplete="off" aria-label="Buscar usuario por nombre o email" />
+              <button id="btnAbrir" class="btn btn-primary" type="button">Abrir</button>
             </div>
             <ul id="sugs" class="chat-auto-list" role="listbox" aria-label="Sugerencias"></ul>
             <div class="tip mt-2">Atajo: <kbd>Ctrl</kbd>+<kbd>K</kbd> para buscar usuario</div>
           </div>
         </div>
-        <div id="listaHilos" class="chat-hilos-list"></div>
+        <div id="listaHilos" class="chat-hilos-list" role="list" aria-label="Conversaciones"></div>
       </aside>
 
       <!-- Ventana principal -->
-      <section class="chat-panel chat-window" id="chatWindow">
+      <section class="chat-panel chat-window" id="chatWindow" aria-label="Ventana de chat">
         <div class="chat-head">
           <span class="status-dot status-off" id="wsDot" title="Estado en vivo"></span>
           <div class="chat-chip">Conversando con: <strong id="conEmail">—</strong></div>
-          <button id="btnEliminarChat" class="btn btn-sm btn-outline-danger ms-2" title="Eliminar chat (ocultar)">🗑</button>
-          <button id="btnRefrescar" class="btn btn-sm btn-outline-secondary ms-auto">Refrescar</button>
+          <button id="btnEliminarChat" class="btn btn-sm btn-outline-danger ms-2" title="Eliminar chat (ocultar)" type="button">🗑</button>
+          <button id="btnRefrescar" class="btn btn-sm btn-outline-secondary ms-auto" type="button">Refrescar</button>
 
           <span id="noLeidosWrap" class="chat-chip ms-2" title="Mensajes no leídos">
             🔔 <span id="noLeidosBadge" class="badge bg-secondary rounded-pill">0</span>
           </span>
 
           <!-- Toggle sonido -->
-          <span class="chat-chip sound-wrap">
-            <label class="sound-toggle" title="Silenciar/Activar sonido">
+          <span class="chat-chip sound-wrap" title="Notificaciones de sonido">
+            <label class="sound-toggle">
               <input type="checkbox" id="muteToggle">
               <span id="muteLabel">🔊 Sonido</span>
             </label>
@@ -135,16 +184,20 @@
 
         <div id="chatBody" class="chat-body" aria-live="polite">
           <div class="chat-empty">Seleccioná una conversación o creá una nueva desde la izquierda.</div>
+          <button id="scrollBtn" class="scroll-bottom" type="button" title="Bajar al final">⬇️ Nuevos</button>
         </div>
         <div class="drop-hint" id="dropHint">Soltá archivos para adjuntar…</div>
 
         <div class="chat-input">
-          <textarea id="inputMsg" rows="1" class="form-control" placeholder="Escribí un mensaje… (Enter envía, Shift+Enter salto de línea)"></textarea>
-          <button id="btnPick" class="btn btn-outline-secondary chat-btn-icon" title="Elegir archivos">📎</button>
+          <textarea id="inputMsg" rows="1" class="form-control" placeholder="Escribí un mensaje… (Enter envía, Shift+Enter salto de línea)" aria-label="Mensaje"></textarea>
+          <button id="btnPick" class="btn btn-outline-secondary chat-btn-icon" type="button" title="Elegir archivos" aria-label="Elegir archivos">📎</button>
           <input id="inputFiles" type="file" multiple hidden />
-          <button id="btnEnviar" class="btn btn-primary">Enviar</button>
+          <button id="btnEnviar" class="btn btn-primary" type="button">Enviar</button>
         </div>
         <div id="chips" class="chat-chips"></div>
+        <div id="sendProgress" class="px-3 pb-3" style="display:none">
+          <div class="send-progress" aria-hidden="true"><div id="sendProgBar"></div></div>
+        </div>
 
         <div class="tip px-3 pb-3">Podés pegar imágenes desde el portapapeles. Tamaño máximo total por mensaje configurable en backend.</div>
       </section>
@@ -163,21 +216,32 @@
 <script>
   /* ===== Helpers ===== */
   function escapeHtml(str){ return (str||'').toString().replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
-  // Urlify seguro: primero escapamos, luego enlazamos patrones http(s)
+  // Urlify seguro: primero escapamos, luego enlazamos http(s)
   function urlifySafe(plain){
     const esc = escapeHtml(plain);
     const rx = /\bhttps?:\/\/[^\s<>'"]+/g;
     return esc.replace(rx, url => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
   }
-  async function getJSON(url){ const r=await fetch(url); if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }
+  async function getJSON(url){ const r=await fetch(url,{headers:{'Accept':'application/json'}}); if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }
   async function postJSON(url,data){
     const r=await fetch(url,{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
     let payload=null; try{ payload=await r.json(); }catch(_){}
     if(!r.ok) throw new Error(payload?.error || ('HTTP '+r.status));
     return payload;
   }
+  const showToast = window.showToast || ((opts)=>{ // fallback mínimo al de base
+    const area = document.getElementById('toastArea');
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.innerHTML = `<button class="x" aria-label="Cerrar">&times;</button>
+                    <div class="t">${escapeHtml(opts?.title||'Notificación')}</div>
+                    <div class="b">${escapeHtml(opts?.body||'')}</div>`;
+    el.querySelector('.x').onclick = ()=> el.remove();
+    area.appendChild(el);
+    setTimeout(()=> el.remove(), 4000);
+  });
 
-  /* ===== Notificación sonora / toasts ===== */
+  /* ===== Notificación sonora ===== */
   const MUTE_KEY = 'chat.muted';
   const VOL_KEY  = 'chat.volume';
   const $mute = document.getElementById('muteToggle');
@@ -196,11 +260,10 @@
   }
   function applyVolume(){
     const vol = getVolume()/100;
-    const audios = [document.getElementById('notif-msg'), document.getElementById('notif-alert')];
-    audios.forEach(a => { if(a){ a.volume = vol; } });
+    [document.getElementById('notif-msg'), document.getElementById('notif-alert')]
+      .forEach(a => { if(a){ a.volume = vol; } });
     $vol.value = String(getVolume());
   }
-
   let soundUnlocked = false;
   function unlockSoundOnce(){
     if(soundUnlocked) return;
@@ -213,8 +276,7 @@
     });
   }
   window.addEventListener('pointerdown', unlockSoundOnce, { once: true });
-
-  function playNotif(kind){ // kind: 'msg' | 'alert'
+  function playNotif(kind){
     if(getMuted()) return;
     const id = kind === 'alert' ? 'notif-alert' : 'notif-msg';
     const a = document.getElementById(id);
@@ -222,27 +284,19 @@
     a.currentTime = 0;
     a.play().catch(()=>{});
   }
-
-  function toast(title, body){
-    const area = document.getElementById('toastArea');
-    const el = document.createElement('div');
-    el.className = 'toast';
-    el.innerHTML = `<button class="x" aria-label="Cerrar">&times;</button>
-                    <div class="t">${escapeHtml(title||'Notificación')}</div>
-                    <div class="b">${escapeHtml(body||'')}</div>`;
-    el.querySelector('.x').onclick = ()=> el.remove();
-    area.appendChild(el);
-    setTimeout(()=> el.remove(), 5000);
-  }
-
   $mute.addEventListener('change', () => setMuted($mute.checked));
   $vol.addEventListener('input',  () => setVolume(parseInt($vol.value,10)||0));
   updateMuteUI(); applyVolume();
 
   /* ===== Config adjuntos ===== */
-  let CONFIG = { allowed_ext: ['pdf','png','jpg','jpeg','gif','webp','txt','csv','xlsx','xls','docx','doc','pptx'], max_files: 10, max_total_mb: 50 };
+  let CONFIG = { allowed_ext: ['pdf','png','jpg','jpeg','gif','webp','txt','csv','xlsx','xls','docx','doc','pptx'], max_files: 10, max_total_mb: 50, max_text: 5000 };
   (async function(){
-    try{ const r = await fetch('/chat/config'); if(r.ok){ const cfg=await r.json(); if(cfg?.allowed_ext) CONFIG=cfg; } }catch(e){}
+    try{
+      const r = await fetch('/chat/config'); if(r.ok){
+        const cfg = await r.json();
+        CONFIG = { ...CONFIG, ...cfg };
+      }
+    }catch(e){}
   })();
   function extPermitida(name){ const ext=(name.split('.').pop()||'').toLowerCase(); return CONFIG.allowed_ext.includes(ext); }
   function isImage(name){ return /\.(png|jpg|jpeg|gif|webp)$/i.test(name); }
@@ -271,9 +325,9 @@
             ${escapeHtml(h.con)}
             <span class="hilo-badge ${unread>0?'':'hidden'}" aria-label="${unread} mensajes no leídos">${unread>99?'99+':unread}</span>
           </div>
-          <div class="fecha">${h.ultima_fecha || ''}</div>
+          <div class="fecha">${escapeHtml(h.ultima_fecha || '')}</div>
         </div>
-        <button class="btn-del" title="Eliminar chat (ocultar)" aria-label="Eliminar">🗑</button>
+        <button class="btn-del" title="Eliminar (ocultar) chat" aria-label="Eliminar">🗑</button>
       `;
       div.querySelector('.info').onclick = () => abrirChat(h.con);
       div.querySelector('.btn-del').onclick = async (ev) => { ev.stopPropagation(); await ocultar(h.con); };
@@ -290,8 +344,12 @@
   async function buscar(term){
     term=(term||'').trim();
     if(!term){ sugItems=[]; renderSugs(); return; }
-    try{ const data = await getJSON(`/api/usuarios?term=${encodeURIComponent(term)}`); sugItems = data.items || []; sugIdx = sugItems.length ? 0 : -1; renderSugs(); }
-    catch{ sugItems=[]; renderSugs(); }
+    try{
+      const data = await getJSON(`/api/usuarios?term=${encodeURIComponent(term)}`);
+      sugItems = data.items || []; sugIdx = sugItems.length ? 0 : -1; renderSugs();
+    }catch{
+      sugItems=[]; renderSugs();
+    }
   }
   function renderSugs(){
     $sugs.innerHTML = '';
@@ -312,7 +370,10 @@
   }
   $input.addEventListener('input', e=> debounce(()=> buscar(e.target.value),160));
   $input.addEventListener('keydown', (e)=>{
-    if($sugs.style.display==='none') return;
+    if($sugs.style.display==='none'){
+      if(e.key==='Enter'){ e.preventDefault(); const email = $input.value.trim(); if(email) abrirChat(email); }
+      return;
+    }
     if(e.key==='ArrowDown'){ e.preventDefault(); sugIdx=Math.min(sugIdx+1, sugItems.length-1); renderSugs(); }
     else if(e.key==='ArrowUp'){ e.preventDefault(); sugIdx=Math.max(sugIdx-1, 0); renderSugs(); }
     else if(e.key==='Enter'){ if(sugIdx>=0){ e.preventDefault(); seleccionarSugerencia(sugIdx); } }
@@ -320,16 +381,31 @@
   });
   document.addEventListener('click', (e)=>{ if(!e.target.closest('.chat-auto-wrap')) $sugs.style.display='none'; });
 
-  /* ===== Mensajes ===== */
+  /* ===== Render mensajes ===== */
+  function dayKey(iso){ try{ return (new Date(iso)).toISOString().slice(0,10); }catch{ return ''; } }
+
   function renderMensajes(mensajes){
     const body = document.getElementById('chatBody');
     const atBottom = (body.scrollTop + body.clientHeight + 40) >= body.scrollHeight;
     body.innerHTML = '';
-    if(!mensajes?.length){ body.innerHTML = '<div class="chat-empty">No hay mensajes aún. ¡Escribí el primero!</div>'; return; }
+    if(!mensajes?.length){
+      body.innerHTML = '<div class="chat-empty">No hay mensajes aún. ¡Escribí el primero!</div>';
+      return;
+    }
+    let lastDay = '';
     mensajes.forEach(m=>{
+      const dk = dayKey(m.fecha_iso || m.fecha);
+      if(dk && dk !== lastDay){
+        const divi = document.createElement('div');
+        divi.className = 'msg-date-divider';
+        const d = new Date(m.fecha_iso || m.fecha);
+        divi.innerHTML = `<span>${d.toLocaleDateString()}</span>`;
+        body.appendChild(divi);
+        lastDay = dk;
+      }
       const div = document.createElement('div');
       div.className = 'chat-msg' + (m.de === yo ? ' me' : '');
-      const meta = `<div class="meta">${escapeHtml(m.de)} • ${m.fecha}</div>`;
+      const meta = `<div class="meta">${escapeHtml(m.de)} • ${escapeHtml(m.fecha)}</div>`;
       const txt  = m.texto ? `<div class="txt">${urlifySafe(m.texto)}</div>` : '';
       let adj = '';
       if (m.adjuntos?.length){
@@ -338,7 +414,7 @@
           const url = `/chat/adjunto/${encodeURIComponent(a.filename)}`;
           const isImg = /\.(png|jpg|jpeg|gif|webp)$/i.test(a.filename);
           if(isImg){
-            adj += `<div class="mb-2"><a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="${escapeHtml(a.original)}" style="max-width:220px; border-radius:10px; display:block;"></a><small class="text-muted">${escapeHtml(a.original)}${a.size ? ' • ' + Math.round(a.size/1024) + ' KB' : ''}</small></div>`;
+            adj += `<div class="mb-2"><a href="${url}" target="_blank" rel="noopener"><img loading="lazy" src="${url}" alt="${escapeHtml(a.original)}" style="max-width:220px; border-radius:10px; display:block;"></a><small class="text-muted">${escapeHtml(a.original)}${a.size ? ' • ' + Math.round(a.size/1024) + ' KB' : ''}</small></div>`;
           }else{
             adj += `<div class="mb-1">📎 <a href="${url}" target="_blank" rel="noopener">${escapeHtml(a.original)}</a>${a.size ? `<small class="text-muted"> • ${Math.round(a.size/1024)} KB</small>` : ''}</div>`;
           }
@@ -348,20 +424,35 @@
       div.innerHTML = meta + txt + adj;
       body.appendChild(div);
     });
-    if(atBottom) body.scrollTop = body.scrollHeight;
+
+    // botón "bajar" si no estás al final
+    const $btn = document.getElementById('scrollBtn');
+    if(atBottom){ body.scrollTop = body.scrollHeight; $btn.classList.remove('show'); }
+    else { $btn.classList.add('show'); }
   }
 
+  // Scroll detector
+  (function(){
+    const body = document.getElementById('chatBody');
+    const btn = document.getElementById('scrollBtn');
+    body.addEventListener('scroll', ()=>{
+      const atBottom = (body.scrollTop + body.clientHeight + 40) >= body.scrollHeight;
+      btn.classList.toggle('show', !atBottom);
+    });
+    btn.addEventListener('click', ()=>{ body.scrollTop = body.scrollHeight; btn.classList.remove('show'); });
+  })();
+
   async function cargarYo(){ const info = await getJSON('/usuario-actual'); yo = info.usuario || 'Desconocido'; document.getElementById('yoEmail').textContent = yo; }
-  async function cargarHilos(){ try{ const data = await getJSON('/chat/hilos'); renderHilos(data.hilos || []); } catch(e){ console.error(e); alert('No se pudieron cargar los hilos.'); } }
+  async function cargarHilos(){ try{ const data = await getJSON('/chat/hilos'); renderHilos(data.hilos || []); } catch(e){ console.error(e); showToast({title:'Chat', body:'No se pudieron cargar los hilos', icon:'exclamation-triangle'}); } }
   async function cargarMensajes(){
     if(!con) return;
     try{
-      const data = await getJSON(`/chat/mensajes?con=${encodeURIComponent(con)}&limit=100`);
+      const data = await getJSON(`/chat/mensajes?con=${encodeURIComponent(con)}&limit=200`);
       renderMensajes(data.mensajes || []);
       await marcarLeidos(con);
       await cargarNoLeidos();
       await cargarHilos();
-    }catch(e){ console.error(e); alert('No se pudieron cargar los mensajes.'); }
+    }catch(e){ console.error(e); showToast({title:'Chat', body:'No se pudieron cargar los mensajes', icon:'exclamation-triangle'}); }
   }
 
   async function abrirChat(email){
@@ -369,14 +460,16 @@
       await postJSON('/chat/abrir', { con: email });
       con = email; document.getElementById('conEmail').textContent = con;
       setActiveHilo(con);
-      // restaurar borrador si existe
       const draft = localStorage.getItem(DRAFT_KEY(con));
-      if(draft){ document.getElementById('inputMsg').value = draft; autoResize(); }
+      const $msg = document.getElementById('inputMsg');
+      if(draft){ $msg.value = draft; autoResize(); }
+      $msg.focus();
       await marcarLeidos(con);
       await cargarMensajes();
       await cargarHilos();
       iniciarAutoRefresh();
-    }catch(e){ console.error(e); alert('No se pudo abrir el chat.'); }
+      refreshPresence();
+    }catch(e){ console.error(e); showToast({title:'Chat', body:'No se pudo abrir el chat', icon:'exclamation-triangle'}); }
   }
   async function ocultar(email){
     if(!email) return;
@@ -390,7 +483,7 @@
         if(refresco) clearInterval(refresco);
       }
       await cargarHilos(); await cargarNoLeidos();
-    }catch(e){ console.error(e); alert('No se pudo eliminar el chat.'); }
+    }catch(e){ console.error(e); showToast({title:'Chat', body:'No se pudo eliminar el chat', icon:'exclamation-triangle'}); }
   }
   async function marcarLeidos(remitente){ if(!remitente) return; try{ await postJSON('/chat/marcar-leidos', { de: remitente }); }catch(e){} }
 
@@ -398,6 +491,8 @@
   const $files = document.getElementById('inputFiles');
   const $chips = document.getElementById('chips');
   const $btnPick = document.getElementById('btnPick');
+  const $sendProg = document.getElementById('sendProgress');
+  const $sendBar  = document.getElementById('sendProgBar');
 
   $btnPick.onclick = () => $files.click();
   $files.addEventListener('change', ()=>{ addFiles([...( $files.files || [] )]); $files.value=''; });
@@ -446,18 +541,32 @@
     });
   }
 
+  let sending = false;
   async function enviar(){
+    if(sending) return;
     const input=document.getElementById('inputMsg');
-    const texto=(input.value||'').trim();
+    let texto=(input.value||'').trim();
     if(!con){ alert('Elegí un contacto o buscá uno con @.'); return; }
+    if(texto.length > CONFIG.max_text){
+      showToast({title:'Mensaje demasiado largo', body:`Máximo ${CONFIG.max_text} caracteres.`});
+      return;
+    }
     if(selectedFiles.length){ await enviarArchivos(texto); return; }
     if(!texto) return;
     try{
+      sending = true;
+      document.getElementById('btnEnviar').disabled = true;
       await postJSON('/chat/enviar', { para: con, texto });
       input.value=''; localStorage.removeItem(DRAFT_KEY(con)); autoResize();
       await cargarMensajes(); await cargarHilos();
-    }catch(e){ console.error(e); alert('No se pudo enviar el mensaje.'); }
+    }catch(e){ console.error(e); showToast({title:'Chat', body:'No se pudo enviar el mensaje', icon:'exclamation-triangle'}); }
+    finally{
+      sending = false;
+      document.getElementById('btnEnviar').disabled = false;
+    }
   }
+
+  // Envío con progreso usando XHR (para adjuntos)
   async function enviarArchivos(texto){
     if(!con){ alert('Elegí un contacto antes de enviar.'); return; }
     const fd=new FormData();
@@ -465,22 +574,28 @@
     fd.append('texto', texto || '');
     selectedFiles.forEach(f => fd.append('archivos', f));
     toggleSending(true);
+    $sendProg.style.display='block'; $sendBar.style.width='0%';
     try{
-      const resp=await fetch('/chat/enviar-archivos', { method:'POST', body: fd });
-      if(!resp.ok){
-        let msg=''; try{ msg=(await resp.json()).error||''; }catch(_){}
-        if(!msg){ try{ msg=await resp.text(); }catch(_){} }
-        throw new Error(msg || 'No se pudo enviar los adjuntos.');
-      }
+      await new Promise((resolve, reject)=>{
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/chat/enviar-archivos');
+        xhr.upload.onprogress = (e)=>{ if(e.lengthComputable){ $sendBar.style.width = ((e.loaded/e.total)*100).toFixed(0)+'%'; } };
+        xhr.onload = ()=>{ (xhr.status>=200 && xhr.status<300) ? resolve() : reject(new Error(xhr.responseText||'Error')); };
+        xhr.onerror = ()=> reject(new Error('Red'));
+        xhr.send(fd);
+      });
       selectedFiles=[]; renderChips(); document.getElementById('inputMsg').value=''; localStorage.removeItem(DRAFT_KEY(con)); autoResize();
       await cargarMensajes(); await cargarHilos();
-    }catch(e){ console.error(e); alert(e.message || 'No se pudo enviar los adjuntos.'); }
-    finally{ toggleSending(false); }
+    }catch(e){ console.error(e); alert('No se pudo enviar los adjuntos.'); }
+    finally{
+      toggleSending(false);
+      setTimeout(()=>{ $sendProg.style.display='none'; $sendBar.style.width='0%'; }, 500);
+    }
   }
-  function toggleSending(sending){ const btn=document.getElementById('btnEnviar'); btn.disabled=sending; btn.textContent = sending ? 'Enviando…' : 'Enviar'; }
+  function toggleSending(s){ const btn=document.getElementById('btnEnviar'); btn.disabled=s; btn.textContent = s ? 'Enviando…' : 'Enviar'; }
 
   document.getElementById('btnEnviar').onclick = enviar;
-  // Enter envía, Shift+Enter hace salto de línea, Ctrl/Cmd+Enter también envía
+  // Enter envía, Shift+Enter salto, Ctrl/Cmd+Enter también
   const $msg = document.getElementById('inputMsg');
   function autoResize(){ $msg.style.height='auto'; $msg.style.height = Math.min(160, $msg.scrollHeight) + 'px'; }
   $msg.addEventListener('input', ()=>{ autoResize(); if(con) localStorage.setItem(DRAFT_KEY(con), $msg.value); });
@@ -502,7 +617,7 @@
       const data = await getJSON('/chat/no-leidos');
       const n = (data && typeof data.no_leidos === 'number') ? data.no_leidos : 0;
       const badge = document.getElementById('noLeidosBadge');
-      badge.textContent = n;
+      badge.textContent = n>99?'99+':String(n);
       badge.classList.toggle('bg-danger', n > 0);
       badge.classList.toggle('bg-secondary', n === 0);
       document.title = (n > 0 ? `(${n}) ` : '') + 'Chat interno – Suizo Argentina';
@@ -522,7 +637,20 @@
     refrescoHilos = setInterval(()=>{ cargarHilos(); }, 12000);
   }
 
-  /* ===== WebSocket: notificaciones en vivo ===== */
+  /* ===== Presencia (mejora visual) ===== */
+  async function refreshPresence(){
+    try{
+      const r = await getJSON('/presence/online?minutes=5'); // backend existente en otras vistas
+      const list = Array.isArray(r.items) ? r.items : [];
+      const online = !!(con && list.find(u=>u.email===con));
+      const dot = document.getElementById('wsDot');
+      dot.classList.toggle('status-off', !online);
+      dot.title = online ? 'En línea' : 'Desconectado';
+    }catch(_){}
+  }
+  setInterval(refreshPresence, 15000);
+
+  /* ===== WebSocket: notificaciones en vivo (con reconexión) ===== */
   let ws = null, wsTries = 0, wsPingTimer = null;
   function wsUrl(){
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -549,7 +677,7 @@
         }
         if(msg.event === 'alert:new'){
           playNotif('alert');
-          toast(msg.title || 'Alerta', msg.body || '');
+          showToast({title: msg.title || 'Alerta', body: msg.body || ''});
         }
       };
       ws.onerror = () => { try{ ws.close(); }catch(_){ } };
@@ -561,6 +689,10 @@
       };
     }catch(e){ setTimeout(connectWS, 3000); }
   }
+
+  /* ===== Offline/Online hint ===== */
+  window.addEventListener('offline', ()=> showToast({title:'Sin conexión', body:'Estás offline. Los nuevos mensajes no se cargarán.'}));
+  window.addEventListener('online',  ()=> { showToast({title:'Conectado', body:'Volviste a estar online.'}); cargarMensajes(); });
 
   /* ===== Boot ===== */
   (async ()=>{

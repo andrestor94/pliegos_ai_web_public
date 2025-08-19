@@ -19,8 +19,21 @@
   .act thead th{
     position: sticky; top: 0; z-index: 1;
     background: var(--muted);
+    user-select:none;
   }
   html[data-theme="dark"] .act thead th{ background:#0f172a; }
+
+  /* Indicador de sort */
+  .act th.sortable{ cursor:pointer; }
+  .act th.sortable .sort-ind{
+    display:inline-block; width:0; height:0; margin-left:.35rem; vertical-align:middle;
+    border-left:4px solid transparent; border-right:4px solid transparent;
+    border-top:6px solid var(--text-3);
+    opacity:.6;
+  }
+  .act th.sortable.asc  .sort-ind{ border-top-color: transparent; border-bottom:6px solid var(--text-3); }
+  .act th.sortable.desc .sort-ind{ border-top-color: var(--text-3); border-bottom-color: transparent; }
+  .act th.sortable.active{ color: var(--brand-500); }
 
   /* Pills y estados usando tokens de marca */
   .act .pill{
@@ -53,6 +66,17 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
     font-size:12px;
   }
+
+  .act .panel-muted{
+    background: var(--muted);
+    border: 1px solid var(--bs-border-color, var(--border));
+    border-radius: 12px;
+    padding: 8px 10px;
+  }
+
+  @media (max-width: 575.98px){
+    .act .filters .btn{ width:100%; }
+  }
 </style>
 {% endblock %}
 
@@ -63,6 +87,7 @@
       <h1 class="h5 m-0 text-brand">
         <i class="bi bi-graph-up me-1"></i> Auditoría de actividad
         <span id="chipCount" class="pill ms-1">0 sesiones</span>
+        <span id="chipActivas" class="pill ms-1" title="Sesiones activas ahora">0 activas</span>
       </h1>
       <div class="d-flex gap-2">
         <button id="btnExport" class="btn btn-sm btn-outline-secondary" type="button">
@@ -77,7 +102,7 @@
       <div class="filters row g-2 mb-2 input-compact">
         <div class="col-12 col-md-4">
           <label for="fUsuario" class="form-label small text-muted">Usuario (email contiene)</label>
-          <input id="fUsuario" class="form-control" placeholder="usuario@empresa.com">
+          <input id="fUsuario" class="form-control" placeholder="usuario@empresa.com" autocomplete="off">
         </div>
         <div class="col-6 col-md-3">
           <label for="fDesde" class="form-label small text-muted">Desde</label>
@@ -93,11 +118,16 @@
           </button>
           <button id="btnLimpiar" class="btn btn-outline-secondary w-100" type="button">Limpiar</button>
         </div>
-        <div class="col-12">
-          <div class="form-check">
+        <div class="col-12 d-flex flex-wrap align-items-center gap-3">
+          <div class="form-check me-2">
             <input class="form-check-input" type="checkbox" id="autoRefresh" checked>
             <label class="form-check-label" for="autoRefresh">Auto-refresh</label>
           </div>
+          <div class="form-check me-2">
+            <input class="form-check-input" type="checkbox" id="soloActivas">
+            <label class="form-check-label" for="soloActivas">Solo activas</label>
+          </div>
+          <div class="small text-muted" id="hintLive">Actualiza cada 15s cuando está habilitado.</div>
         </div>
       </div>
 
@@ -107,12 +137,12 @@
           <thead>
             <tr>
               <th style="min-width:90px;">Estado</th>
-              <th>Usuario</th>
-              <th>Nombre</th>
-              <th>Inicio</th>
-              <th>Último visto</th>
-              <th>Cierre</th>
-              <th>Duración</th>
+              <th class="sortable" data-sort="usuario">Usuario <span class="sort-ind" aria-hidden="true"></span></th>
+              <th class="sortable" data-sort="nombre">Nombre <span class="sort-ind" aria-hidden="true"></span></th>
+              <th class="sortable" data-sort="login_at">Inicio <span class="sort-ind" aria-hidden="true"></span></th>
+              <th class="sortable" data-sort="last_seen">Último visto <span class="sort-ind" aria-hidden="true"></span></th>
+              <th class="sortable" data-sort="logout_at">Cierre <span class="sort-ind" aria-hidden="true"></span></th>
+              <th class="sortable" data-sort="duracion_seg">Duración <span class="sort-ind" aria-hidden="true"></span></th>
               <th>IP</th>
               <th>Agente</th>
               <th>SID</th>
@@ -124,7 +154,14 @@
         </table>
       </div>
 
-      <div class="small text-muted mt-2" id="footNote"></div>
+      <div class="d-flex flex-wrap align-items-center justify-content-between mt-2 gap-2">
+        <div class="small text-muted" id="footNote">—</div>
+        <div class="panel-muted small">
+          <span class="me-2"><span class="pill state-activa">Activa</span> = sesión abierta</span>
+          <span class="me-2"><span class="pill state-expirada">Expirada</span> = timeout</span>
+          <span><span class="pill state-cerrada">Cerrada</span> = logout</span>
+        </div>
+      </div>
     </div>
   </section>
 </div>
@@ -132,15 +169,26 @@
 
 {% block extra_scripts %}
 <script>
+  /* ===== Helpers ===== */
   const rows = document.getElementById('rows');
   const chip = document.getElementById('chipCount');
+  const chipAct = document.getElementById('chipActivas');
   const note = document.getElementById('footNote');
+
+  const $ = (s,sc)=> (sc||document).querySelector(s);
+  const $$ = (s,sc)=> Array.from((sc||document).querySelectorAll(s));
+  const debounce = (fn,ms)=>{ let id; return (...a)=>{ clearTimeout(id); id=setTimeout(()=>fn(...a),ms); }; };
+  const esc = s => (s==null?'':String(s)).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  let LAST = { items: [], timeout_min: 0, now_utc: '' };
+  let SORT = { key: 'last_seen', dir: 'desc' }; // sort inicial
+  let isLoading = false;
 
   function fmtLocal(iso){
     if(!iso) return '—';
     const d = new Date(iso);
     if(isNaN(d)) return String(iso);
-    return d.toLocaleString(); // usa locale del navegador
+    return d.toLocaleString(); // locale del navegador
   }
   function humanDur(s){
     if(s==null || isNaN(s)) return '—';
@@ -159,82 +207,170 @@
     return `<span class="pill ${cls}">${label}</span>`;
   }
 
+  /* ===== Carga principal ===== */
   async function cargar(){
-    const usuario = document.getElementById('fUsuario').value.trim();
-    const desde   = document.getElementById('fDesde').value || '';
-    const hasta   = document.getElementById('fHasta').value || '';
+    if(isLoading) return;
+    isLoading = true;
+    rows.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-4">Cargando…</td></tr>`;
+
+    const usuario = $('#fUsuario').value.trim();
+    const desde   = $('#fDesde').value || '';
+    const hasta   = $('#fHasta').value || '';
+    const soloAct = $('#soloActivas').checked;
+
     const q = new URLSearchParams();
     if(usuario) q.set('usuario', usuario);
     if(desde) q.set('desde', desde);
     if(hasta) q.set('hasta', hasta);
+    if(soloAct) q.set('solo_activas', '1');
 
-    rows.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-4">Cargando…</td></tr>`;
     try{
-      const r = await fetch('/auditoria/actividad?'+q.toString());
+      const r = await fetch('/auditoria/actividad?'+q.toString(), { headers:{'Accept':'application/json'} });
       const j = await r.json();
-      const items = Array.isArray(j.items) ? j.items : [];
-      chip.textContent = `${items.length} ${items.length===1?'sesión':'sesiones'}`;
-      note.textContent = `Timeout de inactividad: ${j.timeout_min} min · Hora del servidor (UTC): ${j.now_utc}`;
+      LAST.items = Array.isArray(j.items) ? j.items : [];
+      LAST.timeout_min = j.timeout_min ?? 0;
+      LAST.now_utc = j.now_utc || '';
 
-      if(!items.length){
-        rows.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-4">Sin coincidencias</td></tr>`;
-        return;
-      }
-
-      const frag = document.createDocumentFragment();
-      items.forEach(it=>{
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${stateBadge(it.estado)}</td>
-          <td class="mono">${(it.usuario||'—')}</td>
-          <td>${(it.nombre||'—')}</td>
-          <td class="mono">${fmtLocal(it.login_at)}</td>
-          <td class="mono">${fmtLocal(it.last_seen)}</td>
-          <td class="mono">${fmtLocal(it.logout_at)}</td>
-          <td>${humanDur(it.duracion_seg)}</td>
-          <td class="mono">${it.ip||'—'}</td>
-          <td class="mono" title="${(it.ua||'').replace(/"/g,'&quot;')}">${(it.ua||'—').slice(0,48)}${(it.ua&&it.ua.length>48)?'…':''}</td>
-          <td class="mono">${it.id||'—'}</td>
-        `;
-        frag.appendChild(tr);
-      });
-      rows.innerHTML = '';
-      rows.appendChild(frag);
-
-      // Guarda data para export (evita leer del DOM)
-      rows.dataset.json = JSON.stringify(items);
+      render();
     }catch(e){
       rows.innerHTML = `<tr><td colspan="10" class="text-center text-danger py-4">Error al cargar</td></tr>`;
+      if(window.showToast) showToast({title:'Auditoría', body:'No se pudieron cargar las sesiones.', icon:'exclamation-triangle'});
+    }finally{
+      isLoading = false;
     }
   }
 
-  document.getElementById('btnBuscar')?.addEventListener('click', cargar);
-  document.getElementById('btnLimpiar')?.addEventListener('click', ()=>{
-    document.getElementById('fUsuario').value='';
-    document.getElementById('fDesde').value='';
-    document.getElementById('fHasta').value='';
-    cargar();
+  /* ===== Render ===== */
+  function sortItems(arr){
+    const k = SORT.key, dir = SORT.dir === 'desc' ? -1 : 1;
+    return arr.slice().sort((a,b)=>{
+      let va = a[k], vb = b[k];
+      if(k.includes('_at')){ // fecha ISO
+        va = va ? new Date(va).getTime() : 0;
+        vb = vb ? new Date(vb).getTime() : 0;
+      }else if(k === 'duracion_seg'){
+        va = Number(va)||0; vb = Number(vb)||0;
+      }else{
+        va = (va??'').toString().toLowerCase();
+        vb = (vb??'').toString().toLowerCase();
+      }
+      if(va<vb) return -1*dir;
+      if(va>vb) return  1*dir;
+      return 0;
+    });
+  }
+
+  function render(){
+    const items = sortItems(LAST.items);
+    const total = items.length;
+    const activas = items.filter(x=>x.estado==='activa').length;
+
+    chip.textContent = `${total} ${total===1?'sesión':'sesiones'}`;
+    chipAct.textContent = `${activas} activas`;
+
+    note.textContent = `Timeout de inactividad: ${LAST.timeout_min} min · Hora del servidor (UTC): ${LAST.now_utc} · Actualizado: ${new Date().toLocaleString()}`;
+
+    if(!total){
+      rows.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-4">Sin coincidencias</td></tr>`;
+      rows.dataset.json = '[]';
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+    items.forEach(it=>{
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${stateBadge(it.estado)}</td>
+        <td class="mono">${esc(it.usuario||'—')}</td>
+        <td>${esc(it.nombre||'—')}</td>
+        <td class="mono">${fmtLocal(it.login_at)}</td>
+        <td class="mono">${fmtLocal(it.last_seen)}</td>
+        <td class="mono">${fmtLocal(it.logout_at)}</td>
+        <td>${humanDur(it.duracion_seg)}</td>
+        <td class="mono">${esc(it.ip||'—')}</td>
+        <td class="mono" title="${esc(it.ua||'')}">${esc((it.ua||'').slice(0,48))}${(it.ua&&it.ua.length>48)?'…':''}</td>
+        <td class="mono">
+          <button class="btn btn-sm btn-outline-secondary btn-copy" data-val="${esc(it.id||'')}" title="Copiar SID">
+            <i class="bi bi-clipboard"></i>
+          </button>
+          <span class="ms-1">${esc(it.id||'—')}</span>
+        </td>
+      `;
+      frag.appendChild(tr);
+    });
+    rows.innerHTML = '';
+    rows.appendChild(frag);
+
+    // Guarda data para export (evita leer del DOM)
+    rows.dataset.json = JSON.stringify(items);
+    paintSortHeaders();
+  }
+
+  /* ===== Sort headers ===== */
+  function paintSortHeaders(){
+    $$('#rows thead th'); // noop (por si view engines)
+    $$('# .sortable', document).forEach(th=>{
+      th.classList.toggle('active', th.dataset.sort===SORT.key);
+      th.classList.remove('asc','desc');
+      if(th.dataset.sort===SORT.key) th.classList.add(SORT.dir);
+    });
+  }
+  document.querySelectorAll('thead .sortable').forEach(th=>{
+    th.addEventListener('click', ()=>{
+      const key = th.dataset.sort;
+      if(SORT.key === key){ SORT.dir = (SORT.dir==='asc'?'desc':'asc'); }
+      else { SORT.key = key; SORT.dir = 'asc'; }
+      render();
+    });
   });
 
-  // Export CSV (desde la data última cargada)
+  /* ===== Filtros y UX ===== */
+  document.getElementById('btnBuscar')?.addEventListener('click', cargar);
+  document.getElementById('btnLimpiar')?.addEventListener('click', ()=>{
+    $('#fUsuario').value=''; $('#fDesde').value=''; $('#fHasta').value='';
+    $('#soloActivas').checked = false;
+    cargar();
+  });
+  // Enter en filtros = buscar
+  ['fUsuario','fDesde','fHasta'].forEach(id=>{
+    document.getElementById(id)?.addEventListener('keydown', (e)=>{
+      if(e.key==='Enter'){ e.preventDefault(); cargar(); }
+    });
+  });
+  // Búsqueda live por usuario (debounced)
+  $('#fUsuario')?.addEventListener('input', debounce(()=>{ if(!$('#fDesde').value && !$('#fHasta').value){ cargar(); } }, 300));
+  $('#soloActivas')?.addEventListener('change', cargar);
+
+  /* ===== Copiar SID ===== */
+  rows.addEventListener('click', async (e)=>{
+    const btn = e.target.closest('.btn-copy'); if(!btn) return;
+    const val = btn.getAttribute('data-val') || '';
+    try{
+      await navigator.clipboard.writeText(val);
+      if(window.showToast) showToast({title:'SID copiado', body: val.slice(0,10)+'…', icon:'clipboard'});
+    }catch{
+      if(window.showToast) showToast({title:'Error', body:'No se pudo copiar el SID.', icon:'exclamation-triangle'});
+    }
+  });
+
+  /* ===== Export CSV ===== */
   document.getElementById('btnExport')?.addEventListener('click', ()=>{
     let data = [];
     try{ data = JSON.parse(rows.dataset.json||'[]'); }catch(_){}
     if(!Array.isArray(data) || !data.length){
-      // fallback: exportar lo visible del DOM
       const headers = ['Estado','Usuario','Nombre','Inicio','Último visto','Cierre','Duración','IP','Agente','SID'];
       const domRows = [...document.querySelectorAll('#rows tr')].map(tr=>[...tr.children].map(td=>td.innerText.replace(/\n/g,' ').trim()));
       const csvDom = [headers, ...domRows].map(r=>r.map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
       return downloadCSV(csvDom, 'auditoria_actividad.csv');
     }
     const headers = ['estado','usuario','nombre','login_at','last_seen','logout_at','duracion_seg','ip','ua','id'];
-    const esc = v=>`"${String(v??'').replace(/"/g,'""')}"`;
-    const lines = [headers.map(esc).join(',')];
+    const escCsv = v=>`"${String(v??'').replace(/"/g,'""')}"`;
+    const lines = [headers.map(escCsv).join(',')];
     data.forEach(it=>{
       lines.push([
         it.estado, it.usuario, it.nombre, it.login_at, it.last_seen, it.logout_at,
         it.duracion_seg, it.ip, it.ua, it.id
-      ].map(esc).join(','));
+      ].map(escCsv).join(','));
     });
     downloadCSV(lines.join('\n'), `auditoria_actividad_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`);
   });
@@ -248,10 +384,10 @@
     setTimeout(()=> URL.revokeObjectURL(a.href), 500);
   }
 
-  // Auto-refresh suave
+  /* ===== Auto-refresh suave ===== */
   setInterval(()=>{ if(document.getElementById('autoRefresh')?.checked) cargar(); }, 15000);
 
-  // Init
+  /* ===== Init ===== */
   cargar();
 </script>
 {% endblock %}
