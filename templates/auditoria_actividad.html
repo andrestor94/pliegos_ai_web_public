@@ -30,6 +30,17 @@
   .act .filters .form-control,
   .act .filters .form-select{ border-radius:12px; }
 
+  /* Alineación interna de filas dentro de card-body (evita desfasajes) */
+  .inside-card-row{
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+  .inside-card-row > [class^="col-"],
+  .inside-card-row > [class*=" col-"]{
+    padding-left: .75rem;
+    padding-right: .75rem;
+  }
+
   /* Tabla con scroll y header pegajoso */
   .act .table-wrap{
     max-height: 65vh;
@@ -94,7 +105,7 @@
 
     <!-- Filtros -->
     <div class="card-body">
-      <div class="filters row g-2 mb-2 input-compact">
+      <div class="filters row g-2 mb-2 input-compact inside-card-row">
         <div class="col-12 col-md-4">
           <label for="fUsuario" class="form-label small text-muted">Usuario (email contiene)</label>
           <input id="fUsuario" class="form-control" placeholder="usuario@empresa.com">
@@ -182,7 +193,7 @@
   async function cargar(){
     const usuario = document.getElementById('fUsuario').value.trim();
     const desde   = document.getElementById('fDesde').value || '';
-    const hasta   = document.getElementById('fHasta').value || '';
+       const hasta   = document.getElementById('fHasta').value || '';
     const q = new URLSearchParams();
     if(usuario) q.set('usuario', usuario);
     if(desde) q.set('desde', desde);

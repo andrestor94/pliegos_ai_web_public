@@ -35,6 +35,17 @@
       border-radius:12px;
     }
 
+    /* Alineación: neutralizar gutters negativos de .row dentro del card-body */
+    .inside-card-row{
+      margin-left: 0 !important;
+      margin-right: 0 !important;
+    }
+    .inside-card-row > [class^="col-"],
+    .inside-card-row > [class*=" col-"]{
+      padding-left: .75rem;
+      padding-right: .75rem;
+    }
+
     /* Tabla con header pegajoso dentro del contenedor scroll */
     .auditoria .table-wrap{
       max-height: 65vh;
@@ -62,8 +73,9 @@
     .auditoria .cell-pre{ max-width: 320px; }
     .auditoria .btn-icon{ display:inline-flex; align-items:center; gap:.35rem; }
 
-    /* Modal JSON – usa tokens para respetar claro/oscuro */
-    .auditoria .json-box{
+    /* Modal JSON – tokens para respetar claro/oscuro.
+       Lo aplicamos a .json-box esté o no dentro de .auditoria */
+    .json-box{
       background: var(--muted);
       color: var(--text);
       border-radius: 12px;
@@ -74,7 +86,7 @@
       white-space: pre-wrap;
       overflow-wrap: anywhere;
     }
-    .auditoria .json-box code{ white-space: pre-wrap; }
+    .json-box code{ white-space: pre-wrap; }
   </style>
 {% endblock %}
 
@@ -97,7 +109,7 @@
   <!-- Filtros -->
   <section class="card-clean no-hover-lift filters">
     <div class="card-body">
-      <div class="row g-2 align-items-end input-compact">
+      <div class="row g-2 align-items-end input-compact inside-card-row">
         <div class="col-md-4">
           <label class="form-label small text-muted" for="freetext">Buscar (texto libre)</label>
           <input id="freetext" type="text" class="form-control" placeholder="usuario, entidad, IP, etc.">
@@ -188,7 +200,7 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
       <div class="modal-body">
-        <div class="json-box auditoria"><code id="jsonCode"></code></div>
+        <div class="json-box"><code id="jsonCode"></code></div>
       </div>
       <div class="modal-footer">
         <button id="btnCopyJson" class="btn btn-outline-secondary btn-icon" type="button"><i class="bi bi-clipboard"></i> Copiar</button>

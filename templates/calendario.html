@@ -16,7 +16,12 @@
       transform: none !important;
       translate: 0 !important;
       scale: 1 !important;
-      box-shadow: var(--shadow, 0 1px 2px rgba(0,0,0,.06)) !important; /* mantener sombra sin levantarse */
+      box-shadow: var(--shadow, 0 1px 2px rgba(0,0,0,.06)) !important; /* sombra estable */
+    }
+    /* Botones en headers sin micro-traslación (solo colores) */
+    .card-header .btn{
+      transform: none !important;
+      transition: background-color .15s ease, border-color .15s ease, color .15s ease;
     }
     /* Nada dentro del calendario debe “moverse” por hover */
     #calendar,
@@ -50,6 +55,7 @@
     }
     .fc-theme-standard .fc-scrollgrid{ border:1px solid var(--border); border-radius:12px; overflow:hidden; }
     .fc .fc-col-header-cell{ background: var(--muted); }
+    .fc a{ text-decoration: none; }
 
     /* Controles externos (abajo izq / abajo der) */
     .cal-ctrl-left, .cal-ctrl-right{
@@ -64,11 +70,12 @@
       transition: background-color .15s ease, border-color .15s ease, color .15s ease;
     }
     .btn.is-active{
-      border-color: var(--brand-300) !important;
-      box-shadow: 0 0 0 4px rgba(var(--ring-color), .22);
+      border-color: var(--brand-300, #93c5fd) !important;
+      box-shadow: 0 0 0 4px rgba(59,130,246,.22);
     }
 
     .legend{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .legend .subtle{ color: var(--text-2); }
     .dot{ width:12px; height:12px; border-radius:999px; display:inline-block; }
 
     @media (max-width: 575.98px){

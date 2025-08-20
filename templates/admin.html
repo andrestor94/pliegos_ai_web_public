@@ -62,6 +62,20 @@
       transform: none;
       transition: background-color .15s ease, color .15s ease;
     }
+
+    /* ===== Alineación de grids dentro de cards =====
+       Cuando una .row es hija directa de .card-body, los gutters negativos
+       de Bootstrap “sacan” la fila del padding del card. Lo neutralizamos 
+       y devolvemos separación con padding en columnas. */
+    .inside-card-row{
+      margin-left: 0 !important;
+      margin-right: 0 !important;
+    }
+    .inside-card-row > [class^="col-"],
+    .inside-card-row > [class*=" col-"]{
+      padding-left: .75rem;
+      padding-right: .75rem;
+    }
   </style>
 {% endblock %}
 
@@ -111,7 +125,7 @@
       <h2 class="h6 m-0">Crear nuevo usuario</h2>
     </div>
     <div class="card-body">
-      <form id="crearUsuarioForm" class="row g-3 input-compact">
+      <form id="crearUsuarioForm" class="row g-3 input-compact inside-card-row">
         <div class="col-md-4">
           <label class="form-label" for="nombre">Nombre</label>
           <input type="text" class="form-control" id="nombre" required placeholder="Nombre y Apellido">
