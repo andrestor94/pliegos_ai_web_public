@@ -892,14 +892,16 @@
       scrollToBottom(true);
     }
 
-    (function markActive(){
-      const path=location.pathname;
-      document.querySelectorAll('.side-btn[data-match]').forEach(a=>{
-        const m=a.getAttribute('data-match');
-        const on = (m === '/' ? path==='/' : path.startsWith(m));
-        if(on) a.classList.add('active');
-      });
-    })());
+        (function markActive(){
+      try{
+        const path = location.pathname || '/';
+        document.querySelectorAll('.side-btn[data-match]').forEach(a=>{
+          const m = a.getAttribute('data-match') || '';
+          const on = (m === '/' ? path === '/' : path.startsWith(m));
+          if(on) a.classList.add('active');
+        });
+      }catch(_){}
+    })();
 
     document.getElementById('btnHistorial')?.addEventListener('click', (e)=>{
       if(location.pathname === '/'){
