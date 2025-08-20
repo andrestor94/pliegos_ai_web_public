@@ -353,6 +353,32 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
 }
 
 /* =========================================================
+   ACCESIBILIDAD – FIX GLOBAL EN SUPERFICIES CLARAS
+   Aplica dentro de tarjetas, modales, offcanvas y drawer Chat IA
+   ========================================================= */
+:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) .text-muted,
+:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) .small,
+:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) .form-text{
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+}
+:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) [class*="text-white"]{
+  color: var(--text) !important;
+  opacity: 1 !important;
+}
+:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) .opacity-25,
+:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) .opacity-50,
+:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) .opacity-75{
+  opacity: 1 !important;
+  color: var(--text-2) !important;
+}
+:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) input::placeholder,
+:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) textarea::placeholder{
+  color: var(--input-placeholder) !important;
+  opacity: 1 !important;
+}
+
+/* =========================================================
    ===== FIX DE CONTRASTE PARA EL CHAT INTERNO (/chat) =====
    ========================================================= */
 body[data-route^="/chat"] .text-white,
