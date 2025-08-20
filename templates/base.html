@@ -11,22 +11,19 @@
   <script>
     (function(){
       try{
-        const saved = localStorage.getItem('theme');            // 'light' | 'dark' | null (sistema)
+        const saved = localStorage.getItem('theme');
         const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 
-        // Si no hay preferencia guardada, seguimos el sistema desde el inicio
         if(saved === 'light' || saved === 'dark'){
           document.documentElement.setAttribute('data-theme', saved);
         }else{
           document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
         }
 
-        // Ajusta meta theme-color para la barra del navegador móvil
         var meta = document.querySelector('meta[name="theme-color"]');
         if(!meta){ meta = document.createElement('meta'); meta.name = 'theme-color'; document.head.appendChild(meta); }
         meta.setAttribute('content', (saved ? saved==='dark' : prefersDark) ? '#151B22' : '#eeede8');
 
-        // Escucha cambios del sistema SOLO si estamos en modo “Sistema”
         try{
           const mq = window.matchMedia('(prefers-color-scheme: dark)');
           mq.addEventListener && mq.addEventListener('change', function(e){
@@ -43,14 +40,13 @@
   </script>
   <noscript>
     <style>
-      /* Sin JS: respeta el modo del SO */
       @media (prefers-color-scheme: dark){
         html{ background:#151B22; color:#E5ECF3; }
       }
     </style>
   </noscript>
 
-  <!-- Helper global para sanitizar HTML (se usa en varias vistas) -->
+  <!-- Helper global -->
   <script>
     function escapeHTML(s){
       return (s ?? '').toString().replace(/[&<>"']/g, c => (
@@ -69,27 +65,22 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
 
-  <!-- Tu theme global (después de Bootstrap para que sobreescriba) -->
+  <!-- Theme -->
   <link rel="stylesheet" href="{{ url_for('static', path='css/app.theme.css') }}?v=20250819">
 
   <style>
-    /* ========= Variables auxiliares propias del layout =========
-       Se mapean a los tokens del tema (app.theme.css) */
     :root{
-      /* Usa tokens de marca ya definidos en app.theme.css */
       --panel: var(--surface);
       --ink: var(--text);
       --bg-body: var(--bg);
       --chip-bg: var(--brand-100);
 
-      /* Gradientes/acentos hacia la marca */
-      --accent-a: var(--brand-300);     /* #5274ce */
-      --accent-b: var(--brand-500);     /* #04436a */
+      --accent-a: var(--brand-300);
+      --accent-b: var(--brand-500);
       --accent-c: var(--brand-500);
 
-      /* Sidebar gradiente con marca */
-      --sidebar-grad-a: var(--brand-700); /* #022b44 aprox */
-      --sidebar-grad-b: var(--brand-500); /* #04436a */
+      --sidebar-grad-a: var(--brand-700);
+      --sidebar-grad-b: var(--brand-500);
 
       --pill: var(--brand-100);
       --radius:22px;
@@ -103,12 +94,11 @@
       --safe-bottom: env(safe-area-inset-bottom);
     }
     [data-theme="dark"]{
-      --panel:#151B22; /* cercano a --surface dark */
+      --panel:#151B22;
       --ink:#E5ECF3;
       --bg-body:#0F141A;
       --chip-bg:#0f172a;
       --shadow:0 12px 32px rgba(0,0,0,.45);
-      /* Mantengo el gradiente de sidebar oscuro */
       --sidebar-grad-a:#0a0f20;
       --sidebar-grad-b:#070c18;
     }
@@ -178,7 +168,7 @@
     .side-spacer{ flex:1; }
     .side-small{ color:#c7d2fe; font-size:11px; }
 
-    /* ======= Header (discreto) ======= */
+    /* ======= Header ======= */
     .header{
       grid-area:header;
       display:flex; align-items:center; gap:12px;
@@ -187,7 +177,7 @@
       background:linear-gradient(0deg, rgba(255,255,255,.92), rgba(255,255,255,.92));
       backdrop-filter: blur(6px);
       position: sticky; top: 0;
-      z-index: 2040; /* ↑ aseguramos que quede por encima de overlays */
+      z-index: 2040;
     }
     /* HOTFIX: el header y sus hijos siempre clickeables */
     .header, .header *{ pointer-events:auto !important; }
@@ -244,11 +234,8 @@
         var(--bg-body);
     }
 
-    /* === Espaciado estándar de páginas (igual que index)
-       Aplica py-3/px-1 al primer hijo de .content si no los trae */
     .content > :first-child:not(.py-3){ padding-top:1rem; padding-bottom:1rem; }
     .content > :first-child:not(.px-1){ padding-left:.25rem; padding-right:.25rem; }
-    /* Opt-out si alguna vista necesita sangrado total */
     .content > .no-page-pad:first-child{ padding:0 !important; }
 
     .cardx{ background:var(--surface); border:1px solid var(--bs-border-color, var(--border)); border-radius:18px; box-shadow:var(--shadow); padding:20px; position:relative; }
@@ -267,10 +254,7 @@
       padding:14px 16px;
       border-top-left-radius:18px; border-top-right-radius:18px;
     }
-    .card-clean .card-body{
-      padding:16px;
-      border-bottom-left-radius:18px; border-bottom-right-radius:18px;
-    }
+    .card-clean .card-body{ padding:16px; border-bottom-left-radius:18px; border-bottom-right-radius:18px; }
 
     @media (max-width: 991.98px){
       .shell{ height: 100dvh; }
@@ -346,32 +330,23 @@
       body[data-auth="1"] .content{ background: linear-gradient(180deg, rgba(82,116,206,.14) 0%, rgba(4,67,106,.14) 100%), var(--bg-body); }
     }
 
-    /* ===== Drawer Chat IA ===== */
+    /* ===== Drawer Chat IA =====
+       Ahora el chat se muestra DEBAJO del header y se puede abrir/cerrar
+       con el mismo botón. Además, no se muestra en login. */
     .chat-ia-overlay{
-      position:fixed;
-      inset: var(--header-h) 0 0 0;         /* no cubre la barra superior */
+      position:fixed; left:0; right:0; bottom:0; top: var(--header-h);
       background:rgba(15,18,34,.28); backdrop-filter: blur(2px);
       opacity:0; pointer-events:none; transition:opacity .2s ease; z-index:1200;
     }
-    .chat-ia-overlay.open{ opacity:1; pointer-events:auto; }
-
     .chat-ia{
-      position:fixed;
-      top: var(--header-h);                  /* arranca debajo del header */
-      right:-480px;
-      height: calc(100% - var(--header-h));  /* ocupa el resto */
+      position:fixed; top: var(--header-h); right:-480px; height:calc(100% - var(--header-h));
       width:480px; max-width:100%;
-      background:var(--surface);
-      border-left:1px solid var(--bs-border-color, var(--border)); box-shadow: var(--shadow);
+      background:var(--surface); border-left:1px solid var(--bs-border-color, var(--border)); box-shadow: var(--shadow);
       display:flex; flex-direction:column; transition:right .28s ease; z-index:1201;
     }
     [data-theme="dark"] .chat-ia{ background:var(--panel); }
     .chat-ia.open{ right:0; }
-
-    /* Login (sin header): full-screen */
-    body[data-auth="1"] .chat-ia{ top:0; height:100%; }
-    body[data-auth="1"] .chat-ia-overlay{ inset:0; }
-
+    .chat-ia-overlay.open{ opacity:1; pointer-events:auto; }
     .chat-ia__header{ display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--bs-border-color, var(--border));
       background:linear-gradient(0deg, rgba(255,255,255,.96), rgba(255,255,255,.96)); }
     [data-theme="dark"] .chat-ia__header{ background:linear-gradient(0deg, rgba(21,27,34,.96), rgba(21,27,34,.96)); }
@@ -429,13 +404,18 @@
     }
     .rating-banner .btn{ padding:.35rem .75rem; border-radius:999px; }
 
-    /* ======= Responsivo / utilidades ======= */
     @media (max-width: 575.98px){
       .row > [class*="col-"]{ flex: 0 0 100% !important; max-width: 100% !important; }
       .btn, .btn-chat{ padding:.5rem .9rem; }
       .card, .card-clean, .brand, .pill, .icon-btn{ max-width:100%; }
     }
     [class*="container"], [class*="Container"]{ min-width: 0; }
+
+    /* **Fix login**: ocultar completamente Chat IA en la pantalla de autenticación */
+    body[data-auth="1"] #chatIa,
+    body[data-auth="1"] #chatIaOverlay{
+      display: none !important;
+    }
   </style>
   {% block extra_head %}{% endblock %}
 </head>
@@ -503,7 +483,6 @@
 
         <div class="brand">
           <img src="/static/logo-suizo.png" alt="Logo Suizo" loading="lazy">
-          <!-- Texto eliminado a pedido: <div class="brand-title">Licitaciones IA</div> -->
         </div>
 
         <div class="header-actions">
@@ -526,8 +505,9 @@
             <span id="chatBadge" class="chat-badge">0</span>
           </a>
 
-          <!-- Botón con toggle (mismo click abre/cierra) -->
-          <button class="pill pill-grad pill-icon" id="btnChatIaToggle" type="button" aria-label="Abrir chat con IA">
+          <!-- Botón con toggle (abre/cierra el drawer) -->
+          <button class="pill pill-grad pill-icon" id="btnOpenChat" type="button"
+                  aria-label="Abrir chat con IA" aria-pressed="false">
             <i class="bi bi-robot"></i> Chat OpenAI
           </button>
 
@@ -618,6 +598,7 @@
       <button id="ratingBannerClose" class="btn btn-sm btn-outline-secondary">Cerrar</button>
     </div>
   </div>
+
   <!-- Bootstrap Bundle -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
@@ -794,7 +775,7 @@
     mqDesktop.addEventListener?.('change', applySidebarMode);
     applySidebarMode();
 
-    /* ===== Chat IA (drawer) – con toggle en el mismo botón ===== */
+    /* ===== Chat IA (drawer) ===== */
     const CHAT_STATE_KEY = 'chatboxState';
     const chatIa = document.getElementById('chatIa');
     const chatIaOverlay = document.getElementById('chatIaOverlay');
@@ -802,52 +783,51 @@
     const chatIaInput = document.getElementById('chatIaInput');
     const chatIaBody  = document.getElementById('chatIaBody');
     const chatIaForm  = document.getElementById('chatIaForm');
-    // Botón disparador: usa id si existe, si no busca por aria-label (tu markup actual)
-    const chatToggleBtn = document.getElementById('btnChatAI') || document.querySelector('button[aria-label="Abrir chat con IA"]');
+    const chatToggleBtn = document.getElementById('btnOpenChat');
 
-    function setChatBtnState(open){
-      if(!chatToggleBtn) return;
-      chatToggleBtn.classList.toggle('is-active', open);
-      chatToggleBtn.setAttribute('aria-pressed', String(open));
-      chatToggleBtn.setAttribute('aria-label', open ? 'Cerrar chat con IA' : 'Abrir chat con IA');
-      chatToggleBtn.title = open ? 'Cerrar Chat OpenAI' : 'Abrir Chat OpenAI';
+    // Si estamos en login, no dejamos que el chat se muestre ni se autoabra
+    const onAuth = document.body.getAttribute('data-auth') === '1';
+    if (onAuth) {
+      try { localStorage.removeItem(CHAT_STATE_KEY); }catch(_){}
+      chatIa?.classList.remove('open');
+      chatIaOverlay?.classList.remove('open');
+      chatIa?.setAttribute('aria-hidden','true');
     }
 
     function openChatIA(persist=true){
-      if(!chatIa) return;
+      if(!chatIa || onAuth) return; // no abrir en login
       chatIa.classList.add('open');
       chatIaOverlay.classList.add('open');
       chatIa.setAttribute('aria-hidden','false');
-      setChatBtnState(true);
       setTimeout(()=> chatIaInput?.focus(), 50);
-      if(persist) localStorage.setItem(CHAT_STATE_KEY, 'open');
+      chatToggleBtn?.setAttribute('aria-pressed','true');
+      if(persist) try{ localStorage.setItem(CHAT_STATE_KEY, 'open'); }catch(_){}
     }
     function closeChatIA(){
       if(!chatIa) return;
       chatIa.classList.remove('open');
       chatIaOverlay.classList.remove('open');
       chatIa.setAttribute('aria-hidden','true');
-      setChatBtnState(false);
-      localStorage.removeItem(CHAT_STATE_KEY);
+      chatToggleBtn?.setAttribute('aria-pressed','false');
+      try{ localStorage.removeItem(CHAT_STATE_KEY); }catch(_){}
     }
     function toggleChatIA(){
-      const open = chatIa?.classList.contains('open');
-      open ? closeChatIA() : openChatIA(true);
+      if(onAuth) return;
+      const isOpen = chatIa?.classList.contains('open');
+      if(isOpen) closeChatIA(); else openChatIA(true);
     }
-    // Mantener compatibilidad con el onclick existente:
-    function openChatAndExpand(){ toggleChatIA(); }
+    // Exponer por compatibilidad si algo lo llama
+    function openChatAndExpand(){ openChatIA(true); }
     window.openChatAndExpand = openChatAndExpand;
 
-    // Click en el mismo botón = abre/cierra
-    chatToggleBtn?.addEventListener('click', (e)=>{ e.preventDefault(); toggleChatIA(); });
-
-    // Cierre con overlay, X o tecla Escape
+    // Handlers
     chatIaOverlay?.addEventListener('click', closeChatIA);
     chatIaClose?.addEventListener('click', closeChatIA);
+    chatToggleBtn?.addEventListener('click', toggleChatIA);
     document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeChatIA(); });
 
-    // Restaurar estado guardado
-    if(localStorage.getItem(CHAT_STATE_KEY)==='open'){ openChatIA(false); } else { setChatBtnState(false); }
+    // Restaurar estado (salvo en login)
+    if(!onAuth && localStorage.getItem(CHAT_STATE_KEY)==='open'){ openChatIA(false); }
 
     function scrollToBottom(smooth=true){
       try{ chatIaBody.scrollTo({ top: chatIaBody.scrollHeight, behavior: smooth ? 'smooth' : 'auto' }); }
@@ -927,7 +907,6 @@
       scrollToBottom(true);
     }
 
-    /* === Menú lateral: marcar activo === */
     (function markActive(){
       try{
         const path = location.pathname || '/';
@@ -958,7 +937,7 @@
       cont.appendChild(el); const t=new bootstrap.Toast(el,{delay}); t.show(); el.addEventListener('hidden.bs.toast',()=> el.remove());
     }
 
-    /* ===== Tema: botón y meta theme-color ===== */
+    /* ===== Tema ===== */
     const btnTheme = document.getElementById('btnTheme');
     const icoTheme = document.getElementById('icoTheme');
     function getTheme(){ try{ return localStorage.getItem('theme'); }catch(_){ return null; } }
@@ -1309,7 +1288,6 @@
       }
       async function ensureFullCalendar(){ if (window.FullCalendar?.Calendar) return; addCss(FC_CSS); await addScript(FC_JS); await addScript(FC_LOC); }
 
-      // Hook para exponer instancia al render
       function installFullCalendarHook(){
         const FC = window.FullCalendar; if(!FC || !FC.Calendar || FC.Calendar.__saHooked) return;
         const origRender = FC.Calendar.prototype.render;
@@ -1400,3 +1378,6 @@
       };
     })();
   </script>
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>
