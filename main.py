@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from sqlalchemy import or_
 from pydantic import BaseModel, EmailStr
+from jinja2 import ChoiceLoader, FileSystemLoader  # ⬅️ NUEVO
 
 from utils import (
     extraer_texto_de_pdf,
@@ -179,8 +180,20 @@ os.makedirs("generated_pdfs", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="generated_pdfs")
 
-templates = Jinja2Templates(directory="templates")
+# ================== Jinja2 robusto + cache-busting ==================
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+CWD_DIR = os.getcwd()
+TEMPLATE_DIRS = [
+    os.getenv("TEMPLATES_DIR", "templates"),
+    os.path.join(CWD_DIR, "templates"),
+    os.path.join(APP_DIR, "templates"),
+]
+templates = Jinja2Templates(directory=TEMPLATE_DIRS[0])
+templates.env.loader = ChoiceLoader([FileSystemLoader(p) for p in TEMPLATE_DIRS if os.path.isdir(p)])
+templates.env.auto_reload = True
 templates.env.globals['os'] = os
+ASSET_VER = os.getenv("ASSET_VER", os.getenv("RENDER_GIT_COMMIT", now_stamp_ar()))
+templates.env.globals["STATIC_VER"] = ASSET_VER
 
 # Filtro Jinja para mostrar UTC como hora local AR
 def ar_time(value: str) -> str:
@@ -189,6 +202,53 @@ def ar_time(value: str) -> str:
     except Exception:
         return value
 templates.env.filters["ar_time"] = ar_time
+
+# No-cache para HTML (evita vistas antiguas en navegador/CDN)
+if os.getenv("HTML_NOCACHE", "1") == "1":
+    @app.middleware("http")
+    async def _html_nocache(request: Request, call_next):
+        resp = await call_next(request)
+        ct = (resp.headers.get("content-type") or "").lower()
+        if "text/html" in ct:
+            resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+            resp.headers["X-Template-Ver"] = ASSET_VER
+        return resp
+
+# Diagnóstico de plantillas
+@app.get("/__diag/templates")
+async def __diag_templates():
+    import hashlib
+    files = ["base.html", "index.html", "login.html", "chat.html"]
+    found = []
+    for d in TEMPLATE_DIRS:
+        for f in files:
+            p = os.path.join(d, f)
+            if os.path.isfile(p):
+                st = os.stat(p)
+                with open(p, "rb") as h:
+                    sha = hashlib.sha1(h.read()).hexdigest()[:12]
+                found.append({
+                    "dir": d, "file": f, "path": p,
+                    "mtime": st.st_mtime,
+                    "mtime_iso": datetime.fromtimestamp(st.st_mtime).isoformat(),
+                    "sha1_12": sha
+                })
+    return {
+        "dirs": TEMPLATE_DIRS,
+        "auto_reload": templates.env.auto_reload,
+        "asset_ver": ASSET_VER,
+        "found": found
+    }
+
+@app.post("/__diag/flush-templates")
+async def __diag_flush_templates():
+    try:
+        templates.env.cache.clear()
+    except Exception:
+        pass
+    return {"ok": True}
 
 # ================== Guardas/Dependencias de auth/roles ==================
 def require_auth(request: Request):
@@ -752,6 +812,7 @@ async def cambiar_password_underscore_post_slash(
     confirmar: str = Form(...)
 ):
     return await cambiar_password_post(request, actual=actual, nueva=nueva, confirmar=confirmar)
+
 # ================== Rating/Análisis ==================
 class RatingIn(BaseModel):
     historial_id: Optional[int] = None
@@ -822,7 +883,8 @@ async def enviar_rating(request: Request, payload: RatingIn):
     if not historial_id:
         h = _buscar_historial_usuario(user, timestamp=payload.timestamp, nombre_pdf=payload.nombre_pdf)
         if h:
-            hid = h.get("historial_id") | h.get("id")
+            # bugfix: usar OR lógico
+            hid = h.get("historial_id") or h.get("id")
             if isinstance(hid, int):
                 historial_id = hid
 
@@ -853,6 +915,10 @@ async def enviar_rating(request: Request, payload: RatingIn):
 
     return {"ok": True, "message": "Valoración registrada"}
 
+# Alias de compatibilidad por si el front antiguo postea acá
+@app.post("/analizar")
+async def analizar_alias(request: Request, archivos: List[UploadFile] = File(...)):
+    return await analizar_pliego(request, archivos=archivos)
 
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
@@ -921,7 +987,6 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         "analisis_id": analisis_id
     }
 
-
 # ================== Historial ==================
 @app.get("/historial")
 async def ver_historial():
@@ -952,7 +1017,6 @@ async def eliminar_archivo(timestamp: str):
     if os.path.exists(ruta):
         os.remove(ruta)
     return {"mensaje": "Eliminado correctamente"}
-
 
 # ================== Usuario actual ==================
 @app.get("/usuario-actual")
@@ -1018,7 +1082,6 @@ async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
         pass
 
     return {"ok": True, "avatar_url": url}
-
 
 # ================== Diagnóstico (controlado por env) ==================
 @app.get("/__diag/auth")
@@ -1150,7 +1213,6 @@ async def eliminar_incidencia_form(request: Request, id: int):
     eliminar_ticket(id, actor_user_id=actor_user_id, ip=ip)
     return RedirectResponse("/incidencias", status_code=303)
 
-
 # ================== API puente (Chat OpenAI) ==================
 @app.post("/chat-openai")
 async def chat_openai(request: Request):
@@ -1269,13 +1331,13 @@ async def chat_openai_embed(request: Request):
     </body></html>
     """
     return HTMLResponse(html)
+
 # ================== Chat interno (UI) ==================
 @app.get("/chat", response_class=HTMLResponse)
 async def chat_view(request: Request):
     if not request.session.get("usuario"):
         return RedirectResponse("/login")
     return templates.TemplateResponse("chat.html", {"request": request})
-
 
 # ================== Chat interno (API) ==================
 def _is_no_table_error(e: Exception) -> bool:
@@ -1396,7 +1458,7 @@ async def chat_enviar_archivos(
 
         ext = os.path.splitext(orig)[1].lower()
         base = _safe_basename(orig)
-        safe_name = f"{ts}_{de.replace('@','_at_')}_{i:02d}_{base}{ext}"
+        safe_name = f"{ts}_{de.replace('@','_at_')}_{i:02d}_{base}{ext}"""
         path = os.path.join(CHAT_ATTACH_DIR, safe_name)
 
         written = await _save_upload_stream(archivo, path)
@@ -1569,7 +1631,6 @@ async def chat_abrir(request: Request):
         print("❌ Error chat_abrir:", repr(e))
         return JSONResponse({"error": "No se pudo abrir el hilo"}, status_code=500)
 
-
 # ================== Auditoría (vista audit_logs) ==================
 @app.get("/auditoria", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def ver_auditoria(request: Request):
@@ -1591,13 +1652,11 @@ async def auditoria_eliminar_masivo_disabled(request: Request):
 async def auditoria_purgar_disabled(request: Request):
     return JSONResponse({"error": "Operación no permitida: la auditoría es inmutable"}, status_code=405)
 
-
 # ========= Panel de Administración =========
 @app.get("/admin", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def admin_panel(request: Request):
     # Renderiza el panel de administración (botón del topbar apunta aquí)
     return templates.TemplateResponse("admin.html", {"request": request})
-
 
 # ========= Admin: API de usuarios (para admin.html) =========
 DEFAULT_NEW_USER_PASSWORD = os.getenv("DEFAULT_NEW_USER_PASSWORD", "1234")
@@ -1710,7 +1769,6 @@ async def admin_users_delete(request: Request, email: str, hard: bool = Query(de
     except Exception as e:
         print("❌ admin_users_delete:", repr(e))
         return JSONResponse({"error": "No se pudo eliminar el usuario"}, status_code=500)
-
 
 # ======= LEGACY/COMPAT: endpoints antiguos que usa admin.html =======
 async def _json_or_form(request: Request) -> dict:
@@ -1829,6 +1887,7 @@ async def legacy_admin_reset_session(request: Request):
     except Exception as e:
         print("❌ legacy_admin_reset_session:", repr(e))
         return JSONResponse({"error": "No se pudo reiniciar la sesión"}, status_code=500)
+
 # =====================================================================
 # ========================== CALENDARIO (endpoints) ===================
 # =====================================================================
@@ -1928,7 +1987,6 @@ async def cal_delete(evt_id: str, request: Request):
     await notify_async(request.session.get("usuario","Desconocido"), "Evento eliminado", f"ID: {evt_id}")
     return {"ok": True}
 
-
 # ================== Notificaciones (HTML o JSON según Accept) ==================
 def _wants_html(req: Request) -> bool:
     acc = (req.headers.get("accept") or "").lower()
@@ -1977,6 +2035,7 @@ async def notificaciones(request: Request,
             "titulo": r["titulo"],
             "cuerpo": r["cuerpo"],
             "fecha_legible": iso_utc_to_ar_str(r["created_at"]),
+            "fecha_iso": r["created_at"],
             "leida": bool(r["leida"])
         } for r in cur.fetchall()]
 
@@ -2030,7 +2089,6 @@ async def notif_delete(request: Request):
     with cal_conn() as c:
         c.execute("DELETE FROM notificaciones WHERE id=? AND user=?", (notif_id, user))
     return {"ok": True}
-
 
 # =====================================================================
 # ========================== PRESENCIA / ONLINE =======================
@@ -2127,7 +2185,6 @@ async def usuarios_activos(request: Request):
         "request": request,
         "items": data.get("items", [])
     })
-
 
 # ========================== Auditoría de Actividad (admins) =================
 def _parse_iso(ts: Optional[str]):
