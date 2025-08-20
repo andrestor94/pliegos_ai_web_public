@@ -3,9 +3,6 @@ import sqlite3
 import uuid
 import asyncio
 import re
-import hashlib
-import time
-from pathlib import Path
 from typing import List, Optional, Dict, Set
 from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body, WebSocket, WebSocketDisconnect, Depends, status, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, Response
@@ -18,7 +15,6 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from sqlalchemy import or_
 from pydantic import BaseModel, EmailStr
-from jinja2 import FileSystemLoader, select_autoescape
 
 from utils import (
     extraer_texto_de_pdf,
@@ -183,35 +179,8 @@ os.makedirs("generated_pdfs", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="generated_pdfs")
 
-# ==== Templates: ruta absoluta + búsqueda múltiple + sin cache (debug) ====
-BASE_DIR = Path(__file__).resolve().parent
-_CANDIDATES = [BASE_DIR / "templates", BASE_DIR.parent / "templates"]
-TPL_DIR = None
-for p in _CANDIDATES:
-    if p.exists():
-        TPL_DIR = p
-        break
-if TPL_DIR is None:
-    TPL_DIR = BASE_DIR / "templates"
-
-templates = Jinja2Templates(directory=str(TPL_DIR))
-# Loader multi-ruta (por si hay includes en otros subpaths)
-templates.env.loader = FileSystemLoader([str(TPL_DIR)], followlinks=True)
-templates.env.autoescape = select_autoescape(['html', 'xml'])
-templates.env.auto_reload = True
-templates.env.cache = {}  # sin cache de plantillas
+templates = Jinja2Templates(directory="templates")
 templates.env.globals['os'] = os
-print(f"[JINJA] using templates dir -> {TPL_DIR}")
-
-# (TEMP) desactiva cache del navegador para respuestas HTML (sólo debug)
-@app.middleware("http")
-async def _no_cache_html(request, call_next):
-    resp = await call_next(request)
-    if isinstance(resp, HTMLResponse):
-        resp.headers["Cache-Control"] = "no-store, must-revalidate"
-        resp.headers["Pragma"] = "no-cache"
-        resp.headers["Expires"] = "0"
-    return resp
 
 # Filtro Jinja para mostrar UTC como hora local AR
 def ar_time(value: str) -> str:
@@ -783,7 +752,6 @@ async def cambiar_password_underscore_post_slash(
     confirmar: str = Form(...)
 ):
     return await cambiar_password_post(request, actual=actual, nueva=nueva, confirmar=confirmar)
-
 # ================== Rating/Análisis ==================
 class RatingIn(BaseModel):
     historial_id: Optional[int] = None
@@ -854,7 +822,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
     if not historial_id:
         h = _buscar_historial_usuario(user, timestamp=payload.timestamp, nombre_pdf=payload.nombre_pdf)
         if h:
-            hid = h.get("historial_id") or h.get("id")  # fix
+            hid = h.get("historial_id") | h.get("id")
             if isinstance(hid, int):
                 historial_id = hid
 
@@ -885,10 +853,6 @@ async def enviar_rating(request: Request, payload: RatingIn):
 
     return {"ok": True, "message": "Valoración registrada"}
 
-# Alias de compatibilidad para clientes viejos que envían a /analizar
-@app.post("/analizar")
-async def analizar_alias(request: Request, archivos: List[UploadFile] = File(...)):
-    return await analizar_pliego(request, archivos=archivos)
 
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
@@ -957,6 +921,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         "analisis_id": analisis_id
     }
 
+
 # ================== Historial ==================
 @app.get("/historial")
 async def ver_historial():
@@ -987,6 +952,7 @@ async def eliminar_archivo(timestamp: str):
     if os.path.exists(ruta):
         os.remove(ruta)
     return {"mensaje": "Eliminado correctamente"}
+
 
 # ================== Usuario actual ==================
 @app.get("/usuario-actual")
@@ -1053,6 +1019,7 @@ async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
 
     return {"ok": True, "avatar_url": url}
 
+
 # ================== Diagnóstico (controlado por env) ==================
 @app.get("/__diag/auth")
 async def diag_auth(request: Request):
@@ -1097,27 +1064,6 @@ async def debug_whoami(request: Request):
         },
         "cookie_present": ("session" in (request.cookies or {})),
         "route": str(request.url)
-    }
-
-# === Diagnóstico de plantillas: qué carpeta y qué versión sirve ===
-def _file_info(path: Path):
-    try:
-        b = path.read_bytes()
-        md5 = hashlib.md5(b).hexdigest()
-        return {"exists": True, "size": len(b), "md5": md5, "mtime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(path.stat().st_mtime))}
-    except Exception:
-        return {"exists": False}
-
-@app.get("/__diag/templates")
-def diag_templates():
-    files = {}
-    for name in ["base.html","index.html","incidencias.html","notificaciones.html","report.html","usuarios_activos.html","admin.html","auditoria_actividad.html","chat.html","cambiar_password.html","calendario.html","login.html"]:
-        files[name] = _file_info(TPL_DIR / name)
-    return {
-        "cwd": os.getcwd(),
-        "tpl_dir": str(TPL_DIR),
-        "candidates": [str(p) for p in _CANDIDATES],
-        "files": files
     }
 
 # ================== Incidencias ==================
@@ -1203,6 +1149,7 @@ async def eliminar_incidencia_form(request: Request, id: int):
     actor_user_id, ip = _actor_info(request)
     eliminar_ticket(id, actor_user_id=actor_user_id, ip=ip)
     return RedirectResponse("/incidencias", status_code=303)
+
 
 # ================== API puente (Chat OpenAI) ==================
 @app.post("/chat-openai")
@@ -1322,13 +1269,13 @@ async def chat_openai_embed(request: Request):
     </body></html>
     """
     return HTMLResponse(html)
-
 # ================== Chat interno (UI) ==================
 @app.get("/chat", response_class=HTMLResponse)
 async def chat_view(request: Request):
     if not request.session.get("usuario"):
         return RedirectResponse("/login")
     return templates.TemplateResponse("chat.html", {"request": request})
+
 
 # ================== Chat interno (API) ==================
 def _is_no_table_error(e: Exception) -> bool:
@@ -1622,6 +1569,7 @@ async def chat_abrir(request: Request):
         print("❌ Error chat_abrir:", repr(e))
         return JSONResponse({"error": "No se pudo abrir el hilo"}, status_code=500)
 
+
 # ================== Auditoría (vista audit_logs) ==================
 @app.get("/auditoria", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def ver_auditoria(request: Request):
@@ -1643,11 +1591,13 @@ async def auditoria_eliminar_masivo_disabled(request: Request):
 async def auditoria_purgar_disabled(request: Request):
     return JSONResponse({"error": "Operación no permitida: la auditoría es inmutable"}, status_code=405)
 
+
 # ========= Panel de Administración =========
 @app.get("/admin", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def admin_panel(request: Request):
     # Renderiza el panel de administración (botón del topbar apunta aquí)
     return templates.TemplateResponse("admin.html", {"request": request})
+
 
 # ========= Admin: API de usuarios (para admin.html) =========
 DEFAULT_NEW_USER_PASSWORD = os.getenv("DEFAULT_NEW_USER_PASSWORD", "1234")
@@ -1760,6 +1710,7 @@ async def admin_users_delete(request: Request, email: str, hard: bool = Query(de
     except Exception as e:
         print("❌ admin_users_delete:", repr(e))
         return JSONResponse({"error": "No se pudo eliminar el usuario"}, status_code=500)
+
 
 # ======= LEGACY/COMPAT: endpoints antiguos que usa admin.html =======
 async def _json_or_form(request: Request) -> dict:
@@ -1878,7 +1829,6 @@ async def legacy_admin_reset_session(request: Request):
     except Exception as e:
         print("❌ legacy_admin_reset_session:", repr(e))
         return JSONResponse({"error": "No se pudo reiniciar la sesión"}, status_code=500)
-
 # =====================================================================
 # ========================== CALENDARIO (endpoints) ===================
 # =====================================================================
@@ -1978,6 +1928,7 @@ async def cal_delete(evt_id: str, request: Request):
     await notify_async(request.session.get("usuario","Desconocido"), "Evento eliminado", f"ID: {evt_id}")
     return {"ok": True}
 
+
 # ================== Notificaciones (HTML o JSON según Accept) ==================
 def _wants_html(req: Request) -> bool:
     acc = (req.headers.get("accept") or "").lower()
@@ -2026,7 +1977,6 @@ async def notificaciones(request: Request,
             "titulo": r["titulo"],
             "cuerpo": r["cuerpo"],
             "fecha_legible": iso_utc_to_ar_str(r["created_at"]),
-            "fecha_iso": r["created_at"],
             "leida": bool(r["leida"])
         } for r in cur.fetchall()]
 
@@ -2080,6 +2030,7 @@ async def notif_delete(request: Request):
     with cal_conn() as c:
         c.execute("DELETE FROM notificaciones WHERE id=? AND user=?", (notif_id, user))
     return {"ok": True}
+
 
 # =====================================================================
 # ========================== PRESENCIA / ONLINE =======================
@@ -2176,6 +2127,7 @@ async def usuarios_activos(request: Request):
         "request": request,
         "items": data.get("items", [])
     })
+
 
 # ========================== Auditoría de Actividad (admins) =================
 def _parse_iso(ts: Optional[str]):
