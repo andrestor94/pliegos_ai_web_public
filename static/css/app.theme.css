@@ -19,13 +19,13 @@ En base.html:
   --surface:#ffffff;          /* Cards/sheets */
   --muted:#f2f1ed;            /* Paneles/inputs */
   --text:#0f2a3a;             /* Texto principal */
-  --text-2:#4a5a6a;           /* Secundario LEGIBLE */
+  --text-2:#4a5a6a;           /* Secundario (más oscuro para legibilidad) */
   --border:#d9ddd8;           /* Bordes suaves */
 
   /* Accesibilidad inputs/placeholder */
   --input-bg:#ffffff;
   --input-text:var(--text);
-  --input-placeholder:#64748b;  /* un toque más claro que --text-2 */
+  --input-placeholder:var(--text-2);
   --input-border:var(--border);
   --input-border-focus:#5274ce;
   --input-shadow-focus:0 0 0 .25rem rgba(82,116,206,.25);
@@ -35,7 +35,7 @@ En base.html:
   --chip-text: #233a80;
 
   /* Iconos */
-  --icon: #5b6b7a;
+  --icon: #5b6b7a;           /* usa currentColor en SVG */
 
   /* Pasteles (opcional) */
   --mint-200:#e4f5ee; --sky-200:#e7ecfa; --peach-200:#fff2e8; --violet-200:#f2f0ff;
@@ -46,7 +46,7 @@ En base.html:
   --shadow-md: 0 10px 24px rgba(8,30,61,.10);
   --shadow-sm: 0 6px 16px rgba(8,30,61,.08);
 
-  /* Bootstrap overrides (legibilidad de “muted”) */
+  /* Bootstrap overrides */
   --bs-primary: var(--brand-500);
   --bs-secondary: var(--brand-300);
   --bs-body-bg: var(--bg);
@@ -54,10 +54,6 @@ En base.html:
   --bs-border-color: var(--border);
   --bs-link-color: var(--brand-300);
   --bs-link-hover-color: #3e5fb3;
-
-  /* 🔎 Clave para que .text-muted sea legible */
-  --bs-secondary-color: var(--text-2);
-  --bs-secondary-color-rgb: 74,90,106;
 
   /* Layout helpers */
   --header-h: 76px;
@@ -77,7 +73,7 @@ html[data-theme="dark"]{
   --surface:#151B22;
   --muted:#1B232C;
   --text:#E5ECF3;
-  --text-2:#b6c2d1;          /* muted legible en dark */
+  --text-2:#A9B6C6;       /* secundario claro PERO legible */
   --border:#263140;
 
   /* elevar brillo de marca en dark para contraste */
@@ -88,7 +84,7 @@ html[data-theme="dark"]{
   /* Inputs/placeholder */
   --input-bg:#151B22;
   --input-text:var(--text);
-  --input-placeholder:#94a3b8;
+  --input-placeholder:var(--text-2);
   --input-border:#263140;
   --input-border-focus:#5b76b4;
   --input-shadow-focus:0 0 0 .25rem rgba(90,134,255,.30);
@@ -103,16 +99,11 @@ html[data-theme="dark"]{
   --shadow-lg: 0 16px 40px rgba(0,0,0,.45);
   --shadow-md: 0 10px 24px rgba(0,0,0,.40);
   --shadow-sm: 0 6px 16px rgba(0,0,0,.35);
-
-  /* 🔎 Clave para que .text-muted sea legible en dark */
-  --bs-secondary-color: var(--text-2);
-  --bs-secondary-color-rgb: 182,194,209;
 }
 
 /* ---------- Base ---------- */
 html,body{height:100%;}
-/* ❗ Evita “formato PC” en móviles por overflow horizontal */
-html,body{ overflow-x:hidden; }
+html,body{ overflow-x:hidden; } /* evita desbordes en móvil */
 body{
   background:var(--bg);
   color:var(--text);
@@ -120,29 +111,11 @@ body{
   padding-bottom: var(--safe-bottom);
   -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
 }
-/* Medios fluidos */
 img, video, canvas, iframe{ max-width:100%; height:auto; }
 
 /* Enlaces */
 a{ color: var(--bs-link-color); text-decoration: none; }
 a:hover{ color: var(--bs-link-hover-color); text-decoration: underline; }
-
-/* ===== Legibilidad global de textos suaves y placeholders ===== */
-.text-muted,
-.muted,
-.form-text,
-.help-text,
-.helptext,
-.small-hint,
-.input-hint,
-.counter,
-.uploader-hint { color: var(--text-2) !important; opacity: 1 !important; }
-
-/* Placeholders en TODO el sitio */
-::placeholder{ color: var(--input-placeholder) !important; opacity: 1 !important; }
-input::placeholder, textarea::placeholder, select::placeholder{
-  color: var(--input-placeholder) !important; opacity: 1 !important;
-}
 
 /* ---------- Topbar (sticky) ---------- */
 .app-topbar{
@@ -154,7 +127,6 @@ input::placeholder, textarea::placeholder, select::placeholder{
 .app-topbar .navbar-brand{font-weight:700; letter-spacing:.2px; color: var(--brand-500); }
 .app-topbar .nav-link, .app-topbar .navbar-text{color:var(--text-2);} 
 .app-topbar .btn-chat{ border-radius: 999px; padding:.5rem 1rem; font-weight:600; }
-/* Variante opcional: topbar con fondo de marca (usar .app-topbar.brand en el HTML si la querés) */
 .app-topbar.brand{ background: var(--brand-500); border-bottom-color: transparent; }
 .app-topbar.brand .navbar-brand,
 .app-topbar.brand .nav-link,
@@ -162,13 +134,12 @@ input::placeholder, textarea::placeholder, select::placeholder{
 .app-topbar.brand .nav-link:hover{ color:#ffffff; }
 
 @media (max-width: 575.98px){
-  .app-topbar .navbar-text{ display:none; } /* opcional */
+  .app-topbar .navbar-text{ display:none; }
 }
 
 /* ---------- Layout ---------- */
 .app-main{ padding-top: var(--header-h); }
 .container-xxl{ max-width: var(--container-max); }
-/* En móviles, que el contenedor use todo el ancho con padding lateral */
 @media (max-width: 575.98px){
   .container-xxl{ max-width:100% !important; padding-left:12px; padding-right:12px; }
 }
@@ -208,7 +179,8 @@ input::placeholder, textarea::placeholder, select::placeholder{
   color:var(--input-text);
 }
 .form-control::placeholder, .form-select::placeholder{
-  color:var(--input-placeholder); opacity:1;
+  color:var(--input-placeholder) !important;
+  opacity:1 !important;            /* fuerza contraste */
 }
 .form-control:focus, .form-select:focus{
   box-shadow:var(--input-shadow-focus);
@@ -219,7 +191,7 @@ input::placeholder, textarea::placeholder, select::placeholder{
 .input-compact .form-control,
 .input-compact .form-select{ padding:.45rem .6rem; font-size:.95rem; }
 
-/* ---------- Botones (toman de los tokens Bootstrap) ---------- */
+/* ---------- Botones ---------- */
 .btn-primary{
   --bs-btn-bg: var(--brand-500);
   --bs-btn-border-color: var(--brand-500);
@@ -255,7 +227,7 @@ input::placeholder, textarea::placeholder, select::placeholder{
 .icon-btn{ background:transparent; border:1px solid var(--border); border-radius:10px; }
 .icon-btn:hover{ background:var(--muted); }
 
-/* ---------- Tablas responsivas ---------- */
+/* ---------- Tablas ---------- */
 .table-wrap{ width:100%; overflow-x:auto; -webkit-overflow-scrolling: touch; }
 .table-wrap > .table{ width:100%; white-space:nowrap; margin-bottom:0; }
 .table thead{ background:var(--muted); }
@@ -304,7 +276,7 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
   font-weight:800; color:var(--brand-700);
 }
 .subtle{ color:var(--text-2); }
-.help-text{ color:var(--text-2); font-size:.925rem; } /* NUEVO */
+.help-text{ color:var(--text-2); font-size:.925rem; }
 .shadow-hover{ transition: box-shadow .18s cubic-bezier(0.22,1,0.36,1), transform .18s; }
 .shadow-hover:hover{ box-shadow:var(--shadow-md); transform: translateY(-2px); }
 
@@ -316,14 +288,14 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
 .bg-brand-soft{ background: rgba(4,67,106,.06) !important; }
 .border-brand{ border-color: var(--brand-500) !important; }
 
-/* ---------- Responsive helpers (mobile-first) ---------- */
-.stack{ display:grid; gap: .75rem; } /* 1 columna por defecto */
+/* ---------- Responsive helpers ---------- */
+.stack{ display:grid; gap: .75rem; }
 @media (min-width: 768px){
   .cols-md-2{ display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
 }
 @media (min-width: 992px){
   .cols-lg-3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem; }
-  .split{ display:grid; grid-template-columns: 1.2fr .8fr; gap:1rem; } /* Ej: resultados | chat */
+  .split{ display:grid; grid-template-columns: 1.2fr .8fr; gap:1rem; }
 }
 
 /* Zonas arrastrar/soltar */
@@ -332,11 +304,10 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
   padding: 1rem; border-radius: var(--radius); text-align:center;
 }
 
-/* Alturas útiles para paneles con scroll */
+/* Alturas útiles */
 .h-pane-50{ height: 50vh; overflow:auto; }
 .h-pane-55{ height: 55vh; overflow:auto; }
 .h-pane-60{ height: 60vh; overflow:auto; }
-/* Altura real en móviles (evita saltos por barra navegador) */
 .h-100dvh{ height: 100dvh; }
 
 /* ---------- Sticky helpers ---------- */
@@ -352,12 +323,33 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
   .btn, .btn-chat{ padding:.5rem .9rem; }
   .card, .card-clean, .brand, .pill, .icon-btn{ max-width:100%; }
 }
-/* Neutraliza min-width fijos no deseados */
 [class*="container"], [class*="Container"]{ min-width: 0; }
 
 /* ---------- Reduced motion ---------- */
 @media (prefers-reduced-motion: reduce){
   *{ transition:none !important; animation:none !important; }
+}
+
+/* =========================================================
+   ===== FIXS DE CONTRASTE GENERALES EN CONTENIDO ==========
+   - Refuerza legibilidad de subtítulos, hints, contadores,
+     textos "muted" y utilidades de opacidad dentro de .content
+   ========================================================= */
+.content .text-muted,
+.content .form-text,
+.content small,
+.content .text-white-50,
+.content .text-white-75,
+.content .opacity-25,
+.content .opacity-50,
+.content .opacity-75{
+  color: var(--text-2) !important;
+  opacity: 1 !important;   /* elimina gris traslúcido */
+}
+.content input::placeholder,
+.content textarea::placeholder{
+  color: var(--input-placeholder) !important;
+  opacity: 1 !important;
 }
 
 /* =========================================================
@@ -368,7 +360,7 @@ body[data-route^="/chat"] .text-light{
   color: var(--text) !important;
 }
 
-/* Lista de conversaciones y panel principal */
+/* Lista/contenedor izquierdo y panel principal */
 body[data-route^="/chat"] .chat-header,
 body[data-route^="/chat"] .chat-header * ,
 body[data-route^="/chat"] .chat-body,
@@ -380,7 +372,7 @@ body[data-route^="/chat"] .empty-state * {
   color: var(--text);
 }
 
-/* Burbujas de mensajes (propios y de la IA/otro) */
+/* Burbujas de mensajes */
 body[data-route^="/chat"] .msg,
 body[data-route^="/chat"] .msg *{
   color: var(--text);
@@ -397,16 +389,20 @@ body[data-route^="/chat"] .form-control{
 body[data-route^="/chat"] input::placeholder,
 body[data-route^="/chat"] textarea::placeholder,
 body[data-route^="/chat"] .form-control::placeholder{
-  color: var(--input-placeholder);
-  opacity: 1;
+  color: var(--input-placeholder) !important;
+  opacity: 1 !important;
 }
-/* Compatibilidad extra */
-body[data-route^="/chat"] input::-webkit-input-placeholder,
-body[data-route^="/chat"] textarea::-webkit-input-placeholder{ color: var(--input-placeholder); }
-body[data-route^="/chat"] input:-ms-input-placeholder,
-body[data-route^="/chat"] textarea:-ms-input-placeholder{ color: var(--input-placeholder); }
+/* Forzar que hints con utilidades de opacidad se lean bien */
+body[data-route^="/chat"] .opacity-25,
+body[data-route^="/chat"] .opacity-50,
+body[data-route^="/chat"] .opacity-75,
+body[data-route^="/chat"] .text-white-50,
+body[data-route^="/chat"] .text-white-75{
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+}
 
-/* ===== Fix extra: correo/subtítulo en lista de conversaciones ===== */
+/* ===== Fix extra en lista de conversaciones ===== */
 body[data-route^="/chat"] .conversations small,
 body[data-route^="/chat"] .conversations .small,
 body[data-route^="/chat"] .conversations .text-muted,
@@ -416,6 +412,28 @@ body[data-route^="/chat"] .conversations .opacity-50,
 body[data-route^="/chat"] .conversations .opacity-75,
 body[data-route^="/chat"] .conversations [class*="text-white"],
 body[data-route^="/chat"] .conversations [class*="opacity-"]{
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+}
+
+/* =========================================================
+   ===== FIX PÁGINA DE INCIDENCIAS (/incidencias) ==========
+   - Hints laterales, contadores "0/4000" y ayudas
+   ========================================================= */
+body[data-route^="/incidencias"] .text-muted,
+body[data-route^="/incidencias"] .form-text,
+body[data-route^="/incidencias"] small,
+body[data-route^="/incidencias"] .opacity-50,
+body[data-route^="/incidencias"] .opacity-75{
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+}
+
+/* =========================================================
+   ===== LOGIN: legibilidad del pie y ayudas ================
+   ========================================================= */
+body[data-auth="1"] .content small,
+body[data-auth="1"] .content .form-text{
   color: var(--text-2) !important;
   opacity: 1 !important;
 }
