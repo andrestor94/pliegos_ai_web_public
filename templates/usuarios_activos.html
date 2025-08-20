@@ -21,13 +21,8 @@
   .ua-list .cardx{ transition:transform .08s ease, box-shadow .2s ease; }
   .ua-list .cardx:hover{ transform:translateY(-1px); box-shadow:0 16px 36px rgba(20,15,55,.14); }
 
-  .ua-actions{ display:flex; gap:6px; align-items:center; margin-left:auto; }
-  .ua-actions .btn{ border-radius:10px; }
-
   .toolbar{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .toolbar .form-control, .toolbar .form-select, .toolbar .btn{ border-radius:10px; }
-
-  .hl{ background:#fff3bf; border-radius:3px; padding:0 .15em; }
 
   /* skeleton */
   .skeleton{ border:1px solid var(--border); border-radius:14px; padding:12px; position:relative; overflow:hidden; }
@@ -57,7 +52,6 @@
       <div class="title d-flex align-items-center gap-2">
         <i class="bi bi-activity"></i> Presencia
         <span id="countChip" class="ua-chip">0 en línea</span>
-        <span id="ipChip" class="ua-chip d-none">— IPs</span>
         <span class="ua-chip"><span class="status-dot"></span> En línea</span>
       </div>
       <div class="toolbar">
@@ -80,10 +74,7 @@
           <input class="form-check-input" type="checkbox" id="autoRefresh" checked>
           <label class="form-check-label small" for="autoRefresh">Auto-refresh</label>
         </div>
-        <button id="btnRefresh" class="btn btn-outline-secondary btn-sm">
-          <span class="btn-txt"><i class="bi bi-arrow-clockwise"></i> Refrescar</span>
-          <span class="spinner-border spinner-border-sm d-none" aria-hidden="true"></span>
-        </button>
+        <button id="btnRefresh" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-clockwise"></i> Refrescar</button>
         <button id="btnCopy" class="btn btn-outline-primary btn-sm" title="Copiar lista"><i class="bi bi-clipboard"></i></button>
         <button id="btnCsv" class="btn btn-outline-primary btn-sm" title="Exportar CSV"><i class="bi bi-filetype-csv"></i></button>
       </div>
@@ -91,7 +82,7 @@
     <div class="small text-muted mt-2" id="lastUpd">—</div>
   </div>
 
-  <div id="uaList" class="ua-list grid" role="list" aria-live="polite">
+  <div id="uaList" class="ua-list grid">
     <!-- JS -->
   </div>
 
@@ -103,23 +94,19 @@
 
 {% block extra_scripts %}
 <script>
-  // ===== Datos iniciales del servidor (opcional) =====
+  // ===== Datos iniciales del servidor (por si el backend los inyecta) =====
   const INITIAL = {{ (items or []) | tojson }};
-
   // ===== DOM =====
-  const uaList      = document.getElementById('uaList');
-  const filter      = document.getElementById('filterInput');
-  const minutesSel  = document.getElementById('minutesSel');
-  const sortSel     = document.getElementById('sortSel');
-  const countChip   = document.getElementById('countChip');
-  const ipChip      = document.getElementById('ipChip');
-  const lastUpd     = document.getElementById('lastUpd');
-  const btnRefresh  = document.getElementById('btnRefresh');
+  const uaList  = document.getElementById('uaList');
+  const filter  = document.getElementById('filterInput');
+  const minutesSel = document.getElementById('minutesSel');
+  const sortSel = document.getElementById('sortSel');
+  const countChip = document.getElementById('countChip');
+  const lastUpd = document.getElementById('lastUpd');
 
   // ===== Helpers =====
   const esc = (s)=> (s||'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const debounce = (fn,ms)=>{ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; };
-  const LS = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v);}catch(_){return d;} }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(_){}} };
 
   function initials(nameOrMail){
     const s = (nameOrMail||'').trim();
@@ -145,31 +132,19 @@
   function fmtLocal(iso){
     try{ const d=new Date(iso); return isNaN(d)?'—':d.toLocaleString(); }catch{ return '—'; }
   }
-  function mark(text, term){
-    if(!term) return esc(text);
-    const re = new RegExp('('+term.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\$&')+')','ig');
-    return esc(text).replace(re, '<mark class="hl">$1</mark>');
-  }
 
   // ===== Estado =====
   const state = {
     items: Array.isArray(INITIAL) ? INITIAL : [],
-    minutes: parseInt(LS.get('ua.minutes', minutesSel.value),10)||5,
-    sort: LS.get('ua.sort', sortSel.value),
-    lastFetch: null,
-    auto: LS.get('ua.auto', true)
+    minutes: parseInt(minutesSel.value,10)||5,
+    sort: sortSel.value,
+    lastFetch: null
   };
-
-  // Prefs -> UI
-  minutesSel.value = String(state.minutes);
-  sortSel.value = state.sort;
-  document.getElementById('autoRefresh').checked = !!state.auto;
 
   // ===== Render =====
   function render(items){
     if(!uaList) return;
-    const qRaw = (filter?.value||'').trim();
-    const q = qRaw.toLowerCase();
+    const q = (filter?.value||'').toLowerCase().trim();
 
     // sorting
     const sorted = [...items].sort((a,b)=>{
@@ -195,24 +170,16 @@
         const card = document.createElement('div');
         card.className = 'cardx col-12';
         const uaTitle = esc(u.ua||'');
-        const name = u.nombre || u.email || '';
-        const email = u.email || '';
-        card.setAttribute('role','listitem');
         card.innerHTML = `
           <div class="ua-card">
-            <div class="avatar" title="${esc(name)}">${initials(name)}</div>
+            <div class="avatar" title="${esc(u.nombre||u.email||'')}">${initials(u.nombre||u.email)}</div>
             <div class="flex-grow-1">
-              <div><strong>${mark(name, qRaw)}</strong> ${email ? `<span class="ua-meta">· ${mark(email, qRaw)}</span>`:''}</div>
+              <div><strong>${esc(u.nombre||u.email||'')}</strong> <span class="ua-meta">· ${esc(u.email||'')}</span></div>
               <div class="ua-meta"><span class="status-dot"></span> activo hace ${timeAgo(u.last_seen)} <span class="text-muted">(${fmtLocal(u.last_seen)})</span></div>
             </div>
             <div class="text-end small ua-meta d-none d-md-block">
               <div>${esc(u.ip||'')}</div>
-              <div class="text-truncate" style="max-width:280px" title="${uaTitle}">${uaTitle || '—'}</div>
-            </div>
-            <div class="ua-actions">
-              ${email ? `<a class="btn btn-sm btn-outline-primary" href="/chat?to=${encodeURIComponent(email)}" title="Abrir chat">💬</a>` : ''}
-              ${email ? `<button class="btn btn-sm btn-outline-secondary act-copy" data-email="${esc(email)}" title="Copiar email">📋</button>` : ''}
-              ${email ? `<a class="btn btn-sm btn-outline-secondary" href="mailto:${encodeURIComponent(email)}" title="Enviar email">✉️</a>` : ''}
+              <div class="text-truncate" style="max-width:320px" title="${uaTitle}">${uaTitle || '—'}</div>
             </div>
           </div>`;
         frag.appendChild(card);
@@ -220,12 +187,8 @@
       uaList.appendChild(frag);
     }
 
-    // KPIs: contador + IPs únicas + last updated
+    // contador + last updated
     countChip.textContent = `${filtered.length} en línea`;
-    const ips = new Set(filtered.map(u=>u.ip).filter(Boolean));
-    if(ips.size){ ipChip.classList.remove('d-none'); ipChip.textContent = `${ips.size} IP${ips.size!==1?'s':''}`; }
-    else ipChip.classList.add('d-none');
-
     if(state.lastFetch){
       const secs = Math.max(0, Math.round((Date.now()-state.lastFetch)/1000));
       lastUpd.textContent = `Actualizado hace ${secs}s · Ventana: ${state.minutes} min`;
@@ -262,48 +225,15 @@
   }
 
   // ===== Acciones =====
-  function toggleBtnLoading(btn, loading){
-    const sp = btn.querySelector('.spinner-border');
-    const txt= btn.querySelector('.btn-txt');
-    if(sp && txt){
-      sp.classList.toggle('d-none', !loading);
-      txt.classList.toggle('d-none', loading);
-      btn.disabled = !!loading;
-    }
-  }
-
   const doRefresh = async ()=>{
     showSkeleton(3);
-    toggleBtnLoading(btnRefresh, true);
-    try{
-      if(document.hidden){ // si la pestaña está oculta, esperamos al volver para no desperdiciar
-        return;
-      }
-      const items = await fetchOnline();
-      state.items = items;
-      state.lastFetch = Date.now();
-      render(items);
-    }finally{
-      toggleBtnLoading(btnRefresh, false);
-    }
+    const items = await fetchOnline();
+    state.items = items;
+    state.lastFetch = Date.now();
+    render(items);
   };
 
-  // CSV & Copy (respeta filtro y orden visibles)
-  function currentVisible(){
-    const q = (filter?.value||'').trim().toLowerCase();
-    const arr = [...state.items];
-    // ordenar igual que render
-    arr.sort((a,b)=>{
-      if(state.sort === 'name_asc'){
-        const A=(a.nombre||a.email||'').toLowerCase();
-        const B=(b.nombre||b.email||'').toLowerCase();
-        return A.localeCompare(B);
-      }
-      return new Date(b.last_seen||0) - new Date(a.last_seen||0);
-    });
-    return arr.filter(u => !q || (String(u.nombre||'').toLowerCase().includes(q) || String(u.email||'').toLowerCase().includes(q)));
-  }
-
+  // CSV & Copy
   function downloadCSV(rows, name){
     const escv=v=>`"${String(v??'').replace(/"/g,'""')}"`;
     const csv = rows.map(r=>r.map(escv).join(',')).join('\n');
@@ -311,17 +241,16 @@
     const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); URL.revokeObjectURL(a.href);
   }
   document.getElementById('btnCsv').addEventListener('click', ()=>{
-    const visible = currentVisible();
-    const rows = [['Nombre','Email','IP','Último visto (local)','Agente','Ventana (min)']];
-    visible.forEach(u=>{
-      rows.push([u.nombre||u.email||'', u.email||'', u.ip||'', u.last_seen? new Date(u.last_seen).toLocaleString():'', u.ua||'', state.minutes]);
+    const rows = [['Nombre','Email','IP','Último visto','Agente']];
+    (state.items||[]).forEach(u=>{
+      rows.push([u.nombre||u.email||'', u.email||'', u.ip||'', u.last_seen? new Date(u.last_seen).toLocaleString():'', u.ua||'']);
     });
     const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
     downloadCSV(rows, `usuarios_activos_${stamp}.csv`);
   });
   document.getElementById('btnCopy').addEventListener('click', async ()=>{
     try{
-      const lines = currentVisible().map(u=> `${u.nombre||u.email||'-'} · ${u.email||'-'} · ${u.ip||'-'} · ${u.last_seen?new Date(u.last_seen).toLocaleString():'-'}`);
+      const lines = (state.items||[]).map(u=> `${u.nombre||u.email||'-'} · ${u.email||'-'} · ${u.ip||'-'} · ${u.last_seen?new Date(u.last_seen).toLocaleString():'-'}`);
       await navigator.clipboard.writeText(lines.join('\n'));
       (window.showToast||console.log)({title:'Copiado', body:'Lista copiada al portapapeles.', icon:'clipboard'});
     }catch(_){
@@ -329,90 +258,28 @@
     }
   });
 
-  // Delegación de acciones por tarjeta
-  uaList.addEventListener('click', async (e)=>{
-    const btn = e.target.closest('.act-copy');
-    if(!btn) return;
-    const email = btn.dataset.email || '';
-    try{
-      await navigator.clipboard.writeText(email);
-      (window.showToast||console.log)({title:'Email copiado', body:email, icon:'clipboard'});
-    }catch(_){}
-  });
-
-  // ===== Persistencia en URL hash (q, m, s, a) =====
-  function syncHash(){
-    const h = new URLSearchParams();
-    const q = (filter?.value||'').trim();
-    if(q) h.set('q', q);
-    if(state.minutes !== 5) h.set('m', String(state.minutes));
-    if(state.sort !== 'seen_desc') h.set('s', state.sort);
-    if(!state.auto) h.set('a','0');
-    location.hash = h.toString();
-  }
-  function hydrateFromHash(){
-    try{
-      const h = new URLSearchParams(location.hash.replace(/^#/,''));
-      const q = h.get('q') || '';
-      const m = parseInt(h.get('m')||'',10);
-      const s = h.get('s') || '';
-      const a = h.get('a') || '';
-      if(q){ filter.value = q; }
-      if(!Number.isNaN(m) && m){ state.minutes = m; minutesSel.value = String(m); }
-      if(s){ state.sort = s; sortSel.value = s; }
-      state.auto = (a !== '0');
-      document.getElementById('autoRefresh').checked = state.auto;
-    }catch(_){}
-  }
-
-  // ===== UI events =====
-  btnRefresh.addEventListener('click', doRefresh);
+  // UI events
+  document.getElementById('btnRefresh').addEventListener('click', doRefresh);
   minutesSel.addEventListener('change', async ()=>{
     state.minutes = parseInt(minutesSel.value,10)||5;
-    LS.set('ua.minutes', state.minutes);
-    syncHash();
     await doRefresh();
   });
-  sortSel.addEventListener('change', ()=>{
-    state.sort = sortSel.value;
-    LS.set('ua.sort', state.sort);
-    syncHash();
-    render(state.items);
-  });
-  filter?.addEventListener('input', debounce(()=>{ render(state.items); syncHash(); }, 160));
+  sortSel.addEventListener('change', ()=>{ state.sort = sortSel.value; render(state.items); });
+  filter?.addEventListener('input', debounce(()=> render(state.items), 160));
 
   // Auto refresh
   const autoChk = document.getElementById('autoRefresh');
-  let timer = null, ticker = null;
+  let timer = null;
   function setAuto(){
     if(timer){ clearInterval(timer); timer=null; }
-    if(ticker){ clearInterval(ticker); ticker=null; }
     if(autoChk.checked){
       timer = setInterval(doRefresh, 20_000);
-      // contador "hace Xs"
-      ticker = setInterval(()=>{
-        if(state.lastFetch) lastUpd.textContent = `Actualizado hace ${Math.max(0, Math.round((Date.now()-state.lastFetch)/1000))}s · Ventana: ${state.minutes} min`;
-      }, 1000);
     }
   }
-  autoChk.addEventListener('change', ()=>{
-    state.auto = autoChk.checked; LS.set('ua.auto', state.auto); syncHash(); setAuto();
-  });
-  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden && state.auto) doRefresh(); });
-
-  // Atajo: "/" enfoca el filtro
-  window.addEventListener('keydown', (e)=>{
-    if(e.key==='/' && !e.ctrlKey && !e.metaKey && !e.altKey){
-      const t = e.target; const typing = t && (t.tagName==='INPUT' || t.tagName==='TEXTAREA' || t.isContentEditable);
-      if(typing) return;
-      e.preventDefault(); filter?.focus();
-    }
-  });
+  autoChk.addEventListener('change', setAuto);
 
   // ===== Init =====
   (async function init(){
-    hydrateFromHash();
-
     if(Array.isArray(INITIAL) && INITIAL.length){
       state.lastFetch = Date.now();
       render(INITIAL);

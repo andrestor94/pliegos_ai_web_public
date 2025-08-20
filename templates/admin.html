@@ -1,15 +1,33 @@
 {% extends "base.html" %}
 
-{% block title %}Administración — Suizo Argentina{% endblock %}
+{% block title %}Panel de Administración · Suizo Argentina{% endblock %}
 
 {% block extra_head %}
   {# axios solo aquí (la base no lo carga) #}
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 
   <style>
-    /* ===== Estilos SCOPED y alineados al theme ===== */
+    /* --- Estilos SCOPED y alineados al theme --- */
+    .admin-actions .btn{ border-radius:12px; }
 
-    /* KPIs */
+    /* Badges de rol/estado usando tokens */
+    .badge-role{
+      background: var(--brand-100);
+      color: var(--brand-500);
+      border: 1px solid var(--bs-border-color, var(--border));
+      font-weight: 600;
+    }
+    .badge-ok{
+      background: #10b981; color: #fff;
+      border: 1px solid rgba(0,0,0,.05);
+    }
+    .badge-off{
+      background: var(--muted); color: var(--text-2);
+      border: 1px solid var(--bs-border-color, var(--border));
+    }
+
+    .hint{ color: var(--text-2); }
+
     .kpi-box{
       display:flex; align-items:center; gap:10px;
       padding:10px 14px;
@@ -21,64 +39,16 @@
     }
     .kpi-num{ font-size:20px; font-weight:800; line-height:1; color: var(--text); }
     .kpi-sub{ font-size:12px; color: var(--text-2); }
-    .hint{ color: var(--text-2); }
-
-    /* Badges de rol/estado usando tokens */
-    .badge-role{
-      background: var(--brand-100);
-      color: var(--brand-500);
-      border: 1px solid var(--bs-border-color, var(--border));
-      font-weight: 700;
-      border-radius: 999px;
-      padding: .2rem .5rem;
-    }
-    .badge-ok{
-      background: #16a34a; color: #fff;
-      border: 1px solid rgba(0,0,0,.04);
-      border-radius: 999px;
-      padding: .2rem .5rem;
-      font-weight:700;
-    }
-    .badge-off{
-      background: var(--muted); color: var(--text-2);
-      border: 1px solid var(--bs-border-color, var(--border));
-      border-radius: 999px;
-      padding: .2rem .5rem;
-      font-weight:700;
-    }
-
-    /* Tabla */
-    .admin .table-wrap{
-      max-height: 65vh;
-      border-radius: var(--radius);
-      overflow: auto;
-    }
-    .admin thead th{
-      position: sticky; top: 0; z-index: 1;
-      background: var(--muted);
-    }
-    html[data-theme="dark"] .admin thead th{ background:#0f172a; }
-
-    /* Acciones */
-    .admin-actions .btn{ border-radius:12px; }
-    .admin-actions{ display:flex; flex-wrap:wrap; gap:.4rem; }
-
-    /* Inputs */
-    .admin .input-compact .form-control,
-    .admin .input-compact .form-select{ border-radius:12px; }
-
-    /* Evitar saltos por ancho de acciones */
-    th[colspan], th.actions-col, td.actions-col{ min-width: 360px; }
   </style>
 {% endblock %}
 
 {% block content %}
-<div class="container-xxl stack admin">
+<div class="container-xxl stack">
 
-  <!-- Encabezado + acciones (sin hover para consistencia con otras pestañas) -->
-  <section class="card-clean">
-    <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
-      <h1 class="hero-title m-0">
+  <!-- Encabezado + acciones -->
+  <section class="card-clean shadow-hover">
+    <div class="card-header d-flex align-items-center justify-content-between">
+      <h1 class="h5 m-0 text-brand">
         <i class="bi bi-gear me-1"></i> Administración de Usuarios
       </h1>
       <div class="d-flex flex-wrap gap-2">
@@ -97,12 +67,12 @@
   </section>
 
   <!-- Monitoreo -->
-  <section class="card-clean">
+  <section class="card-clean shadow-hover">
     <div class="card-body d-flex align-items-center gap-3 flex-wrap">
       <div class="kpi-box">
         <i class="bi bi-activity fs-5"></i>
         <div>
-          <div id="kpiOnline" class="kpi-num" aria-live="polite">—</div>
+          <div id="kpiOnline" class="kpi-num">—</div>
           <div class="kpi-sub">en línea (últ. 5 min)</div>
         </div>
       </div>
@@ -113,7 +83,7 @@
   </section>
 
   <!-- Crear usuario -->
-  <section class="card-clean">
+  <section class="card-clean shadow-hover">
     <div class="card-header">
       <h2 class="h6 m-0">Crear nuevo usuario</h2>
     </div>
@@ -136,9 +106,8 @@
         </div>
         <div class="col-md-1 d-grid">
           <label class="form-label d-none d-md-block">&nbsp;</label>
-          <button id="btnCrear" type="submit" class="btn btn-primary">
-            <span class="spinner-border spinner-border-sm me-1 d-none" id="crearSpinner" role="status" aria-hidden="true"></span>
-            <i class="bi bi-plus-lg" id="crearIcon"></i>
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-plus-lg"></i>
           </button>
         </div>
       </form>
@@ -150,11 +119,11 @@
   </section>
 
   <!-- Lista de usuarios -->
-  <section class="card-clean">
-    <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+  <section class="card-clean shadow-hover">
+    <div class="card-header d-flex align-items-center justify-content-between">
       <h2 class="h6 m-0">Usuarios registrados</h2>
-      <div class="d-flex gap-2 align-items-center input-compact">
-        <input id="filtro" class="form-control form-control-sm" style="max-width:260px" placeholder="Filtrar por nombre o email" aria-label="Filtrar">
+      <div class="d-flex gap-2 align-items-center">
+        <input id="filtro" class="form-control form-control-sm" style="max-width:260px" placeholder="Filtrar por nombre o email">
         <button id="btnRefrescar" class="btn btn-sm btn-outline-secondary">
           <i class="bi bi-arrow-clockwise"></i> Refrescar
         </button>
@@ -169,7 +138,7 @@
               <th>Email</th>
               <th>Rol</th>
               <th>Estado</th>
-              <th class="actions-col">Acciones</th>
+              <th style="min-width:340px">Acciones</th>
             </tr>
           </thead>
           <tbody id="tablaUsuarios"><!-- JS --></tbody>
@@ -185,32 +154,30 @@
 <script>
   const DEFAULT_RESET_PASSWORD = '1234'; // ajustá si tu backend usa otra por defecto
 
-  /* ===== Utils ===== */
-  const $  = (sel,root=document)=>root.querySelector(sel);
-  const $$ = (sel,root=document)=>[...root.querySelectorAll(sel)];
+  /* Utils */
   function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function toastOk(t,b){ if(window.showToast) showToast({title:t, body:b||'', icon:'check2-circle'}); }
   function toastWarn(t,b){ if(window.showToast) showToast({title:t, body:b||'', icon:'exclamation-triangle'}); }
   function toastInfo(t,b){ if(window.showToast) showToast({title:t, body:b||'', icon:'info'}); }
 
-  /* ===== KPI en línea ===== */
+  /* KPI en línea */
   async function refreshOnline(){
     try{
       const r = await fetch('/presence/online?minutes=5');
       const j = await r.json();
-      $('#kpiOnline').textContent = Array.isArray(j.items) ? j.items.length : 0;
+      document.getElementById('kpiOnline').textContent = (j.items||[]).length ?? 0;
     }catch(_){
-      $('#kpiOnline').textContent = '0';
+      document.getElementById('kpiOnline').textContent = '0';
     }
   }
 
-  /* ===== Cargar usuarios ===== */
+  /* Cargar usuarios */
   let usuariosCache = [];
   async function cargarUsuarios(){
-    const tbody = $('#tablaUsuarios');
+    const tbody = document.getElementById('tablaUsuarios');
     tbody.innerHTML = `
       <tr><td colspan="5" class="text-center py-4 text-muted">
-        <div class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></div> Cargando…
+        <div class="spinner-border spinner-border-sm me-2" role="status"></div> Cargando…
       </td></tr>`;
     try{
       // API: { items: [...] }
@@ -223,8 +190,8 @@
   }
 
   function renderUsuarios(items){
-    const tbody = $('#tablaUsuarios');
-    const filtro = ($('#filtro').value||'').toLowerCase().trim();
+    const tbody = document.getElementById('tablaUsuarios');
+    const filtro = (document.getElementById('filtro').value||'').toLowerCase().trim();
 
     const data = items.filter(u=>{
       if(!filtro) return true;
@@ -238,124 +205,40 @@
     }
 
     tbody.innerHTML = '';
-    const frag = document.createDocumentFragment();
-
     data.forEach(u=>{
       const activo = !!u.activo;
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td>${escapeHtml(u.nombre||'-')}</td>
         <td>${escapeHtml(u.email||'-')}</td>
-        <td><span class="badge-role">${escapeHtml(u.rol||'-')}</span></td>
+        <td><span class="badge badge-role">${escapeHtml(u.rol||'-')}</span></td>
         <td>
-          <span class="${activo?'badge-ok':'badge-off'}">
+          <span class="badge ${activo?'badge-ok':'badge-off'}">
             ${activo ? 'Activo' : 'Inactivo'}
           </span>
         </td>
-        <td class="admin-actions actions-col">
-          <button class="btn btn-sm ${activo?'btn-outline-danger':'btn-outline-success'}"
-                  data-action="toggle" data-email="${escapeHtml(u.email||'')}" data-active="${activo ? '1':'0'}">
-            <i class="bi ${activo?'bi-person-slash':'bi-person-check'} me-1"></i>${activo?'Desactivar':'Activar'}
-          </button>
-          <button class="btn btn-sm btn-outline-dark"
-                  data-action="resetpw" data-email="${escapeHtml(u.email||'')}">
-            <i class="bi bi-key me-1"></i> Blanquear contraseña
-          </button>
-          <button class="btn btn-sm btn-outline-secondary"
-                  data-action="resetsession" data-email="${escapeHtml(u.email||'')}">
-            <i class="bi bi-arrow-repeat me-1"></i> Reset sesión
-          </button>
-          <button class="btn btn-sm btn-outline-danger"
-                  data-action="delete" data-email="${escapeHtml(u.email||'')}">
-            <i class="bi bi-trash me-1"></i> Eliminar
-          </button>
+        <td class="admin-actions d-flex flex-wrap gap-2">
+          ${activo
+            ? `<button class="btn btn-sm btn-outline-danger" onclick="toggleUsuario('${encodeURIComponent(u.email)}', false)">⛔ Desactivar</button>`
+            : `<button class="btn btn-sm btn-outline-success" onclick="toggleUsuario('${encodeURIComponent(u.email)}', true)">🟢 Activar</button>`
+          }
+          <button class="btn btn-sm btn-outline-dark" onclick="blanquearPassword('${encodeURIComponent(u.email)}')">🔑 Blanquear contraseña</button>
+          <button class="btn btn-sm btn-outline-secondary" onclick="reiniciarSesion('${encodeURIComponent(u.email)}')">🔄 Reset sesión</button>
+          <button class="btn btn-sm btn-outline-danger" onclick="eliminarUsuario('${encodeURIComponent(u.email)}')">🗑️ Eliminar</button>
         </td>
       `;
-      frag.appendChild(tr);
+      tbody.appendChild(tr);
     });
-
-    tbody.appendChild(frag);
   }
 
-  /* ===== Acciones ===== */
-  async function blanquearPassword(email){
-    if(!confirm(`¿Blanquear la contraseña de ${email}?`)) return;
-    try{
-      await axios.post('/api/admin/users/password', { email, password: DEFAULT_RESET_PASSWORD });
-      toastOk('Password blanqueado', `Usuario: ${email}`);
-      alert(`Contraseña blanqueada a ${DEFAULT_RESET_PASSWORD}`);
-    }catch(_){
-      toastWarn('Error', 'No se pudo blanquear la contraseña');
-    }
-  }
-
-  async function toggleUsuario(email, activar){
-    try{
-      await axios.post('/api/admin/users/toggle', { email, activo: !!activar });
-      await cargarUsuarios();
-      toastOk(activar?'Usuario activado':'Usuario desactivado', email);
-    }catch(_){
-      toastWarn('Error', activar?'No se pudo activar':'No se pudo desactivar');
-    }
-  }
-
-  async function eliminarUsuario(email){
-    if(!confirm(`¿Eliminar definitivamente a ${email}?`)) return;
-    try{
-      await axios.delete(`/api/admin/users/${encodeURIComponent(email)}`); // soft delete por defecto
-      await cargarUsuarios();
-      toastOk('Usuario eliminado', email);
-    }catch(_){
-      toastWarn('Error', 'No se pudo eliminar');
-    }
-  }
-
-  function reiniciarSesion(email){
-    // No hay endpoint en backend. Solo avisamos para no confundir.
-    toastInfo('Aviso', `Reset de sesión no implementado para ${email}`);
-  }
-
-  /* Delegación de eventos en la tabla (evita inline JS) */
-  $('#tablaUsuarios')?.addEventListener('click', async (e)=>{
-    const btn = e.target.closest('button[data-action]'); if(!btn) return;
-    const email = btn.getAttribute('data-email') || '';
-    const action = btn.getAttribute('data-action');
-
-    // UI busy
-    const prevHtml = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>…`;
-
-    try{
-      if(action === 'toggle'){
-        const active = btn.getAttribute('data-active') === '1';
-        await toggleUsuario(email, !active);
-      }else if(action === 'resetpw'){
-        await blanquearPassword(email);
-      }else if(action === 'delete'){
-        await eliminarUsuario(email);
-      }else if(action === 'resetsession'){
-        reiniciarSesion(email);
-      }
-    }finally{
-      btn.disabled = false;
-      btn.innerHTML = prevHtml;
-    }
-  });
-
-  /* Crear usuario */
-  $('#crearUsuarioForm')?.addEventListener('submit', async (e)=>{
+  /* Acciones CRUD */
+  document.getElementById('crearUsuarioForm').addEventListener('submit', async (e)=>{
     e.preventDefault();
-    const nombre = $('#nombre').value.trim();
-    const email  = $('#email').value.trim();
-    const rol    = $('#rol').value;
-    const box = $('#mensaje'); box.innerHTML = '';
+    const nombre = document.getElementById('nombre').value.trim();
+    const email  = document.getElementById('email').value.trim();
+    const rol    = document.getElementById('rol').value;
+    const box = document.getElementById('mensaje'); box.innerHTML = '';
 
-    const btn = $('#btnCrear');
-    const spin = $('#crearSpinner');
-    const icon = $('#crearIcon');
-
-    btn.disabled = true; spin.classList.remove('d-none'); icon.classList.add('d-none');
     try{
       const res = await axios.post('/api/admin/users', { nombre, email, rol });
       if(res?.data?.ok){
@@ -370,16 +253,54 @@
       const msg = err?.response?.data?.error || 'Error al crear el usuario';
       box.innerHTML = `<div class="alert alert-danger">${escapeHtml(msg)}</div>`;
       toastWarn('Error', msg);
-    }finally{
-      btn.disabled = false; spin.classList.add('d-none'); icon.classList.remove('d-none');
     }
   });
 
-  /* Eventos UI */
-  $('#btnRefrescar')?.addEventListener('click', cargarUsuarios);
-  $('#filtro')?.addEventListener('input', ()=> renderUsuarios(usuariosCache));
+  async function blanquearPassword(emailEnc){
+    const email = decodeURIComponent(emailEnc);
+    try{
+      await axios.post('/api/admin/users/password', { email, password: DEFAULT_RESET_PASSWORD });
+      toastOk('Password blanqueado', `Usuario: ${email}`);
+      alert(`Contraseña blanqueada a ${DEFAULT_RESET_PASSWORD}`);
+    }catch(_){
+      toastWarn('Error', 'No se pudo blanquear la contraseña');
+    }
+  }
 
-  /* ===== Init ===== */
+  async function toggleUsuario(emailEnc, activar){
+    const email = decodeURIComponent(emailEnc);
+    try{
+      await axios.post('/api/admin/users/toggle', { email, activo: !!activar });
+      await cargarUsuarios();
+      toastOk(activar?'Usuario activado':'Usuario desactivado', email);
+    }catch(_){
+      toastWarn('Error', activar?'No se pudo activar':'No se pudo desactivar');
+    }
+  }
+
+  async function eliminarUsuario(emailEnc){
+    const email = decodeURIComponent(emailEnc);
+    if(!confirm(`¿Eliminar definitivamente a ${email}?`)) return;
+    try{
+      await axios.delete(`/api/admin/users/${encodeURIComponent(email)}`); // soft delete por defecto
+      await cargarUsuarios();
+      toastOk('Usuario eliminado', email);
+    }catch(_){
+      toastWarn('Error', 'No se pudo eliminar');
+    }
+  }
+
+  function reiniciarSesion(emailEnc){
+    const email = decodeURIComponent(emailEnc);
+    // No hay endpoint en backend. Solo avisamos para no confundir.
+    toastInfo('Aviso', `Reset de sesión no implementado para ${email}`);
+  }
+
+  /* Eventos UI */
+  document.getElementById('btnRefrescar').addEventListener('click', cargarUsuarios);
+  document.getElementById('filtro').addEventListener('input', ()=> renderUsuarios(usuariosCache));
+
+  /* Init */
   cargarUsuarios();
   refreshOnline();
   setInterval(refreshOnline, 30000);

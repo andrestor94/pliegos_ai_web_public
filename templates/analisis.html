@@ -1,47 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Análisis de pliegos — Suizo Argentina{% endblock %}
+{% block title %}Análisis de pliegos – Suizo Argentina{% endblock %}
 
-{% block extra_head %}
-<style>
-  /* ====== Scoped a análisis (respetando el theme global) ====== */
-  .analisis .panel-muted{
-    background: var(--muted);
-    border: 1px solid var(--bs-border-color, var(--border));
-    border-radius: 12px;
-  }
-  .analisis .rich-text{
-    overflow-wrap: anywhere;
-  }
-  .analisis .dropzone{
-    transition: box-shadow .18s cubic-bezier(0.22,1,0.36,1), transform .18s, border-color .18s;
-    cursor: pointer;
-  }
-  .analisis .dropzone:hover,
-  .analisis .dropzone:focus-within{
-    box-shadow: var(--shadow-md);
-    transform: translateY(-1px);
-    border-color: var(--brand-300);
-  }
-  .analisis .segmented .btn{ padding:.35rem .8rem; }
-  .analisis .segmented .btn.is-active,
-  .analisis .segmented .btn.active{
-    border-color: var(--brand-300) !important;
-    box-shadow: 0 0 0 4px rgba(var(--ring-color), .18);
-  }
-  .analisis .file-badge{
-    display:inline-block; padding:.15rem .5rem; border-radius:999px;
-    border:1px solid var(--bs-border-color, var(--border)); font-weight:600; font-size:.8rem;
-    background: var(--chip-bg); color: var(--chip-text);
-  }
-  .analisis .kbd{ padding:.05rem .35rem; border-radius:6px; border:1px solid var(--bs-border-color, var(--border)); background:var(--surface); }
-  @media (max-width: 575.98px){
-    .analisis .segmented{ width:100%; justify-content:space-between; }
-  }
-</style>
-{% endblock %}
+{% block extra_head %}{% endblock %}
 
 {% block content %}
-<div class="container-xxl py-3 analisis">
+<div class="container-xxl py-3">
   <h1 class="hero-title mb-3">
     <i class="bi bi-file-earmark-text me-2"></i> Análisis de pliegos
   </h1>
@@ -55,16 +18,14 @@
       <div class="card-body">
         <!-- 1) Carga de archivos -->
         <h2 class="h6 mb-2">1) Cargar archivos (PDF / DOCX / Imágenes)</h2>
-        <div id="dzArea" class="dropzone mb-3" tabindex="0" aria-label="Zona para arrastrar y soltar archivos">
+        <div id="dzArea" class="dropzone mb-3" aria-label="Zona para arrastrar y soltar archivos">
           Arrastrá y soltá aquí o
-          <label class="btn btn-sm btn-primary ms-1 mb-0">
+          <label class="btn btn-sm btn-primary ms-1">
             Seleccionar
             <input id="filesInput" type="file" name="files" multiple hidden
                    accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.tiff,.tif"/>
           </label>
-          <div class="small subtle mt-2">
-            También podés pegar con <span class="kbd">Ctrl</span>+<span class="kbd">V</span> imágenes copiadas del portapapeles.
-          </div>
+          <div class="small subtle mt-2">También podés pegar con <kbd>Ctrl</kbd>+<kbd>V</kbd> imágenes copiadas del portapapeles.</div>
         </div>
 
         <!-- Lista de archivos seleccionados -->
@@ -114,12 +75,10 @@
         <!-- 3) Controles -->
         <div class="d-flex flex-wrap gap-2 mt-3">
           <button id="analyzeBtn" class="btn btn-primary" disabled>
-            <span class="btn-label"><i class="bi bi-cpu me-1"></i> Analizar</span>
-            <span id="analyzeSpin" class="spinner-border spinner-border-sm ms-2 d-none" role="status" aria-hidden="true"></span>
+            <i class="bi bi-cpu me-1"></i> Analizar
           </button>
           <button id="exportPdfBtn" class="btn btn-outline-primary" disabled>
-            <span class="btn-label"><i class="bi bi-filetype-pdf me-1"></i> Generar PDF</span>
-            <span id="pdfSpin" class="spinner-border spinner-border-sm ms-2 d-none" role="status" aria-hidden="true"></span>
+            <i class="bi bi-filetype-pdf me-1"></i> Generar PDF
           </button>
           <button id="clearBtn" class="btn btn-outline-secondary">
             <i class="bi bi-trash3 me-1"></i> Limpiar
@@ -131,16 +90,16 @@
         <!-- 4) Resultados -->
         <div class="d-flex align-items-center justify-content-between mb-2">
           <h2 class="h6 m-0">Resultados</h2>
-          <div class="segmented" role="tablist" aria-label="Cambiar vista de resultados">
-            <button class="btn btn-sm btn-light active" data-view="texto" type="button" role="tab" aria-selected="true">Texto</button>
-            <button class="btn btn-sm btn-light" data-view="estructura" type="button" role="tab" aria-selected="false">Estructura</button>
-            <button class="btn btn-sm btn-light" data-view="tablas" type="button" role="tab" aria-selected="false">Tablas</button>
+          <div class="segmented">
+            <button class="btn btn-sm btn-light active" data-view="texto" type="button">Texto</button>
+            <button class="btn btn-sm btn-light" data-view="estructura" type="button">Estructura</button>
+            <button class="btn btn-sm btn-light" data-view="tablas" type="button">Tablas</button>
           </div>
         </div>
 
         <!-- Vista: Texto -->
         <div id="view-texto" class="h-pane-55" style="display:block;">
-          <div id="textoOut" class="small rich-text" aria-live="polite"></div>
+          <div id="textoOut" class="small"></div>
         </div>
 
         <!-- Vista: Estructura (acordeón) -->
@@ -178,7 +137,7 @@
     <aside class="card-clean shadow-hover">
       <div class="card-body">
         <h2 class="h6 mb-2">Chat de análisis</h2>
-        <div id="chatBox" class="panel-muted p-2 h-pane-55">
+        <div id="chatBox" class="border rounded p-2 h-pane-55 bg-body-tertiary">
           <!-- Mensajes -->
           <div class="small text-muted">Sin mensajes aún.</div>
         </div>
@@ -190,7 +149,7 @@
         <hr class="my-3"/>
 
         <h2 class="h6 mb-2">Bitácora</h2>
-        <div id="logBox" class="panel-muted small p-2 h-pane-50" style="white-space:pre-wrap;"></div>
+        <div id="logBox" class="small border rounded p-2 h-pane-50 bg-body-tertiary" style="white-space:pre-wrap;"></div>
       </div>
     </aside>
   </div>
@@ -209,7 +168,6 @@ const fmtBytes = n=>{
   return `${n.toFixed(i?1:0)} ${u[i]}`;
 };
 function log(msg){ const el=$("#logBox"); if(!el) return; const t=new Date().toLocaleTimeString(); el.textContent += `[${t}] ${msg}\n`; el.scrollTop=el.scrollHeight; }
-function toast(t,b,icon){ if(window.showToast) showToast({title:t, body:b||'', icon: icon || 'info'}); }
 
 /* ===== Drag & drop / file input ===== */
 const dz = $("#dzArea");
@@ -219,13 +177,8 @@ const filesTbody = $("#filesTbody");
 const analyzeBtn = $("#analyzeBtn");
 const exportPdfBtn = $("#exportPdfBtn");
 const clearBtn = $("#clearBtn");
-const analyzeSpin = $("#analyzeSpin");
-const pdfSpin = $("#pdfSpin");
 
 let files = []; // {file, id, status}
-
-const MAX_FILE_MB = 40; // límite front opcional para UX
-const ALLOWED = /\.(pdf|docx?|png|jpe?g|webp|tiff?)$/i;
 
 function refreshFilesUI(){
   if(!files.length){
@@ -243,8 +196,8 @@ function refreshFilesUI(){
       <td>${fmtBytes(f.file.size)}</td>
       <td>${(f.file.type||'').split('/').pop().toUpperCase() || f.file.name.split('.').pop().toUpperCase()}</td>
       <td>
-        <span class="file-badge">
-          ${f.status ? f.status : 'pendiente'}
+        <span class="badge ${f.status==='ok'?'bg-success-subtle text-success': f.status==='processing'?'bg-warning-subtle text-warning':'bg-secondary-subtle text-secondary'}">
+          ${f.status||'pendiente'}
         </span>
       </td>
       <td class="d-flex gap-1">
@@ -260,33 +213,22 @@ function refreshFilesUI(){
 }
 
 function addFiles(list){
-  let added = 0, skipped = 0;
   for(const f of list){
     if(!f) continue;
-    if(!ALLOWED.test(f.name)){
-      skipped++; continue;
-    }
-    if(f.size > MAX_FILE_MB*1024*1024){
-      skipped++; continue;
-    }
     files.push({file:f, id:crypto.randomUUID(), status:'pendiente'});
-    added++;
   }
-  if(added) log(`Agregados ${added} archivo(s).`);
-  if(skipped) toast('Archivos omitidos', `${skipped} no cumplen tipo/tamaño (${MAX_FILE_MB} MB).`, 'exclamation-triangle');
   refreshFilesUI();
 }
 
 filesInput?.addEventListener('change', e=> addFiles(e.target.files||[]));
 
 ["dragenter","dragover"].forEach(ev=> dz.addEventListener(ev, e=>{
-  e.preventDefault(); e.stopPropagation(); dz.classList.add('border-brand');
+  e.preventDefault(); e.stopPropagation(); dz.classList.add('border-primary');
 }));
 ["dragleave","drop"].forEach(ev=> dz.addEventListener(ev, e=>{
-  e.preventDefault(); e.stopPropagation(); dz.classList.remove('border-brand');
+  e.preventDefault(); e.stopPropagation(); dz.classList.remove('border-primary');
 }));
 dz.addEventListener('drop', e=>{ addFiles(e.dataTransfer.files||[]); });
-dz.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); filesInput?.click(); }});
 
 document.addEventListener('paste', e=>{
   const items = e.clipboardData?.items||[];
@@ -322,8 +264,8 @@ const views = {
   tablas: $("#view-tablas")
 };
 viewBtns.forEach(b=> b.addEventListener('click', ()=>{
-  viewBtns.forEach(x=>{ x.classList.remove('active','is-active'); x.setAttribute('aria-selected','false'); });
-  b.classList.add('active','is-active'); b.setAttribute('aria-selected','true');
+  viewBtns.forEach(x=> x.classList.remove('active'));
+  b.classList.add('active');
   const v = b.dataset.view;
   Object.entries(views).forEach(([k,el])=> el.style.display = (k===v)?'block':'none');
 }));
@@ -334,7 +276,6 @@ clearBtn?.addEventListener('click', ()=>{
   $("#textoOut").innerHTML = '';
   $("#accEstructura").innerHTML = '';
   $("#tablaRequisitos tbody").innerHTML = '';
-  filesInput.value='';
   refreshFilesUI();
   log('Se limpió la lista y los resultados.');
 });
@@ -342,7 +283,6 @@ clearBtn?.addEventListener('click', ()=>{
 analyzeBtn?.addEventListener('click', async ()=>{
   if(!files.length) return;
   analyzeBtn.disabled = true;
-  analyzeSpin.classList.remove('d-none');
   exportPdfBtn.disabled = true;
   log('Iniciando análisis…');
 
@@ -353,7 +293,7 @@ analyzeBtn?.addEventListener('click', async ()=>{
   fd.append('lang', $("#lang").value);
   fd.append('ocr', $("#ocrMode").value);
 
-  files = files.map(f => ({...f, status:'procesando'}));
+  files = files.map(f => ({...f, status:'processing'}));
   refreshFilesUI();
 
   try{
@@ -401,16 +341,13 @@ analyzeBtn?.addEventListener('click', async ()=>{
     files = files.map(f => ({...f, status:'error'}));
     refreshFilesUI();
     log('Error: ' + (err?.message || 'desconocido'));
-    toast('Error', 'No se pudo completar el análisis.', 'exclamation-triangle');
   }finally{
     analyzeBtn.disabled = false;
-    analyzeSpin.classList.add('d-none');
   }
 });
 
 exportPdfBtn?.addEventListener('click', async ()=>{
   exportPdfBtn.disabled = true;
-  pdfSpin.classList.remove('d-none');
   log('Generando PDF…');
   try{
     // Enviá ids/resultado si tu backend lo requiere. Ejemplo básico:
@@ -432,10 +369,8 @@ exportPdfBtn?.addEventListener('click', async ()=>{
     log('PDF generado.');
   }catch(err){
     log('Error al generar PDF: ' + (err?.message||'desconocido'));
-    toast('Error', 'No se pudo generar el PDF.', 'exclamation-triangle');
   }finally{
     exportPdfBtn.disabled = false;
-    pdfSpin.classList.add('d-none');
   }
 });
 

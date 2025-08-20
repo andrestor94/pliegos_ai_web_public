@@ -14,34 +14,6 @@
 
     /* Compactado de la toolbar interna */
     #calMini.calendar-compact .fc .fc-toolbar{ margin:8px 0 12px; }
-
-    /* === Dropzone / lista de archivos === */
-    .drop-hint{
-      display:none; place-items:center; text-align:center;
-      border:2px dashed #93c5fd; color:#1e3a8a;
-      background:rgba(37,99,235,.06); border-radius:12px; padding:14px;
-      font-weight:600;
-    }
-    .drop-hint.show{ display:grid; }
-    .file-chip{
-      display:flex; align-items:center; justify-content:space-between; gap:10px;
-      padding:.5rem .75rem; border:1px solid var(--border); border-radius:12px; background:#fff;
-    }
-    .file-chip .meta{ font-size:.9rem; color:var(--muted); }
-    .file-chip .rm{ border:none; background:transparent; color:#ef4444; font-size:18px; line-height:1; }
-    .file-tips{ color:var(--muted); }
-
-    .btn[disabled]{ pointer-events:none; opacity:.75; }
-    .skeleton{ position:relative; overflow:hidden; border:1px solid var(--border); border-radius:12px; padding:14px; }
-    .sk-bar{ height:12px; background:rgba(148,163,184,.25); border-radius:6px; margin:6px 0; }
-    .skeleton::after{
-      content:""; position:absolute; inset:0;
-      background:linear-gradient(90deg, transparent, rgba(180,190,210,.22), transparent);
-      animation: shimmer 1.1s infinite;
-    }
-    @keyframes shimmer{ 0%{ transform:translateX(-100%);} 100%{ transform:translateX(100%);} }
-
-    mark.hl{ background:#fff3bf; padding:0 .15em; border-radius:4px; }
   </style>
 {% endblock %}
 
@@ -58,37 +30,19 @@
 
     <!-- 1) Analizar -->
     <div class="col-12" id="analisis">
-      <div class="cardx position-relative" id="analisisCard">
+      <div class="cardx">
         <div class="title mb-2"><i class="bi bi-upload me-2"></i> Subir pliegos para análisis</div>
-
-        <!-- Hint de drop -->
-        <div id="dzHint" class="drop-hint" aria-hidden="true">Soltá archivos para adjuntar…</div>
-
-        <form id="form-analyze" class="mb-2" novalidate>
-          <input type="file" id="file-hidden" class="form-control d-none" multiple
-                 accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.tif,.tiff,.txt,.csv,.xlsx,.xls,.pptx"/>
-          <div class="mb-2 d-flex flex-wrap gap-2">
-            <button type="button" class="btn btn-outline-secondary btn-sm" id="btnAdd">+ Agregar archivo</button>
-            <button type="button" class="btn btn-outline-secondary btn-sm" id="btnPaste">Pegar imagen <span class="text-muted">(Ctrl/⌘+V)</span></button>
+        <form id="form-analyze" class="mb-2">
+          <input type="file" id="file-hidden" class="form-control d-none" multiple>
+          <div class="mb-2">
+            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="agregarArchivos()">+ Agregar archivo</button>
           </div>
-          <small class="file-tips d-block mb-2">
-            Máx. <strong id="maxFilesLbl">10</strong> archivos · <strong id="maxSizeLbl">50 MB</strong> totales. Tipos: PDF, DOC/DOCX, imágenes, CSV/XLSX/PPTX, TXT.
-          </small>
-
-          <ul id="lista-archivos" class="list-group mb-3" aria-live="polite"></ul>
-
+          <small class="text-muted d-block mb-2">Tamaño máximo recomendado por archivo: 25 MB</small>
+          <ul id="lista-archivos" class="list-group mb-3"></ul>
           <div class="d-flex flex-wrap gap-2">
-            <button type="button" id="analyze-btn" class="btn btn-primary">
-              <span class="btn-txt"><i class="bi bi-rocket-takeoff me-1"></i> Analizar</span>
-              <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
-            </button>
-            <button type="button" id="generate-btn" class="btn btn-outline-primary" disabled>
-              <i class="bi bi-file-earmark-arrow-down me-1"></i> Descargar último PDF
-            </button>
-            <button type="button" class="btn btn-outline-secondary" id="btnClear">Limpiar</button>
-            <button type="button" class="btn btn-outline-secondary" id="btnCopyResumen" title="Copiar resumen" disabled>
-              <i class="bi bi-clipboard"></i> Copiar resumen
-            </button>
+            <button type="button" id="analyze-btn" class="btn btn-primary"><i class="bi bi-rocket-takeoff me-1"></i> Analizar</button>
+            <button type="button" id="generate-btn" class="btn btn-outline-primary"><i class="bi bi-file-earmark-arrow-down me-1"></i> Descargar último PDF</button>
+            <button type="button" class="btn btn-outline-secondary" onclick="limpiar()">Limpiar</button>
           </div>
         </form>
         <div id="result"></div>
@@ -100,10 +54,7 @@
       <div class="cardx">
         <div class="d-flex align-items-center justify-content-between mb-2">
           <div class="title"><i class="bi bi-clock-history me-2"></i> Historial de análisis</div>
-          <div class="d-flex align-items-center gap-2">
-            <input type="text" id="search-input" class="form-control form-control-sm" placeholder="Buscar en el historial..." style="max-width:260px"/>
-            <button id="btnHistCsv" class="btn btn-outline-primary btn-sm" title="Exportar CSV"><i class="bi bi-filetype-csv"></i></button>
-          </div>
+          <input type="text" id="search-input" class="form-control form-control-sm" placeholder="Buscar en el historial..." style="max-width:260px"/>
         </div>
         <div id="historial-list"></div>
       </div>
@@ -112,17 +63,14 @@
     <!-- 3) Calendario + Acciones -->
     <div class="col-12 col-xl-8">
       <div class="cardx calendar-card">
-        <div class="title mb-2 d-flex align-items-center justify-content-between">
-          <span><i class="bi bi-calendar3 me-2"></i> Calendario</span>
-          <span class="small text-muted" id="calStatus">—</span>
-        </div>
+        <div class="title mb-2"><i class="bi bi-calendar3 me-2"></i> Calendario</div>
 
         <!-- Contenedor del mini-calendario -->
         <div id="calMini" class="calendar-compact"></div>
 
         <!-- Controles externos -->
         <div class="d-flex align-items-center gap-2 mt-2">
-          <div class="segmented" id="calViewGroup">
+          <div class="segmented">
             <button class="btn btn-sm btn-light active"
                     type="button"
                     data-cal-view="dayGridMonth"
@@ -194,19 +142,10 @@
 <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/locales-all.global.min.js"></script>
 <script>
-  // ===== Helpers =====
-  const $ = (s,sc)=> (sc||document).querySelector(s);
-  const $$ = (s,sc)=> Array.from((sc||document).querySelectorAll(s));
-  const esc = s => (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const fmt = new Intl.DateTimeFormat('es-AR',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
-
-  function showToastSafe(t,b,icon){
-    if(window.showToast) showToast({title:t, body:b||'', icon:icon||'info'});
-  }
-
   // Fecha de hoy
   (function(){
     const el=document.getElementById('todayLabel');
+    const fmt=new Intl.DateTimeFormat('es-AR',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
     if(el) el.textContent = fmt.format(new Date());
   })();
 
@@ -215,339 +154,135 @@
   (function(){
     const el=document.getElementById('calMini');
     if(!el) return;
-
-    const savedView = localStorage.getItem('home.calendar.view') || 'dayGridMonth';
-
     calendar = new FullCalendar.Calendar(el, {
       height:'auto',
-      initialView: savedView,
+      initialView:'dayGridMonth',
       headerToolbar:false,
       locale:'es',
       nowIndicator:true,
       firstDay:1,
       navLinks:true,
-      eventTimeFormat:{hour:'2-digit',minute:'2-digit',meridiem:false},
       events: async (info, successCallback) => {
-        const status = document.getElementById('calStatus');
         try{
-          status.textContent = 'Cargando…';
           const r = await fetch('/api/calendar/events');
           const j = await r.json();
-          const arr = Array.isArray(j.events)? j.events : [];
-          successCallback(arr);
+          successCallback(j.events || []);
           // KPI semana
           const start=new Date(); const end=new Date(); end.setDate(start.getDate()+7);
-          const cnt=arr.filter(e=>{
+          const cnt=(j.events||[]).filter(e=>{
             const d=new Date(e.start||e.date); return d>=start && d<=end;
           }).length;
           document.getElementById('kpiSemana').textContent = cnt;
-          status.textContent = `${arr.length} evento(s)`;
         }catch(e){
           successCallback([]); document.getElementById('kpiSemana').textContent='0';
-          status.textContent = '—';
         }
       },
-      eventClick: (info)=>{
-        if(info.event.url){
-          window.open(info.event.url, '_blank', 'noopener');
-          info.jsEvent.preventDefault();
-        }else{
-          showToastSafe(info.event.title || 'Evento', (info.event.start ? info.event.start.toLocaleString() : ''), 'calendar-event');
-        }
-      }
+      eventTimeFormat:{hour:'2-digit',minute:'2-digit',meridiem:false},
     });
     calendar.render();
 
-    // Vista activa UI
-    const viewBtns = $$('#calViewGroup [data-cal-view]');
-    function setActiveViewBtn(v){
-      viewBtns.forEach(b=> b.classList.toggle('active', b.dataset.calView === v));
-    }
-    setActiveViewBtn(savedView);
+    // 👇 Exponer instancia para que los botones externos funcionen (manejador global en base.html)
+    el.__fcCalendar = calendar;
+    window.MiniCalendar = calendar; // opcional: debug
 
-    // Botones de vista
-    viewBtns.forEach(btn=>{
-      btn.addEventListener('click', ()=>{
-        const v = btn.dataset.calView;
-        try{ calendar.changeView(v); localStorage.setItem('home.calendar.view', v); setActiveViewBtn(v); }
-        catch(_){}
-      });
-    });
-
-    // Navegación
-    $$('#calMini ~ .d-flex [data-cal-nav]').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
-        const nav = btn.dataset.calNav;
-        try{
-          if(nav === 'prev') calendar.prev();
-          else if(nav === 'next') calendar.next();
-          else if(nav === 'today') calendar.today();
-        }catch(_){}
-      });
-    });
-
-    // recalcular tamaños
+    // fuerza recálculo inicial y en cambios de tamaño
     setTimeout(()=>{ try{ calendar.updateSize(); }catch(_){} }, 80);
     window.addEventListener('resize', ()=>{ try{ calendar.updateSize(); }catch(_){} });
   })();
 
   // ===== Módulo análisis =====
-  const CONFIG = { MAX_FILES:10, MAX_TOTAL_MB:50, ALLOWED:/\.(pdf|docx?|png|jpe?g|webp|tiff?|txt|csv|xlsx?|pptx)$/i };
-  $('#maxFilesLbl').textContent = CONFIG.MAX_FILES;
-  $('#maxSizeLbl').textContent  = CONFIG.MAX_TOTAL_MB + ' MB';
-
   let resumenGlobal="", ultimoPDF="", archivosSeleccionados=[];
-  const lista = document.getElementById("lista-archivos");
-  const resultBox = document.getElementById("result");
-  const analyzeBtn = document.getElementById('analyze-btn');
-  const genBtn = document.getElementById('generate-btn');
-  const copyResBtn = document.getElementById('btnCopyResumen');
 
-  function totalBytes(){ return archivosSeleccionados.reduce((a,b)=> a+(b.size||0), 0); }
-  function withinLimits(){
-    if(archivosSeleccionados.length > CONFIG.MAX_FILES) return false;
-    return (totalBytes()/1024/1024) <= CONFIG.MAX_TOTAL_MB;
+  function agregarArchivos(){
+    const input=document.getElementById("file-hidden");
+    input.value="";
+    input.onchange=()=>{ for(const a of input.files) archivosSeleccionados.push(a); actualizarListaArchivos(); };
+    input.click();
   }
-
-  function addFiles(files){
-    for(const f of files){
-      if(!f) continue;
-      if(!CONFIG.ALLOWED.test(f.name)){
-        showToastSafe('Archivo no permitido', f.name, 'exclamation-triangle');
-        continue;
-      }
-      if(archivosSeleccionados.length >= CONFIG.MAX_FILES){
-        showToastSafe('Límite de archivos', `Máximo ${CONFIG.MAX_FILES} por análisis.`, 'exclamation-triangle');
-        break;
-      }
-      archivosSeleccionados.push(f);
-      if(!withinLimits()){
-        archivosSeleccionados.pop();
-        showToastSafe('Peso excedido', `Máximo ${CONFIG.MAX_TOTAL_MB} MB totales.`, 'exclamation-triangle');
-        break;
-      }
-    }
-    actualizarListaArchivos();
-  }
-
-  function fmtKB(b){ return Math.round((b||0)/1024) + ' KB'; }
-
   function actualizarListaArchivos(){
+    const lista=document.getElementById("lista-archivos");
     lista.innerHTML="";
-    if(!archivosSeleccionados.length){
-      lista.innerHTML = '<li class="list-group-item text-muted">Sin archivos seleccionados.</li>';
-      analyzeBtn.disabled = false; // puede estar sin archivos hasta que agregue; se valida al enviar
-      return;
-    }
     archivosSeleccionados.forEach((archivo, idx)=>{
       const li=document.createElement("li");
-      li.className="list-group-item file-chip";
-      li.innerHTML = `
-        <div class="d-flex flex-column">
-          <strong>${esc(archivo.name)}</strong>
-          <span class="meta">${fmtKB(archivo.size)}</span>
-        </div>
-        <button type="button" class="rm" aria-label="Quitar">&times;</button>`;
-      li.querySelector('.rm').onclick=()=>{ archivosSeleccionados.splice(idx,1); actualizarListaArchivos(); };
-      lista.appendChild(li);
+      li.className="list-group-item d-flex justify-content-between align-items-center";
+      li.textContent=archivo.name;
+      const btn=document.createElement("button");
+      btn.className="btn btn-sm btn-outline-danger";
+      btn.textContent="Eliminar";
+      btn.onclick=()=>{ archivosSeleccionados.splice(idx,1); actualizarListaArchivos(); };
+      li.appendChild(btn); lista.appendChild(li);
     });
   }
 
-  function toggleAnalyzeLoading(loading){
-    const sp = analyzeBtn.querySelector('.spinner-border');
-    const tx = analyzeBtn.querySelector('.btn-txt');
-    if(sp && tx){
-      sp.classList.toggle('d-none', !loading);
-      tx.classList.toggle('d-none', loading);
-      analyzeBtn.disabled = !!loading;
-    }
-  }
-
-  function limpiar(){
-    archivosSeleccionados=[]; actualizarListaArchivos();
-    resultBox.innerHTML=""; resumenGlobal=""; ultimoPDF="";
-    genBtn.disabled = true; copyResBtn.disabled = true;
-  }
-
-  document.getElementById("btnAdd").addEventListener("click", ()=>{
-    const input=document.getElementById("file-hidden");
-    input.value="";
-    input.onchange=()=> addFiles(input.files||[]);
-    input.click();
-  });
-  document.getElementById("btnPaste").addEventListener("click", ()=> showToastSafe('Pegar', 'Usá Ctrl/⌘+V sobre esta página.', 'clipboard'));
-
-  // Drag & drop sobre la tarjeta
-  (function(){
-    const card = document.getElementById('analisisCard');
-    const hint = document.getElementById('dzHint');
-    ['dragenter','dragover'].forEach(ev=> card.addEventListener(ev, e=>{ e.preventDefault(); hint.classList.add('show'); }));
-    ['dragleave','drop'].forEach(ev=> card.addEventListener(ev, e=>{ e.preventDefault(); hint.classList.remove('show'); }));
-    card.addEventListener('drop', (e)=>{ const fl = [...(e.dataTransfer?.files||[])]; if(fl.length) addFiles(fl); });
-  })();
-
-  // Pegar imágenes/archivos
-  document.addEventListener('paste', (e)=>{
-    const items = e.clipboardData?.items||[];
-    const files = [];
-    for(const it of items){
-      if(it.kind==='file'){ const f=it.getAsFile(); if(f) files.push(f); }
-    }
-    if(files.length) addFiles(files);
-  });
-
-  document.getElementById("btnClear").addEventListener("click", limpiar);
-
   document.getElementById("analyze-btn").addEventListener("click", async ()=>{
     if(!archivosSeleccionados.length){
-      resultBox.innerHTML='<div class="alert alert-danger">❌ Seleccioná al menos un archivo.</div>';
+      document.getElementById("result").innerHTML='<div class="alert alert-danger">❌ Seleccioná al menos un archivo.</div>';
       return;
     }
-    if(!withinLimits()){
-      resultBox.innerHTML=`<div class="alert alert-danger">❌ Límite excedido: máx. ${CONFIG.MAX_FILES} archivos y ${CONFIG.MAX_TOTAL_MB} MB totales.</div>`;
-      return;
-    }
-
     const fd=new FormData(); archivosSeleccionados.forEach(f=>fd.append("archivos",f));
-    resultBox.innerHTML='<div class="alert alert-info">⏳ Analizando pliegos...</div>';
-    toggleAnalyzeLoading(true);
-    try{
-      const r = await fetch("/analizar-pliego",{method:"POST", body:fd});
-      const j = await r.json().catch(()=> ({}));
-      if(!r.ok) throw new Error(j.error || 'No se pudo analizar.');
-      resumenGlobal=j.resumen||'Análisis realizado.';
-      ultimoPDF=j.pdf||'';
-      resultBox.innerHTML = `<div class="alert alert-success"><strong>✅ Análisis completo.</strong><br><br>${esc(resumenGlobal)}</div>`;
-      genBtn.disabled = !ultimoPDF;
-      copyResBtn.disabled = !resumenGlobal;
-      localStorage.setItem('home.lastResumen', resumenGlobal);
+    document.getElementById("result").innerHTML='<div class="alert alert-info">⏳ Analizando pliegos...</div>';
+    const r = await fetch("/analizar-pliego",{method:"POST", body:fd});
+    const j = await r.json();
+    if(r.ok){
+      resumenGlobal=j.resumen; ultimoPDF=j.pdf;
+      document.getElementById("result").innerHTML = `<div class="alert alert-success"><strong>✅ Análisis completo.</strong><br><br>${resumenGlobal}</div>`;
       await loadHistorial();
       document.getElementById('historial')?.scrollIntoView({behavior:'smooth', block:'start'});
-    }catch(e){
-      resultBox.innerHTML = `<div class="alert alert-danger">❌ ${esc(e.message||'No se pudo analizar.')}</div>`;
-      showToastSafe('Análisis', e.message||'Error', 'exclamation-triangle');
-    }finally{
-      toggleAnalyzeLoading(false);
+    }else{
+      document.getElementById("result").innerHTML = `<div class="alert alert-danger">❌ ${j.error||'No se pudo analizar.'}</div>`;
     }
   });
 
   document.getElementById("generate-btn").addEventListener("click", ()=>{
     if(!ultimoPDF){
-      resultBox.innerHTML='<div class="alert alert-danger">❌ Primero analizá un pliego.</div>';
+      document.getElementById("result").innerHTML='<div class="alert alert-danger">❌ Primero analizá un pliego.</div>';
       return;
     }
-    window.location.href = `/descargar/${encodeURIComponent(ultimoPDF)}`;
+    window.location.href = `/descargar/${ultimoPDF}`;
   });
-
-  document.getElementById('btnCopyResumen').addEventListener('click', async ()=>{
-    try{
-      const txt = resumenGlobal || localStorage.getItem('home.lastResumen') || '';
-      if(!txt){ showToastSafe('Copiar', 'No hay resumen aún.', 'clipboard'); return; }
-      await navigator.clipboard.writeText(txt);
-      showToastSafe('Copiado', 'Resumen al portapapeles.', 'clipboard');
-    }catch(_){ showToastSafe('Error', 'No se pudo copiar.', 'exclamation-triangle'); }
-  });
-
-  // ===== Historial =====
-  function renderHistSkeleton(){
-    const cont = document.getElementById("historial-list");
-    cont.innerHTML='';
-    for(let i=0;i<3;i++){
-      const sk = document.createElement('div');
-      sk.className='skeleton mb-2';
-      sk.innerHTML = `<div class="sk-bar" style="width:40%; height:14px"></div>
-                      <div class="sk-bar" style="width:70%"></div>
-                      <div class="sk-bar" style="width:55%"></div>`;
-      cont.appendChild(sk);
-    }
-  }
-
-  function highlight(el, term){
-    if(!term) return;
-    const re = new RegExp('('+term.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\$&')+')','ig');
-    el.innerHTML = esc(el.textContent).replace(re,'<mark class="hl">$1</mark>');
-  }
 
   async function loadHistorial(){
-    renderHistSkeleton();
-    try{
-      const r = await fetch("/historial");
-      const hist = await r.json();
-      const cont = document.getElementById("historial-list");
-      cont.innerHTML="";
-      if(!Array.isArray(hist) || !hist.length){
-        cont.innerHTML = '<div class="text-muted">Sin análisis aún.</div>';
-        return;
-      }
-      const frag = document.createDocumentFragment();
-      hist.forEach(entry=>{
-        const fecha=entry.fecha_legible || entry.fecha || "—";
-        const pdfName = (entry.ruta_pdf||'').split('/').pop() || entry.nombre_archivo || '';
-        const div=document.createElement("div");
-        div.className="mb-3 p-3 border rounded-3";
-        div.style.borderColor="var(--border)";
-        div.innerHTML = `
-          <div><strong>📄 Archivo:</strong> <span class="h-archivo">${esc(entry.nombre_archivo||'')}</span></div>
-          <div><strong>🕓 Fecha:</strong> <span class="h-fecha">${esc(fecha)}</span></div>
-          <div><strong>👤 Usuario:</strong> <span class="h-usuario">${esc(entry.usuario||'')}</span></div>
-          <div class="d-flex gap-2 mt-2">
-            ${pdfName ? `<a href="/descargar/${encodeURIComponent(pdfName)}" class="btn btn-sm btn-primary">Descargar PDF</a>`:''}
-            <button class="btn btn-sm btn-outline-danger" data-ts="${esc(entry.timestamp||'')}" data-act="del">Eliminar</button>
-          </div>`;
-        frag.appendChild(div);
-      });
-      cont.appendChild(frag);
-    }catch(_){
-      document.getElementById("historial-list").innerHTML = '<div class="text-danger">No se pudo cargar el historial.</div>';
+    const r = await fetch("/historial");
+    const hist = await r.json();
+    const cont = document.getElementById("historial-list");
+    cont.innerHTML="";
+    if(!Array.isArray(hist) || !hist.length){
+      cont.innerHTML = '<div class="text-muted">Sin análisis aún.</div>';
+      return;
     }
+    hist.forEach(entry=>{
+      const fecha=entry.fecha_legible || entry.fecha || "—";
+      const pdfName = (entry.ruta_pdf||'').split('/').pop() || entry.nombre_archivo || '';
+      const div=document.createElement("div");
+      div.className="mb-3 p-3 border rounded-3";
+      div.style.borderColor="var(--border)";
+      div.innerHTML = `
+        <div><strong>📄 Archivo:</strong> ${entry.nombre_archivo}</div>
+        <div><strong>🕓 Fecha:</strong> ${fecha}</div>
+        <div><strong>👤 Usuario:</strong> ${entry.usuario}</div>
+        <div class="d-flex gap-2 mt-2">
+          <a href="/descargar/${pdfName}" class="btn btn-sm btn-primary">Descargar PDF</a>
+          <button class="btn btn-sm btn-outline-danger" onclick="eliminarHist('${entry.timestamp}')">Eliminar</button>
+        </div>`;
+      cont.appendChild(div);
+    });
+  }
+  async function eliminarHist(ts){
+    await fetch(`/eliminar/${ts}`,{method:"DELETE"});
+    await loadHistorial();
+  }
+  function limpiar(){
+    archivosSeleccionados=[]; document.getElementById("lista-archivos").innerHTML="";
+    document.getElementById("result").innerHTML=""; resumenGlobal=""; ultimoPDF="";
   }
 
-  // Delegación acciones historial
-  document.getElementById('historial-list').addEventListener('click', async (e)=>{
-    const btn = e.target.closest('button[data-act="del"]');
-    if(!btn) return;
-    const ts = btn.dataset.ts;
-    if(!ts) return;
-    if(!confirm('¿Eliminar entrada del historial?')) return;
-    try{
-      const r = await fetch(`/eliminar/${encodeURIComponent(ts)}`,{method:"DELETE"});
-      if(!r.ok) throw new Error();
-      await loadHistorial();
-    }catch(_){ showToastSafe('Error', 'No se pudo eliminar.', 'exclamation-triangle'); }
-  });
-
-  // Buscador en historial (con resaltado)
-  document.getElementById('search-input').addEventListener('input', (e)=>{
-    const q = (e.target.value||'').trim().toLowerCase();
-    $$('#historial-list > div').forEach(card=>{
-      const hay = card.textContent.toLowerCase().includes(q);
-      card.style.display = hay ? '' : 'none';
-      // resaltar
-      card.querySelectorAll('.h-archivo, .h-usuario, .h-fecha').forEach(span=>{
-        span.innerHTML = esc(span.textContent); // clear
-        if(q) highlight(span, q);
-      });
+  // Buscador en historial
+  document.addEventListener("input", (e)=>{
+    if(e.target?.id!=="search-input") return;
+    const q=e.target.value.toLowerCase();
+    document.querySelectorAll("#historial-list > div").forEach(node=>{
+      node.style.display = node.textContent.toLowerCase().includes(q) ? "" : "none";
     });
-  });
-
-  // Export CSV del historial visible
-  document.getElementById('btnHistCsv').addEventListener('click', ()=>{
-    const rows = [['Archivo','Fecha','Usuario','PDF']];
-    $$('#historial-list > div').forEach(card=>{
-      if(card.style.display==='none') return;
-      const archivo = card.querySelector('.h-archivo')?.textContent.trim() || '';
-      const fecha   = card.querySelector('.h-fecha')?.textContent.trim() || '';
-      const usuario = card.querySelector('.h-usuario')?.textContent.trim() || '';
-      const link    = card.querySelector('a[href^="/descargar/"]')?.getAttribute('href') || '';
-      rows.push([archivo, fecha, usuario, link]);
-    });
-    if(rows.length===1){ showToastSafe('Exportar', 'No hay resultados visibles.', 'exclamation-triangle'); return; }
-    const escv=v=>`"${String(v??'').replace(/"/g,'""')}"`;
-    const csv = rows.map(r=>r.map(escv).join(',')).join('\n');
-    const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'});
-    const a = document.createElement('a'); a.href=URL.createObjectURL(blob);
-    const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
-    a.download = `historial_${stamp}.csv`; a.click(); URL.revokeObjectURL(a.href);
   });
 
   // Scroll por hash / query
@@ -579,14 +314,11 @@
     }catch(_){}
   })();
 
-  // Utilidades
   window.addEventListener('load', ()=>{
     loadHistorial();
     scrollByAnchorOrQuery();
+    // por si el CSS tarda en aplicar alturas, recalcula calendario
     setTimeout(()=>{ try{ calendar && calendar.updateSize(); }catch(_){} }, 200);
-    // restaurar último resumen para copiar rápido
-    const last = localStorage.getItem('home.lastResumen');
-    if(last){ resumenGlobal = last; copyResBtn.disabled = false; }
   });
 </script>
 {% endblock %}
