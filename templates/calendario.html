@@ -3,13 +3,29 @@
 {% block title %}Calendario · Suizo Argentina{% endblock %}
 
 {% block extra_head %}
-  <!-- FullCalendar (si ya lo carga base, no pasa nada por duplicar) -->
+  <!-- FullCalendar -->
   <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/locales-all.global.min.js" defer></script>
 
   <style>
-    /* ---------- Integración visual con el theme ---------- */
+    /* ===== Fix visual: desactivar “lift / translate” en este card y dentro del calendario ===== */
+    .no-hover-lift,
+    .no-hover-lift:hover,
+    .no-hover-lift:focus-within{
+      transform: none !important;
+      translate: 0 !important;
+      scale: 1 !important;
+      box-shadow: var(--shadow, 0 1px 2px rgba(0,0,0,.06)) !important; /* mantener sombra sin levantarse */
+    }
+    /* Nada dentro del calendario debe “moverse” por hover */
+    #calendar,
+    #calendar .fc,
+    #calendar .fc *{
+      transform: none !important;
+    }
+
+    /* ===== Integración visual con el theme ===== */
     #calWrap { position: relative; }
     #calendar{
       background: var(--surface);
@@ -20,8 +36,18 @@
       position: relative; z-index: 1;
     }
     .fc .fc-toolbar-title{ font-weight:700; color:var(--text); }
-    .fc .fc-button{ border-radius:999px; border-color: var(--border); background: var(--surface); color: var(--text); }
-    .fc .fc-button-primary:not(:disabled).fc-button-active{ background: var(--brand-500); border-color: var(--brand-500); }
+    .fc .fc-button{
+      border-radius:999px;
+      border-color: var(--border);
+      background: var(--surface);
+      color: var(--text);
+      transform: none !important; /* blindaje extra */
+      transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+    }
+    .fc .fc-button-primary:not(:disabled).fc-button-active{
+      background: var(--brand-500);
+      border-color: var(--brand-500);
+    }
     .fc-theme-standard .fc-scrollgrid{ border:1px solid var(--border); border-radius:12px; overflow:hidden; }
     .fc .fc-col-header-cell{ background: var(--muted); }
 
@@ -32,7 +58,11 @@
     }
     .cal-ctrl-left{ left:12px; }
     .cal-ctrl-right{ right:12px; }
-    .cal-ctrl-left .btn, .cal-ctrl-right .btn{ border-radius:999px; }
+    .cal-ctrl-left .btn, .cal-ctrl-right .btn{
+      border-radius:999px;
+      transform: none !important; /* sin “lift” en hover */
+      transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+    }
     .btn.is-active{
       border-color: var(--brand-300) !important;
       box-shadow: 0 0 0 4px rgba(var(--ring-color), .22);
@@ -51,7 +81,8 @@
 
 {% block content %}
   <div class="container-xxl">
-    <section class="card-clean shadow-hover mb-2">
+    <!-- Quitamos shadow-hover y añadimos no-hover-lift para evitar movimientos -->
+    <section class="card-clean no-hover-lift mb-2">
       <div class="card-header d-flex flex-wrap gap-2 align-items-center">
         <h1 class="h5 m-0 text-brand">
           <i class="bi bi-calendar-event me-1"></i> Calendario

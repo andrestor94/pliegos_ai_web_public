@@ -4,6 +4,26 @@
 
 {% block extra_head %}
   <style>
+    /* ===== Fix: desactivar “lift / translate” en esta vista ===== */
+    .no-hover-lift,
+    .no-hover-lift:hover,
+    .no-hover-lift:focus-within{
+      transform: none !important;
+      translate: 0 !important;
+      scale: 1 !important;
+      box-shadow: var(--shadow, 0 1px 2px rgba(0,0,0,.06)) !important;
+    }
+    /* Botones locales sin micro-traslación (solo colores) */
+    .auditoria .btn{
+      transform: none !important;
+      transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+    }
+    /* Filas hover sin transform */
+    .auditoria .table-hover tbody tr:hover{
+      transform: none !important;
+      transition: background-color .15s ease, color .15s ease;
+    }
+
     /* ---------- Estilos específicos de Auditoría (SCOPED y compatibles con el theme) ---------- */
 
     /* Contenedor principal en columna */
@@ -62,7 +82,7 @@
 <div class="container-xxl auditoria wrap">
 
   <!-- Header -->
-  <section class="card-clean shadow-hover">
+  <section class="card-clean no-hover-lift">
     <div class="card-header d-flex justify-content-between align-items-center">
       <h1 class="h5 m-0 text-brand"><i class="bi bi-clipboard-data me-1"></i> Registro de Auditoría</h1>
       <div class="d-flex gap-2">
@@ -75,7 +95,7 @@
   </section>
 
   <!-- Filtros -->
-  <section class="card-clean shadow-hover filters">
+  <section class="card-clean no-hover-lift filters">
     <div class="card-body">
       <div class="row g-2 align-items-end input-compact">
         <div class="col-md-4">
@@ -110,7 +130,7 @@
 
   {% if logs and logs|length > 0 %}
   <!-- Tabla -->
-  <section class="card-clean shadow-hover">
+  <section class="card-clean no-hover-lift">
     <div class="card-header d-flex justify-content-between align-items-center">
       <div class="small text-muted">
         Resultados: <span id="count">0</span>
@@ -151,7 +171,7 @@
     </div>
   </section>
   {% else %}
-    <section class="card-clean shadow-hover">
+    <section class="card-clean no-hover-lift">
       <div class="card-body">
         <div class="alert alert-warning mb-0">⚠️ No hay registros de auditoría disponibles.</div>
       </div>
@@ -168,7 +188,7 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
       <div class="modal-body">
-        <div class="json-box"><code id="jsonCode"></code></div>
+        <div class="json-box auditoria"><code id="jsonCode"></code></div>
       </div>
       <div class="modal-footer">
         <button id="btnCopyJson" class="btn btn-outline-secondary btn-icon" type="button"><i class="bi bi-clipboard"></i> Copiar</button>

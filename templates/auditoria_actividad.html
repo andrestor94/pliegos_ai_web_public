@@ -3,6 +3,26 @@
 
 {% block extra_head %}
 <style>
+  /* ===== Fix: desactivar “lift / translate” en esta vista ===== */
+  .no-hover-lift,
+  .no-hover-lift:hover,
+  .no-hover-lift:focus-within{
+    transform: none !important;
+    translate: 0 !important;
+    scale: 1 !important;
+    box-shadow: var(--shadow, 0 1px 2px rgba(0,0,0,.06)) !important;
+  }
+  /* Botones locales sin micro-traslación (solo color) */
+  .act .btn{
+    transform: none !important;
+    transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+  }
+  /* Filas hover sin transform */
+  .act .table-hover tbody tr:hover{
+    transform: none !important;
+    transition: background-color .15s ease, color .15s ease;
+  }
+
   /* ---------- Scoped a la vista ---------- */
   .act.wrap{ display:grid; gap:.75rem; }
 
@@ -58,7 +78,7 @@
 
 {% block content %}
 <div class="container-xxl act wrap">
-  <section class="card-clean shadow-hover">
+  <section class="card-clean no-hover-lift">
     <div class="card-header d-flex align-items-center justify-content-between">
       <h1 class="h5 m-0 text-brand">
         <i class="bi bi-graph-up me-1"></i> Auditoría de actividad
@@ -201,7 +221,7 @@
       rows.innerHTML = '';
       rows.appendChild(frag);
 
-      // Guarda data para export (evita leer del DOM)
+      // Guarda data para export
       rows.dataset.json = JSON.stringify(items);
     }catch(e){
       rows.innerHTML = `<tr><td colspan="10" class="text-center text-danger py-4">Error al cargar</td></tr>`;
@@ -221,7 +241,6 @@
     let data = [];
     try{ data = JSON.parse(rows.dataset.json||'[]'); }catch(_){}
     if(!Array.isArray(data) || !data.length){
-      // fallback: exportar lo visible del DOM
       const headers = ['Estado','Usuario','Nombre','Inicio','Último visto','Cierre','Duración','IP','Agente','SID'];
       const domRows = [...document.querySelectorAll('#rows tr')].map(tr=>[...tr.children].map(td=>td.innerText.replace(/\n/g,' ').trim()));
       const csvDom = [headers, ...domRows].map(r=>r.map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');

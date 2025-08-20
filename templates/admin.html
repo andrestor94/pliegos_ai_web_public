@@ -7,6 +7,23 @@
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 
   <style>
+    /* ===== Fix: desactivar “lift / translate” en cards de esta vista ===== */
+    .no-hover-lift,
+    .no-hover-lift:hover,
+    .no-hover-lift:focus-within{
+      transform: none !important;
+      translate: 0 !important;
+      scale: 1 !important;
+      box-shadow: var(--shadow, 0 1px 2px rgba(0,0,0,.06)) !important; /* sombra estable */
+    }
+
+    /* Botones dentro de headers/acciones: sin lift ni micro-traslaciones */
+    .admin-actions .btn,
+    .card-header .btn{
+      transform: none !important;
+      transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+    }
+
     /* --- Estilos SCOPED y alineados al theme --- */
     .admin-actions .btn{ border-radius:12px; }
 
@@ -39,6 +56,12 @@
     }
     .kpi-num{ font-size:20px; font-weight:800; line-height:1; color: var(--text); }
     .kpi-sub{ font-size:12px; color: var(--text-2); }
+
+    /* Evitar saltos visuales en hover de filas (solo color, sin transform) */
+    .table-hover tbody tr:hover{
+      transform: none;
+      transition: background-color .15s ease, color .15s ease;
+    }
   </style>
 {% endblock %}
 
@@ -46,7 +69,7 @@
 <div class="container-xxl stack">
 
   <!-- Encabezado + acciones -->
-  <section class="card-clean shadow-hover">
+  <section class="card-clean no-hover-lift">
     <div class="card-header d-flex align-items-center justify-content-between">
       <h1 class="h5 m-0 text-brand">
         <i class="bi bi-gear me-1"></i> Administración de Usuarios
@@ -67,7 +90,7 @@
   </section>
 
   <!-- Monitoreo -->
-  <section class="card-clean shadow-hover">
+  <section class="card-clean no-hover-lift">
     <div class="card-body d-flex align-items-center gap-3 flex-wrap">
       <div class="kpi-box">
         <i class="bi bi-activity fs-5"></i>
@@ -83,7 +106,7 @@
   </section>
 
   <!-- Crear usuario -->
-  <section class="card-clean shadow-hover">
+  <section class="card-clean no-hover-lift">
     <div class="card-header">
       <h2 class="h6 m-0">Crear nuevo usuario</h2>
     </div>
@@ -119,7 +142,7 @@
   </section>
 
   <!-- Lista de usuarios -->
-  <section class="card-clean shadow-hover">
+  <section class="card-clean no-hover-lift">
     <div class="card-header d-flex align-items-center justify-content-between">
       <h2 class="h6 m-0">Usuarios registrados</h2>
       <div class="d-flex gap-2 align-items-center">
