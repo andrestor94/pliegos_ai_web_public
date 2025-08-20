@@ -65,6 +65,9 @@ En base.html:
 
   /* Rings (para box-shadow rgba) */
   --ring-color: 82,116,206; /* rgb de #5274ce */
+
+  /* Sidebar spacing (nuevo) */
+  --sidebar-gap: 10px;
 }
 
 /* ---------- Dark theme ---------- */
@@ -312,7 +315,7 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
 
 /* ---------- Sticky helpers ---------- */
 .sticky-topbar{ position: sticky; top: 0; z-index: 10; background: var(--surface); border-bottom: 1px solid var(--border); }
-.sticky-footer{ position: sticky; bottom: 0; z-index: 5; background: var(--surface); border-top: 1px solid var(--border); }
+.sticky-footer{ position: sticky; bottom:  0; z-index: 5; background: var(--surface); border-top: 1px solid var(--border); }
 
 /* ---------- MOBILE FIXES EXTRA ---------- */
 @media (max-width: 575.98px){
@@ -332,8 +335,6 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
 
 /* =========================================================
    ===== LEGIBILIDAD GLOBAL EXTENDIDA (descripciones) ======
-   - Refuerza contraste de textos “de ayuda” en toda la app
-   - Afecta subtítulos, hints, descripciones, contadores, etc.
    ========================================================= */
 .text-muted,
 .text-body-secondary,
@@ -341,17 +342,13 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
 .form-text,
 small{
   color: var(--text-2) !important;
-  opacity: 1 !important; /* evita gris traslúcido */
+  opacity: 1 !important;
 }
-
-/* Mejora labels e instrucciones largas (p/ formularios) */
 label,
 .legend,
 .caption{
   color: var(--text) !important;
 }
-
-/* Placeholders siempre legibles */
 input::placeholder,
 textarea::placeholder{
   color: var(--input-placeholder) !important;
@@ -360,8 +357,6 @@ textarea::placeholder{
 
 /* =========================================================
    ===== FIXS DE CONTRASTE EN ÁREAS DE CONTENIDO ===========
-   - Si alguna vista usa utilidades de opacidad sobre texto
-     (p.ej. .opacity-50) lo normalizamos a var(--text-2).
    ========================================================= */
 .content .text-white-50,
 .content .text-white-75,
@@ -382,9 +377,7 @@ textarea::placeholder{
 .list-group-item,
 .accordion-body,
 .toast, .toast-body,
-.chat-ia, .chat-ia__body{
-  /* Dentro de estos, forzá hints/“muted” a verse bien */
-}
+.chat-ia, .chat-ia__body{ }
 .card *, .card-clean *, .cardx *,
 .modal-content * ,
 .offcanvas * ,
@@ -392,9 +385,7 @@ textarea::placeholder{
 .list-group-item * ,
 .accordion-body * ,
 .toast *, .toast-body * ,
-.chat-ia *, .chat-ia__body * {
-  /* utilidades que a veces los ponen demasiado claritos */
-}
+.chat-ia *, .chat-ia__body * { }
 .card .text-white-50, .card-clean .text-white-50, .cardx .text-white-50,
 .modal-content .text-white-50,
 .offcanvas .text-white-50,
@@ -466,8 +457,6 @@ body[data-route^="/chat"] .text-white,
 body[data-route^="/chat"] .text-light{
   color: var(--text) !important;
 }
-
-/* Lista/contenedor izquierdo y panel principal */
 body[data-route^="/chat"] .chat-header,
 body[data-route^="/chat"] .chat-header * ,
 body[data-route^="/chat"] .chat-body,
@@ -478,14 +467,10 @@ body[data-route^="/chat"] .empty-state,
 body[data-route^="/chat"] .empty-state * {
   color: var(--text);
 }
-
-/* Burbujas de mensajes */
 body[data-route^="/chat"] .msg,
 body[data-route^="/chat"] .msg *{
   color: var(--text);
 }
-
-/* Composer y buscadores (texto + placeholder) */
 body[data-route^="/chat"] input,
 body[data-route^="/chat"] textarea,
 body[data-route^="/chat"] .form-control{
@@ -499,7 +484,6 @@ body[data-route^="/chat"] .form-control::placeholder{
   color: var(--input-placeholder) !important;
   opacity: 1 !important;
 }
-/* Hints con utilidades de opacidad */
 body[data-route^="/chat"] .opacity-25,
 body[data-route^="/chat"] .opacity-50,
 body[data-route^="/chat"] .opacity-75,
@@ -508,8 +492,6 @@ body[data-route^="/chat"] .text-white-75{
   color: var(--text-2) !important;
   opacity: 1 !important;
 }
-
-/* ===== Fix extra en lista de conversaciones ===== */
 body[data-route^="/chat"] .conversations small,
 body[data-route^="/chat"] .conversations .small,
 body[data-route^="/chat"] .conversations .text-muted,
@@ -536,10 +518,34 @@ body[data-route^="/incidencias"] .opacity-75{
 }
 
 /* =========================================================
-   ===== LOGIN: legibilidad del pie y ayudas ================
+   ===== LOGIN: legibilidad del pie y ayudas ===============
    ========================================================= */
 body[data-auth="1"] .content small,
 body[data-auth="1"] .content .form-text{
   color: var(--text-2) !important;
   opacity: 1 !important;
 }
+
+/* =========================================================
+   ===== SIDEBAR: separación de botones inferiores =========
+   - Asegura espacio uniforme entre “Cambiar contraseña”
+     y “Salir”, y respiro al borde inferior.
+   - Funciona con y sin contenedor .side-bottom
+   ========================================================= */
+
+/* Si usas un wrapper .side-bottom (recomendado) */
+.sidebar .side-bottom{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:var(--sidebar-gap);
+  width:100%;
+  margin-top:var(--sidebar-gap);
+  padding-bottom:calc(8px + var(--safe-bottom));
+}
+
+/* Fallback si NO hay wrapper: separa los dos últimos */
+.sidebar > a.side-btn + a.side-btn{ margin-top:var(--sidebar-gap); }
+/* respiro con el borde inferior y el chip “v1”/similar */
+.sidebar > .side-small{ margin-top:var(--sidebar-gap); }
+.sidebar{ padding-bottom:calc(8px + var(--safe-bottom)); }
