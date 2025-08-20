@@ -348,17 +348,30 @@
 
     /* ===== Drawer Chat IA ===== */
     .chat-ia-overlay{
-      position:fixed; inset:0; background:rgba(15,18,34,.28); backdrop-filter: blur(2px);
+      position:fixed;
+      inset: var(--header-h) 0 0 0;         /* no cubre la barra superior */
+      background:rgba(15,18,34,.28); backdrop-filter: blur(2px);
       opacity:0; pointer-events:none; transition:opacity .2s ease; z-index:1200;
     }
+    .chat-ia-overlay.open{ opacity:1; pointer-events:auto; }
+
     .chat-ia{
-      position:fixed; top:0; right:-480px; height:100%; width:480px; max-width:100%;
-      background:var(--surface); border-left:1px solid var(--bs-border-color, var(--border)); box-shadow: var(--shadow);
+      position:fixed;
+      top: var(--header-h);                  /* arranca debajo del header */
+      right:-480px;
+      height: calc(100% - var(--header-h));  /* ocupa el resto */
+      width:480px; max-width:100%;
+      background:var(--surface);
+      border-left:1px solid var(--bs-border-color, var(--border)); box-shadow: var(--shadow);
       display:flex; flex-direction:column; transition:right .28s ease; z-index:1201;
     }
     [data-theme="dark"] .chat-ia{ background:var(--panel); }
     .chat-ia.open{ right:0; }
-    .chat-ia-overlay.open{ opacity:1; pointer-events:auto; }
+
+    /* Login (sin header): full-screen */
+    body[data-auth="1"] .chat-ia{ top:0; height:100%; }
+    body[data-auth="1"] .chat-ia-overlay{ inset:0; }
+
     .chat-ia__header{ display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--bs-border-color, var(--border));
       background:linear-gradient(0deg, rgba(255,255,255,.96), rgba(255,255,255,.96)); }
     [data-theme="dark"] .chat-ia__header{ background:linear-gradient(0deg, rgba(21,27,34,.96), rgba(21,27,34,.96)); }
@@ -513,7 +526,8 @@
             <span id="chatBadge" class="chat-badge">0</span>
           </a>
 
-          <button class="pill pill-grad pill-icon" onclick="openChatAndExpand()" aria-label="Abrir chat con IA">
+          <!-- Botón con toggle (mismo click abre/cierra) -->
+          <button class="pill pill-grad pill-icon" id="btnChatIaToggle" type="button" aria-label="Abrir chat con IA">
             <i class="bi bi-robot"></i> Chat OpenAI
           </button>
 
@@ -604,7 +618,6 @@
       <button id="ratingBannerClose" class="btn btn-sm btn-outline-secondary">Cerrar</button>
     </div>
   </div>
-
   <!-- Bootstrap Bundle -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
@@ -781,7 +794,7 @@
     mqDesktop.addEventListener?.('change', applySidebarMode);
     applySidebarMode();
 
-    /* ===== Chat IA (drawer) ===== */
+    /* ===== Chat IA (drawer) – con toggle en el mismo botón ===== */
     const CHAT_STATE_KEY = 'chatboxState';
     const chatIa = document.getElementById('chatIa');
     const chatIaOverlay = document.getElementById('chatIaOverlay');
@@ -789,12 +802,23 @@
     const chatIaInput = document.getElementById('chatIaInput');
     const chatIaBody  = document.getElementById('chatIaBody');
     const chatIaForm  = document.getElementById('chatIaForm');
+    // Botón disparador: usa id si existe, si no busca por aria-label (tu markup actual)
+    const chatToggleBtn = document.getElementById('btnChatAI') || document.querySelector('button[aria-label="Abrir chat con IA"]');
+
+    function setChatBtnState(open){
+      if(!chatToggleBtn) return;
+      chatToggleBtn.classList.toggle('is-active', open);
+      chatToggleBtn.setAttribute('aria-pressed', String(open));
+      chatToggleBtn.setAttribute('aria-label', open ? 'Cerrar chat con IA' : 'Abrir chat con IA');
+      chatToggleBtn.title = open ? 'Cerrar Chat OpenAI' : 'Abrir Chat OpenAI';
+    }
 
     function openChatIA(persist=true){
       if(!chatIa) return;
       chatIa.classList.add('open');
       chatIaOverlay.classList.add('open');
       chatIa.setAttribute('aria-hidden','false');
+      setChatBtnState(true);
       setTimeout(()=> chatIaInput?.focus(), 50);
       if(persist) localStorage.setItem(CHAT_STATE_KEY, 'open');
     }
@@ -803,16 +827,27 @@
       chatIa.classList.remove('open');
       chatIaOverlay.classList.remove('open');
       chatIa.setAttribute('aria-hidden','true');
+      setChatBtnState(false);
       localStorage.removeItem(CHAT_STATE_KEY);
     }
-    function openChatAndExpand(){ openChatIA(true); }
+    function toggleChatIA(){
+      const open = chatIa?.classList.contains('open');
+      open ? closeChatIA() : openChatIA(true);
+    }
+    // Mantener compatibilidad con el onclick existente:
+    function openChatAndExpand(){ toggleChatIA(); }
     window.openChatAndExpand = openChatAndExpand;
 
+    // Click en el mismo botón = abre/cierra
+    chatToggleBtn?.addEventListener('click', (e)=>{ e.preventDefault(); toggleChatIA(); });
+
+    // Cierre con overlay, X o tecla Escape
     chatIaOverlay?.addEventListener('click', closeChatIA);
     chatIaClose?.addEventListener('click', closeChatIA);
     document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeChatIA(); });
 
-    if(localStorage.getItem(CHAT_STATE_KEY)==='open'){ openChatIA(false); }
+    // Restaurar estado guardado
+    if(localStorage.getItem(CHAT_STATE_KEY)==='open'){ openChatIA(false); } else { setChatBtnState(false); }
 
     function scrollToBottom(smooth=true){
       try{ chatIaBody.scrollTo({ top: chatIaBody.scrollHeight, behavior: smooth ? 'smooth' : 'auto' }); }
@@ -892,7 +927,8 @@
       scrollToBottom(true);
     }
 
-        (function markActive(){
+    /* === Menú lateral: marcar activo === */
+    (function markActive(){
       try{
         const path = location.pathname || '/';
         document.querySelectorAll('.side-btn[data-match]').forEach(a=>{
@@ -1364,6 +1400,3 @@
       };
     })();
   </script>
-  {% block extra_scripts %}{% endblock %}
-</body>
-</html>
