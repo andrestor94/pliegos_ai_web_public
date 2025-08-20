@@ -240,8 +240,33 @@
         var(--bg-body);
     }
 
+    /* === Espaciado estándar de páginas (igual que index)
+       Aplica py-3/px-1 al primer hijo de .content si no los trae */
+    .content > :first-child:not(.py-3){ padding-top:1rem; padding-bottom:1rem; }
+    .content > :first-child:not(.px-1){ padding-left:.25rem; padding-right:.25rem; }
+    /* Opt-out si alguna vista necesita sangrado total */
+    .content > .no-page-pad:first-child{ padding:0 !important; }
+
     .cardx{ background:var(--surface); border:1px solid var(--bs-border-color, var(--border)); border-radius:18px; box-shadow:var(--shadow); padding:20px; position:relative; }
     .cardx .title{ font-weight:700; display:flex; align-items:center; gap:8px; }
+
+    /* === Unificación de tarjetas para vistas que usan .card-clean === */
+    .card-clean{
+      background:var(--surface);
+      border:1px solid var(--bs-border-color, var(--border));
+      border-radius:18px;
+      box-shadow:var(--shadow);
+    }
+    .card-clean .card-header{
+      background:transparent;
+      border-bottom:1px solid var(--bs-border-color, var(--border));
+      padding:14px 16px;
+      border-top-left-radius:18px; border-top-right-radius:18px;
+    }
+    .card-clean .card-body{
+      padding:16px;
+      border-bottom-left-radius:18px; border-bottom-right-radius:18px;
+    }
 
     @media (max-width: 991.98px){
       .shell{ height: 100dvh; }
@@ -871,7 +896,7 @@
         const on = (m === '/' ? path==='/' : path.startsWith(m));
         if(on) a.classList.add('active');
       });
-    })();
+    })());
 
     document.getElementById('btnHistorial')?.addEventListener('click', (e)=>{
       if(location.pathname === '/'){
