@@ -702,7 +702,7 @@ async def cambiar_password_post(
     if not email:
         return RedirectResponse("/login", status_code=303)
 
-    if not nueva o nueva != confirmar:
+    if (not nueva) or (nueva != confirmar):
         return templates.TemplateResponse(
             "cambiar_password.html",
             {"request": request, "error": "Las contraseñas no coinciden."},
