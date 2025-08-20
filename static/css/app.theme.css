@@ -331,9 +331,116 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
 }
 
 /* =========================================================
+   ===== LEGIBILIDAD GLOBAL EXTENDIDA (descripciones) ======
+   - Refuerza contraste de textos “de ayuda” en toda la app
+   - Afecta subtítulos, hints, descripciones, contadores, etc.
+   ========================================================= */
+.text-muted,
+.text-body-secondary,
+.text-secondary,
+.form-text,
+small{
+  color: var(--text-2) !important;
+  opacity: 1 !important; /* evita gris traslúcido */
+}
+
+/* Mejora labels e instrucciones largas (p/ formularios) */
+label,
+.legend,
+.caption{
+  color: var(--text) !important;
+}
+
+/* Placeholders siempre legibles */
+input::placeholder,
+textarea::placeholder{
+  color: var(--input-placeholder) !important;
+  opacity: 1 !important;
+}
+
+/* =========================================================
+   ===== FIXS DE CONTRASTE EN ÁREAS DE CONTENIDO ===========
+   - Si alguna vista usa utilidades de opacidad sobre texto
+     (p.ej. .opacity-50) lo normalizamos a var(--text-2).
+   ========================================================= */
+.content .text-white-50,
+.content .text-white-75,
+.content .opacity-25,
+.content .opacity-50,
+.content .opacity-75{
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+}
+
+/* =========================================================
+   ===== COMPONENTES COMUNES: cards, modales, etc. =========
+   ========================================================= */
+.card, .card-clean, .cardx,
+.modal-content,
+.offcanvas,
+.dropdown-menu,
+.list-group-item,
+.accordion-body,
+.toast, .toast-body,
+.chat-ia, .chat-ia__body{
+  /* Dentro de estos, forzá hints/“muted” a verse bien */
+}
+.card *, .card-clean *, .cardx *,
+.modal-content * ,
+.offcanvas * ,
+.dropdown-menu * ,
+.list-group-item * ,
+.accordion-body * ,
+.toast *, .toast-body * ,
+.chat-ia *, .chat-ia__body * {
+  /* utilidades que a veces los ponen demasiado claritos */
+}
+.card .text-white-50, .card-clean .text-white-50, .cardx .text-white-50,
+.modal-content .text-white-50,
+.offcanvas .text-white-50,
+.dropdown-menu .text-white-50,
+.list-group-item .text-white-50,
+.accordion-body .text-white-50,
+.toast .text-white-50, .toast-body .text-white-50,
+.chat-ia .text-white-50, .chat-ia__body .text-white-50,
+.card .text-white-75, .card-clean .text-white-75, .cardx .text-white-75,
+.modal-content .text-white-75,
+.offcanvas .text-white-75,
+.dropdown-menu .text-white-75,
+.list-group-item .text-white-75,
+.accordion-body .text-white-75,
+.toast .text-white-75, .toast-body .text-white-75,
+.chat-ia .text-white-75, .chat-ia__body .text-white-75,
+.card .opacity-25, .card-clean .opacity-25, .cardx .opacity-25,
+.modal-content .opacity-25,
+.offcanvas .opacity-25,
+.dropdown-menu .opacity-25,
+.list-group-item .opacity-25,
+.accordion-body .opacity-25,
+.toast .opacity-25, .toast-body .opacity-25,
+.chat-ia .opacity-25, .chat-ia__body .opacity-25,
+.card .opacity-50, .card-clean .opacity-50, .cardx .opacity-50,
+.modal-content .opacity-50,
+.offcanvas .opacity-50,
+.dropdown-menu .opacity-50,
+.list-group-item .opacity-50,
+.accordion-body .opacity-50,
+.toast .opacity-50, .toast-body .opacity-50,
+.chat-ia .opacity-50, .chat-ia__body .opacity-50,
+.card .opacity-75, .card-clean .opacity-75, .cardx .opacity-75,
+.modal-content .opacity-75,
+.offcanvas .opacity-75,
+.dropdown-menu .opacity-75,
+.list-group-item .opacity-75,
+.accordion-body .opacity-75,
+.toast .opacity-75, .toast-body .opacity-75,
+.chat-ia .opacity-75, .chat-ia__body .opacity-75{
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+}
+
+/* =========================================================
    ===== FIXS DE CONTRASTE GENERALES EN CONTENIDO ==========
-   - Refuerza legibilidad de subtítulos, hints, contadores,
-     textos "muted" y utilidades de opacidad dentro de .content
    ========================================================= */
 .content .text-muted,
 .content .form-text,
@@ -344,36 +451,10 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
 .content .opacity-50,
 .content .opacity-75{
   color: var(--text-2) !important;
-  opacity: 1 !important;   /* elimina gris traslúcido */
+  opacity: 1 !important;
 }
 .content input::placeholder,
 .content textarea::placeholder{
-  color: var(--input-placeholder) !important;
-  opacity: 1 !important;
-}
-
-/* =========================================================
-   ACCESIBILIDAD – FIX GLOBAL EN SUPERFICIES CLARAS
-   Aplica dentro de tarjetas, modales, offcanvas y drawer Chat IA
-   ========================================================= */
-:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) .text-muted,
-:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) .small,
-:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) .form-text{
-  color: var(--text-2) !important;
-  opacity: 1 !important;
-}
-:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) [class*="text-white"]{
-  color: var(--text) !important;
-  opacity: 1 !important;
-}
-:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) .opacity-25,
-:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) .opacity-50,
-:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) .opacity-75{
-  opacity: 1 !important;
-  color: var(--text-2) !important;
-}
-:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) input::placeholder,
-:where(.content, .card, .card-clean, .modal-content, .offcanvas-start, #chatIa) textarea::placeholder{
   color: var(--input-placeholder) !important;
   opacity: 1 !important;
 }
@@ -418,7 +499,7 @@ body[data-route^="/chat"] .form-control::placeholder{
   color: var(--input-placeholder) !important;
   opacity: 1 !important;
 }
-/* Forzar que hints con utilidades de opacidad se lean bien */
+/* Hints con utilidades de opacidad */
 body[data-route^="/chat"] .opacity-25,
 body[data-route^="/chat"] .opacity-50,
 body[data-route^="/chat"] .opacity-75,
@@ -443,8 +524,7 @@ body[data-route^="/chat"] .conversations [class*="opacity-"]{
 }
 
 /* =========================================================
-   ===== FIX PÁGINA DE INCIDENCIAS (/incidencias) ==========
-   - Hints laterales, contadores "0/4000" y ayudas
+   ===== PÁGINA DE INCIDENCIAS (/incidencias) ==============
    ========================================================= */
 body[data-route^="/incidencias"] .text-muted,
 body[data-route^="/incidencias"] .form-text,
