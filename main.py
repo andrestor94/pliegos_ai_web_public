@@ -1861,18 +1861,17 @@ def _incid_list_attachments(ticket_id: int):
     return out
 
 def _parse_iso_utc(s: str):
-    """
-    Parsea string a datetime *aware* en UTC.
-    Evita 'can't subtract offset-naive and offset-aware datetimes'.
-    """
     if not s:
         return None
     s = s.replace("Z", "+00:00")
     try:
         dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except Exception:
         try:
-            dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+            return datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
         except Exception:
             return None
     if dt.tzinfo is None:
@@ -1986,7 +1985,7 @@ async def incidencias_crear(
     ticket_id = _infer_ticket_id(usuario, titulo, descripcion or "", tipo or "General", now_iso)
 
     # Guardar adjuntos (si pudimos resolver el id)
-    files = [a for a in (archivos or []) if a && a.filename]
+    files = [a for a in (archivos or []) if (a and a.filename)]
     if ticket_id and files:
         total_bytes = 0
         for i, f in enumerate(files, start=1):
