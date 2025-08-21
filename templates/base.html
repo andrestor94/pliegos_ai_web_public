@@ -541,7 +541,6 @@
       </main>
     </div>
   </div>
-
   <!-- Panel notificaciones -->
   <div id="notif-panel" class="cardx position-fixed" style="right:22px; top:22px; width:340px; max-width:calc(100vw - 44px); display:none; z-index:999;" role="dialog" aria-modal="false" aria-labelledby="notifTitle">
     <div class="d-flex align-items-center justify-content-between mb-2">
@@ -792,7 +791,7 @@
     const CHAT_STATE_KEY = 'chatboxState';
     const chatIa = document.getElementById('chatIa');
     const chatIaOverlay = document.getElementById('chatIaOverlay');
-    const chatIaClose = document.getElementById('chatIaClose');
+    the_chatIaClose = document.getElementById('chatIaClose'); // (id correcto existe)
     const chatIaInput = document.getElementById('chatIaInput');
     const chatIaBody  = document.getElementById('chatIaBody');
     const chatIaForm  = document.getElementById('chatIaForm');
@@ -835,7 +834,7 @@
 
     // Handlers propios
     chatIaOverlay?.addEventListener('click', closeChatIA);
-    chatIaClose?.addEventListener('click', closeChatIA);
+    the_chatIaClose?.addEventListener('click', closeChatIA);
     chatToggleBtn?.addEventListener('click', toggleChatIA);
     document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeChatIA(); });
 
