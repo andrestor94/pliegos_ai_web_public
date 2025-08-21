@@ -1408,7 +1408,7 @@ async def chat_enviar_archivos(
 
         written = await _save_upload_stream(archivo, path)
         total_bytes += written
-        if (total_bytes / (1024 * 1024)) > CHAT_MAX_TOTAL_MB:
+        if (total_bytes / (1024 * 1024)) > INCID_MAX_TOTAL_MB:
             try:
                 os.remove(path)
             except:
@@ -1438,7 +1438,7 @@ async def chat_enviar_archivo(
 ):
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
-    archivos = [archivo] if archivo && getattr(archivo, "filename", None) else []
+    archivos = [archivo] if (archivo and getattr(archivo, "filename", None)) else []
     return await chat_enviar_archivos(request, para=para, texto=texto, archivos=archivos)
 
 @app.get("/chat/adjunto/{filename}")
