@@ -27,7 +27,7 @@
     box-shadow:0 0 0 .25rem rgba(139,92,246,.18);
   }
 
-  /* Botones a juego (con fallback a la paleta brand) */
+  /* Botones */
   .btn-primary{
     border:none; border-radius:12px;
     background:linear-gradient(135deg, var(--accent-a, var(--brand-500)), var(--accent-b, var(--brand-600)));
@@ -208,13 +208,15 @@
             <td><span class="badge bg-primary-subtle text-primary campo-tipo">{{ ticket.tipo }}</span></td>
             <td class="text-nowrap campo-fecha">{{ ticket.fecha_legible }}</td>
             <td class="small campo-adjuntos">
-              {% if ticket.adjuntos %}
+              {% set files = ticket.adjuntos or ticket.archivos %}
+              {% if files %}
                 <div class="chips">
-                  {% for file in ticket.adjuntos %}
+                  {% for file in files %}
+                    {% set name = (file|string).split('/')[-1].split('\\\\')[-1] %}
                     <span class="chip">
                       <i class="bi bi-paperclip"></i>
-                      <a href="/static/adjuntos_incidencias/{{ file }}" target="_blank" rel="noopener">
-                        {{ file.split('_')[-1] }}
+                      <a href="/static/adjuntos_incidencias/{{ name }}" target="_blank" rel="noopener">
+                        {{ name }}
                       </a>
                     </span>
                   {% endfor %}
@@ -232,8 +234,8 @@
             </td>
             <td class="text-nowrap">
               {% if ticket.estado != 'Cerrado' %}
-              <form method="post" action="/incidencias/cerrar/{{ ticket.id }}" class="d-inline inc-cerrar-form">
-                <button type="submit" class="btn btn-sm btn-outline-success">
+              <form method="post" action="/incidencias/cerrar/{{ ticket.id }}" class="d-inline">
+                <button type="submit" class="btn btn-sm btn-outline-success action-cerrar">
                   <i class="bi bi-check2-circle me-1"></i> Cerrar
                 </button>
               </form>
@@ -242,9 +244,9 @@
               {% endif %}
 
               {% if usuario_actual.rol == 'admin' %}
-              <form method="post" action="/incidencias/eliminar/{{ ticket.id }}" class="d-inline ms-1 inc-eliminar-form"
+              <form method="post" action="/incidencias/eliminar/{{ ticket.id }}" class="d-inline ms-1"
                     onsubmit="return confirm('¿Eliminar incidencia #{{ ticket.id }}?');">
-                <button type="submit" class="btn btn-sm btn-outline-danger">
+                <button type="submit" class="btn btn-sm btn-outline-danger action-eliminar">
                   <i class="bi bi-trash me-1"></i> Eliminar
                 </button>
               </form>
@@ -285,13 +287,13 @@
     }
   });
 
-  /* ===== Helpers ===== */
+  /* ====== Helpers ====== */
   const $ = (s,sc)=> (sc||document).querySelector(s);
   const $$ = (s,sc)=> Array.from((sc||document).querySelectorAll(s));
   const escHTML = s => (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function showToastSafe(t,b,icon){ if(window.showToast) showToast({title:t, body:b||'', icon:icon||'info'}); }
 
-  /* ===== Form: contador + validación de adjuntos ===== */
+  /* ====== Form: contador y validación de adjuntos ====== */
   (function(){
     const $desc = $('#descripcion'), $cnt = $('#descCnt');
     if($desc && $cnt){
@@ -319,7 +321,9 @@
     $file?.addEventListener('change', ()=>{
       const files=[...$file.files];
       const wrong = files.filter(f=>!ALLOWED.test(f.name));
-      if(wrong.length){ showToastSafe('Archivos no permitidos', wrong.map(f=>f.name).join(', '), 'exclamation-triangle'); }
+      if(wrong.length){
+        showToastSafe('Archivos no permitidos', wrong.map(f=>f.name).join(', '), 'exclamation-triangle');
+      }
       const tooMany = files.length > MAX_FILES;
       const totalMB = files.reduce((a,b)=>a+b.size,0)/1024/1024;
       const tooBig  = totalMB > MAX_TOTAL_MB;
@@ -335,14 +339,13 @@
       renderList($file.files);
     });
 
-    // Submit UX mínimo
     $('#formInc')?.addEventListener('submit', ()=>{
       const btn = $('#formInc button[type="submit"]');
       if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Enviando…'; }
     });
   })();
 
-  /* ===== Listado: búsqueda + filtros + orden + paginación + export ===== */
+  /* ====== Listado: búsqueda + filtros + orden + paginación + export ====== */
   const rowsAll = () => $$('#incTableBody tr').map(tr => ({
     tr,
     id: Number(tr.dataset.id || tr.querySelector('.td-id')?.textContent || 0),
@@ -379,7 +382,6 @@
       return true;
     });
 
-    // ordenar
     out.sort((a,b)=>{
       const dir = STATE.order.dir === 'asc' ? 1 : -1;
       const by = STATE.order.by;
@@ -438,7 +440,19 @@
     $pager.appendChild(make('»', pages, STATE.page===pages));
   }
 
-  // UI bindings
+  // Export CSV
+  $('#btnExport').addEventListener('click', ()=>{
+    const rows = STATE.filtered.map(r=>({ id:r.id, usuario:r.usuario, titulo:r.titulo, descripcion:r.descripcion, tipo:r.tipo, fecha:r.fecha, estado:r.estado }));
+    if(!rows.length){ showToastSafe('Exportar', 'No hay resultados para exportar', 'exclamation-triangle'); return; }
+    const headers = Object.keys(rows[0]);
+    const esc = v => `"${String(v??'').replace(/"/g,'""')}"`;
+    const csv = [headers.map(esc).join(',')].concat(rows.map(r=>headers.map(h=>esc(r[h])).join(','))).join('\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'}); const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download=`incidencias_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`; a.click(); URL.revokeObjectURL(url);
+    showToastSafe('Exportado', 'Se descargó el CSV del filtro actual', 'check2-circle');
+  });
+
+  // Restaurar/persistir filtros en hash
   (function(){
     const $q = $('#filterInput');
     let dId=null;
@@ -447,7 +461,6 @@
     $('#filterTipo').addEventListener('change', e=>{ STATE.tipo = e.target.value || ''; applyFilters(); });
     $('#pageSize').addEventListener('change', e=>{ STATE.pageSize = parseInt(e.target.value,10)||25; STATE.page=1; render(); });
 
-    // Orden click
     $$('#incTable thead th.sortable').forEach(th=>{
       th.addEventListener('click', ()=>{
         const by = th.dataset.sort;
@@ -457,73 +470,73 @@
       });
     });
 
-    // Export CSV (filtrado actual)
-    $('#btnExport').addEventListener('click', ()=>{
-      const rows = STATE.filtered.map(r=>({ id:r.id, usuario:r.usuario, titulo:r.titulo, descripcion:r.descripcion, tipo:r.tipo, fecha:r.fecha, estado:r.estado }));
-      if(!rows.length){ showToastSafe('Exportar', 'No hay resultados para exportar', 'exclamation-triangle'); return; }
-      const headers = Object.keys(rows[0]);
-      const esc = v => `"${String(v??'').replace(/"/g,'""')}"`;
-      const csv = [headers.map(esc).join(',')].concat(rows.map(r=>headers.map(h=>esc(r[h])).join(','))).join('\n');
-      const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href=url; a.download=`incidencias_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
-      a.click(); URL.revokeObjectURL(url);
-      showToastSafe('Exportado', 'Se descargó el CSV del filtro actual', 'check2-circle');
-    });
-
-    // Init
-    applyFilters();
+    try{
+      const h = new URLSearchParams(location.hash.replace(/^#/,''));
+      if(h.get('q')){ $q.value = decodeURIComponent(h.get('q')); STATE.term = $q.value; }
+      if(h.get('estado')){ $('#filterEstado').value = h.get('estado'); STATE.estado = h.get('estado'); }
+      if(h.get('tipo')){ $('#filterTipo').value = h.get('tipo'); STATE.tipo = h.get('tipo'); }
+    }catch(_){}
+    const persistHash = ()=>{
+      const p = new URLSearchParams();
+      if(STATE.term) p.set('q', STATE.term);
+      if(STATE.estado) p.set('estado', STATE.estado);
+      if(STATE.tipo) p.set('tipo', STATE.tipo);
+      history.replaceState(null,'', '#'+p.toString());
+    };
+    const _apply = applyFilters;
+    applyFilters = function(){ _apply(); persistHash(); };
+    _apply();
   })();
 
-  /* ====== FIX BOTONES: interceptar POST de cerrar/eliminar por fetch ====== */
-  (function bindTicketActions(){
-    const body = $('#incTableBody');
-    if(!body) return;
+  /* ====== Delegación robusta: Cerrar / Eliminar por fetch con fallback ====== */
+  (function(){
+    const tbody = document.getElementById('incTableBody');
+    if(!tbody) return;
 
-    body.addEventListener('submit', async (e)=>{
-      const form = e.target.closest('form');
-      if(!form) return;
-      const action = (form.getAttribute('action')||'').toLowerCase();
-      if(!/\/incidencias\/(cerrar|eliminar)\//.test(action)) return;
+    function busy(btn, on){
+      if(!btn) return; btn.disabled = !!on;
+      if(on){
+        btn.dataset._html = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>' + btn.textContent.trim();
+      }else if(btn.dataset._html){ btn.innerHTML = btn.dataset._html; }
+    }
 
-      e.preventDefault(); // evitamos que el submit falle silenciosamente en algunos entornos
+    tbody.addEventListener('click', async (e)=>{
+      const btn = e.target.closest('form[action^="/incidencias/"] button[type="submit"]');
+      if(!btn) return;
+      const form = btn.closest('form'); if(!form) return;
 
-      const btn = form.querySelector('button[type="submit"]');
-      const prev = btn ? btn.innerHTML : '';
-      if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Procesando…'; }
+      // Usamos fetch; si falla, dejamos pasar el submit normal.
+      e.preventDefault();
+      const action = form.getAttribute('action') || '';
+      const isDelete = /\/eliminar\//.test(action);
+      const tr = form.closest('tr');
 
       try{
-        const res = await fetch(action, { method:'POST', credentials:'same-origin' });
-        if(!res.ok){ throw new Error('Respuesta no OK'); }
+        busy(btn, true);
+        const res = await fetch(action, { method:'POST' });
+        let data=null; try{ data = await res.clone().json(); }catch(_){ /* html/redirect */ }
+        if(!res.ok || (data && data.ok===false)) throw new Error((data&&data.error)||('HTTP '+res.status));
 
-        const tr = form.closest('tr');
-
-        if(action.includes('/cerrar/')){
-          // Actualiza badge y bloquea acciones
-          const estadoCell = tr.querySelector('.td-estado');
+        if(isDelete){
+          tr?.remove();
+          showToastSafe('Incidencias', 'Incidencia eliminada', 'check2-circle');
+        }else{
+          const estadoCell = tr?.querySelector('.td-estado');
           if(estadoCell){
             estadoCell.innerHTML = '<span class="badge-state badge-cerrado">Cerrado</span>';
-          }
-          tr.setAttribute('data-estado','Cerrado');
-          // Reemplazar botones por guión
-          const actionsTd = form.parentElement;
-          if(actionsTd){
-            // quitamos sólo el form de "Cerrar"
+            // quitar botón Cerrar
             form.remove();
-            // si quedó vacío (o sólo espacios), mostramos guión
-            if(actionsTd.textContent.trim()===''){ actionsTd.innerHTML = '<span class="text-muted small">—</span>'; }
           }
-          showToastSafe('Incidencia', 'Se cerró correctamente.', 'check2-circle');
-          applyFilters(); // re-evaluar filtros/orden
-        }else{
-          // Eliminar: remover la fila
-          tr?.remove();
-          showToastSafe('Incidencia', 'Se eliminó correctamente.', 'trash');
-          applyFilters();
+          showToastSafe('Incidencias', 'Incidencia cerrada', 'check2-circle');
         }
-      }catch(_){
-        showToastSafe('Incidencia', 'No se pudo completar la acción.', 'exclamation-triangle');
-        if(btn){ btn.disabled = false; btn.innerHTML = prev; }
+        // Recalcular vista/paginación
+        applyFilters();
+      }catch(_err){
+        // Fallback: envío normal del form
+        try{ form.submit(); }catch(__){}
+      }finally{
+        busy(btn, false);
       }
     });
   })();
