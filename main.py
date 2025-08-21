@@ -10,6 +10,7 @@ import asyncio
 import re
 import json
 from typing import List, Optional, Dict, Set
+
 from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body, WebSocket, WebSocketDisconnect, Depends, status, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -17,6 +18,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.concurrency import run_in_threadpool
+
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from sqlalchemy import or_
@@ -34,24 +36,41 @@ from utils import (
 from database import (
     DB_PATH,
     inicializar_bd,
-    obtener_usuario_por_email, agregar_usuario, listar_usuarios,
-    actualizar_password, cambiar_estado_usuario, borrar_usuario, cambiar_rol,
+    obtener_usuario_por_email,
+    agregar_usuario,
+    listar_usuarios,
+    actualizar_password,
+    cambiar_estado_usuario,
+    borrar_usuario,
+    cambiar_rol,
     buscar_usuarios,
-    guardar_en_historial, obtener_historial, eliminar_del_historial,
+    guardar_en_historial,
+    obtener_historial,
+    eliminar_del_historial,
     obtener_historial_completo,
-    crear_ticket, obtener_todos_los_tickets, obtener_tickets_por_usuario,
-    actualizar_estado_ticket, eliminar_ticket,
+    crear_ticket,
+    obtener_todos_los_tickets,
+    obtener_tickets_por_usuario,
+    actualizar_estado_ticket,
+    eliminar_ticket,
     obtener_auditoria,
-    enviar_mensaje, obtener_hilos_para, obtener_mensajes_entre,
-    marcar_mensajes_leidos, contar_no_leidos,
-    ocultar_hilo, restaurar_hilo,
+    enviar_mensaje,
+    obtener_hilos_para,
+    obtener_mensajes_entre,
+    marcar_mensajes_leidos,
+    contar_no_leidos,
+    ocultar_hilo,
+    restaurar_hilo,
     guardar_adjunto,
     es_admin,
-    iniciar_analisis_historial, marcar_valoracion_historial, tiene_valoracion_pendiente
+    iniciar_analisis_historial,
+    marcar_valoracion_historial,
+    tiene_valoracion_pendiente
 )
 
 # ORM (audit_logs)
 from db_orm import inicializar_bd_orm, SessionLocal, AuditLog
+
 
 # ================== TZ & helpers ==================
 TZ_AR = ZoneInfo("America/Argentina/Buenos_Aires")
@@ -99,14 +118,13 @@ def _parse_dt_utc(value) -> Optional[datetime]:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
+
 # ================== App & Middlewares ==================
 SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-in-prod")
+
 app = FastAPI(middleware=[
     # Cookie de sesión más robusta y persistente
-    Middleware(SessionMiddleware,
-               secret_key=SESSION_SECRET,
-               same_site="lax",
-               max_age=60*60*24*30)  # 30 días
+    Middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax", max_age=60*60*24*30)  # 30 días
 ])
 
 # ---------- Garantizar tablas de chat si faltan (fix 'no such table: mensajes') ----------
@@ -121,11 +139,11 @@ def ensure_chat_tables():
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS mensajes(
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    de_email   TEXT NOT NULL,
+                    de_email TEXT NOT NULL,
                     para_email TEXT NOT NULL,
-                    texto      TEXT,
-                    leido      INTEGER NOT NULL DEFAULT 0,
-                    fecha      TEXT NOT NULL
+                    texto TEXT,
+                    leido INTEGER NOT NULL DEFAULT 0,
+                    fecha TEXT NOT NULL
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_mensajes_para_leido ON mensajes(para_email, leido)")
@@ -134,8 +152,8 @@ def ensure_chat_tables():
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS hilos_ocultos(
                     owner_email TEXT NOT NULL,
-                    otro_email  TEXT NOT NULL,
-                    hidden_at   TEXT NOT NULL,
+                    otro_email TEXT NOT NULL,
+                    hidden_at TEXT NOT NULL,
                     PRIMARY KEY(owner_email, otro_email)
                 )
             """)
@@ -144,10 +162,10 @@ def ensure_chat_tables():
                 CREATE TABLE IF NOT EXISTS mensajes_adjuntos(
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     mensaje_id INTEGER NOT NULL,
-                    filename   TEXT NOT NULL,
-                    original   TEXT,
-                    mime       TEXT,
-                    size       INTEGER,
+                    filename TEXT NOT NULL,
+                    original TEXT,
+                    mime TEXT,
+                    size INTEGER,
                     created_at TEXT NOT NULL
                 )
             """)
@@ -171,9 +189,9 @@ def ensure_default_admin():
     """
     Si no hay usuarios en la DB, crea un admin inicial.
     Variables de entorno:
-      - DEFAULT_ADMIN_EMAIL
-      - DEFAULT_ADMIN_NAME
-      - DEFAULT_ADMIN_PASSWORD  (fallback a DEFAULT_NEW_USER_PASSWORD o '1234')
+    - DEFAULT_ADMIN_EMAIL
+    - DEFAULT_ADMIN_NAME
+    - DEFAULT_ADMIN_PASSWORD (fallback a DEFAULT_NEW_USER_PASSWORD o '1234')
     """
     try:
         usuarios = listar_usuarios()
@@ -183,8 +201,8 @@ def ensure_default_admin():
         return
 
     default_email = (os.getenv("DEFAULT_ADMIN_EMAIL", "admin@suizo.com") or "").lower()
-    default_name  = os.getenv("DEFAULT_ADMIN_NAME", "Admin")
-    default_pwd   = os.getenv("DEFAULT_ADMIN_PASSWORD", os.getenv("DEFAULT_NEW_USER_PASSWORD", "1234"))
+    default_name = os.getenv("DEFAULT_ADMIN_NAME", "Admin")
+    default_pwd = os.getenv("DEFAULT_ADMIN_PASSWORD", os.getenv("DEFAULT_NEW_USER_PASSWORD", "1234"))
 
     try:
         if not obtener_usuario_por_email(default_email):
@@ -206,7 +224,6 @@ ensure_default_admin()
 # Static
 os.makedirs("static", exist_ok=True)
 os.makedirs("generated_pdfs", exist_ok=True)
-
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="generated_pdfs")
 
@@ -227,6 +244,7 @@ def ar_time(value: str) -> str:
         return iso_utc_to_ar_str(value)
     except Exception:
         return value
+
 templates.env.filters["ar_time"] = ar_time
 
 # ⭐ No-cache para HTML (evita que el browser/CDN te muestre UI vieja)
@@ -239,6 +257,7 @@ async def _no_cache_html(request, call_next):
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"
     return resp
+
 
 # ================== Guardas/Dependencias de auth/roles ==================
 def require_auth(request: Request):
@@ -260,11 +279,12 @@ def require_admin(request: Request):
         pass
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admins")
 
+
 # ================== Preferencias de respuesta (HTML/JSON) ==================
 def wants_json(request: Request) -> bool:
     """
-    True si el cliente espera JSON (útil para que /incidencias/cerrar|eliminar
-    respondan {ok:true} cuando vienen por fetch).
+    True si el cliente espera JSON (útil para que /incidencias/cerrar|eliminar respondan {ok:true}
+    cuando vienen por fetch).
     """
     acc = (request.headers.get("accept") or "").lower()
     xrw = (request.headers.get("x-requested-with") or "").lower()
@@ -273,6 +293,7 @@ def wants_json(request: Request) -> bool:
 def _wants_html(req: Request) -> bool:
     acc = (req.headers.get("accept") or "").lower()
     return "text/html" in acc and "application/json" not in acc
+
 
 # ================== Alert/WS manager ==================
 class ConnectionManager:
@@ -354,24 +375,36 @@ async def emit_chat_new_message(para_email: str, de_email: str, msg_id: int, pre
     }
     await manager.send_to_user(para_email, payload)
 
+
 # ================== Archivos de chat (adjuntos) ==================
 CHAT_ATTACH_DIR = os.path.join("static", "chat_adjuntos")
 os.makedirs(CHAT_ATTACH_DIR, exist_ok=True)
 
 CHAT_ALLOWED_EXT = {
-    ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp",
-    ".txt", ".csv", ".xlsx", ".xls", ".docx", ".doc", ".pptx"
+    ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".txt", ".csv",
+    ".xlsx", ".xls", ".docx", ".doc", ".pptx"
 }
 CHAT_MAX_FILES = 10
 CHAT_MAX_TOTAL_MB = 50
 
-# (Se elimina aquí el bloque duplicado de adjuntos de incidencias; la versión definitiva está en PARTE 4)
+# ================== Adjuntos de incidencias (⚠️ NUEVO) ==================
+# Definimos el directorio y límites de adjuntos de incidencias aquí (PARTE 1)
+# para que el endpoint /incidencias/crear no falle con NameError.
+INCID_ATTACH_DIR = os.path.join("static", "incid_adjuntos")
+os.makedirs(INCID_ATTACH_DIR, exist_ok=True)
+
+# Reusamos whitelist y seteamos límites específicos
+INCID_ALLOWED_EXT = CHAT_ALLOWED_EXT
+INCID_MAX_FILES = 10
+INCID_MAX_TOTAL_MB = 25
+
 
 # ================== Avatares (perfil) ==================
 AVATAR_DIR = os.path.join("static", "avatars")
 os.makedirs(AVATAR_DIR, exist_ok=True)
 AVATAR_ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".webp"}
 AVATAR_MAX_MB = 2  # MB
+
 
 # ================== Helpers ==================
 def _actor_info(request: Request):
@@ -411,18 +444,15 @@ def _build_audit_filters(q, filtros):
     if not filtros:
         return q
     acc = (filtros.get("accion") or "").strip()
-    d   = (filtros.get("desde")  or "").strip()
-    h   = (filtros.get("hasta")  or "").strip()
-    term= (filtros.get("term")   or "").strip()
-
+    d = (filtros.get("desde") or "").strip()
+    h = (filtros.get("hasta") or "").strip()
+    term= (filtros.get("term") or "").strip()
     if acc and hasattr(AuditLog, "accion"):
         q = q.filter(AuditLog.accion == acc)
-
     if d and hasattr(AuditLog, "fecha"):
         q = q.filter(AuditLog.fecha >= f"{d} 00:00:00")
     if h and hasattr(AuditLog, "fecha"):
         q = q.filter(AuditLog.fecha <= f"{h} 23:59:59")
-
     if term:
         like = f"%{term}%"
         ors = []
@@ -453,7 +483,6 @@ def _buscar_historial_usuario(
         items = []
 
     user_items = [h for h in items if (h.get("usuario") == user)]
-
     nombre_pdf = (nombre_pdf or "").strip()
     timestamp = (timestamp or "").strip()
 
@@ -461,12 +490,10 @@ def _buscar_historial_usuario(
         for h in user_items:
             if str(h.get("timestamp") or "") == timestamp:
                 return h
-
     if nombre_pdf:
         for h in user_items:
             if (h.get("nombre_archivo") or "") == nombre_pdf:
                 return h
-
     if timestamp:
         for h in user_items:
             ts_h = _extraer_ts_de_nombre(h.get("nombre_archivo") or "")
@@ -479,8 +506,8 @@ def _buscar_historial_usuario(
         except Exception:
             pass
         return user_items[0]
-
     return None
+
 
 # --- Config pública para el front (límites de adjuntos) ---
 @app.get("/chat/config")
@@ -490,6 +517,7 @@ async def chat_config():
         "max_files": CHAT_MAX_FILES,
         "max_total_mb": CHAT_MAX_TOTAL_MB
     }
+
 
 # ================== Rutas base ==================
 @app.get("/", response_class=HTMLResponse)
@@ -519,7 +547,6 @@ async def login_form(request: Request):
 # =====================================================================
 # ========================== CALENDARIO (DB utilitaria) ===============
 # =====================================================================
-
 CAL_DB = "calendar.sqlite3"
 
 def cal_conn():
@@ -580,6 +607,7 @@ async def notify_async(user: str, titulo: str, cuerpo: str = ""):
     _notify(user, titulo, cuerpo)
     await emit_alert(user, titulo, cuerpo)
 
+
 # ====== NUEVO: rating pendiente liviano (sidecar) ======
 def init_rating_pending_db():
     with cal_conn() as c:
@@ -612,7 +640,7 @@ def _pr_get(user: str):
         ).fetchone()
         if r:
             return {"historial_id": r["historial_id"], "timestamp": r["timestamp"], "nombre_pdf": r["nombre_pdf"]}
-    return None
+        return None
 
 def _pr_clear(user: str):
     with cal_conn() as c:
@@ -621,14 +649,16 @@ def _pr_clear(user: str):
 
 # ================== Login/Logout ==================
 @app.post("/login")
-async def login(request: Request,
-                email: str = Form(...),
-                password: str = Form(...),
-                remember: Optional[str] = Form(default=None)):  # "on" si tildan Recordarme
+async def login(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    remember: Optional[str] = Form(default=None)   # "on" si tildan Recordarme
+):
     """
     Normalización:
-      - recorta espacios y pasa a lower
-      - si no trae '@', agrega dominio por defecto (LOGIN_DEFAULT_DOMAIN, por defecto suizo.com)
+    - recorta espacios y pasa a lower
+    - si no trae '@', agrega dominio por defecto (LOGIN_DEFAULT_DOMAIN, por defecto suizo.com)
     """
     raw = (email or "").strip().lower()
     if "@" not in raw and " " not in raw:
@@ -637,9 +667,7 @@ async def login(request: Request,
     else:
         email = raw
 
-    usuario = obtener_usuario_por_email(email)
-
-    # usuario tuple esperado: (id, nombre, email, password, rol, activo)
+    usuario = obtener_usuario_por_email(email)  # (id, nombre, email, password, rol, activo)
     is_active = True
     if isinstance(usuario, (list, tuple)) and len(usuario) >= 6:
         is_active = bool(usuario[5])
@@ -682,7 +710,6 @@ async def login(request: Request,
                 INSERT INTO sessions(id, user, nombre, ip, ua, login_at, last_seen, logout_at, closed_reason)
                 VALUES(?,?,?,?,?,?,?,?,?)
             """, (sid, request.session["usuario"], nombre_s, ip_s, ua_s, now_iso, now_iso, None, None))
-
         return RedirectResponse("/", status_code=303)
 
     # Mensajes de error más claros
@@ -692,12 +719,11 @@ async def login(request: Request,
         err = "Credenciales incorrectas"
 
     # Mantener la UX del login (mensajes + status)
-    return templates.TemplateResponse("login.html", {
-        "request": request,
-        "error": err,
-        "mensaje": None
-    }, status_code=401)
-
+    return templates.TemplateResponse(
+        "login.html",
+        {"request": request, "error": err, "mensaje": None},
+        status_code=401
+    )
 
 @app.post("/logout")
 async def logout_post(request: Request):
@@ -923,11 +949,11 @@ async def enviar_rating(request: Request, payload: RatingIn):
 
     return {"ok": True, "message": "Valoración registrada"}
 
-
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
     usuario = request.session.get("usuario", "Anónimo")
 
+    # Si hay una valoración pendiente, bloquear nuevo análisis
     try:
         pr = _pr_get(usuario)
         if pr or tiene_valoracion_pendiente(usuario):
@@ -1032,10 +1058,10 @@ async def eliminar_archivo(timestamp: str):
 async def usuario_actual(request: Request):
     email = request.session.get("usuario", "")
     rol = request.session.get("rol", "usuario")
-
     row = obtener_usuario_por_email(email) if email else None
     nombre = (row[1] if row else None) or request.session.get("nombre") or (email or "Desconocido")
 
+    # Buscar avatar si existe
     avatar_url = ""
     if email:
         prefix = _email_safe(email)
@@ -1051,6 +1077,7 @@ async def usuario_actual(request: Request):
         "nombre": nombre,
         "avatar_url": avatar_url
     }
+
 
 # ===== Subir/actualizar avatar =====
 @app.post("/perfil/avatar")
@@ -1078,19 +1105,17 @@ async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
         if os.path.isfile(p) and p != dst:
             try:
                 os.remove(p)
-            except:
+            except Exception:
                 pass
 
     with open(dst, "wb") as f:
         f.write(data)
 
     url = f"/{dst.replace(os.sep, '/')}"
-
     try:
         await emit_alert(email, "Perfil actualizado", "Tu avatar se actualizó correctamente")
     except Exception:
         pass
-
     return {"ok": True, "avatar_url": url}
 
 
@@ -1103,7 +1128,6 @@ async def diag_auth(request: Request):
     """
     if (os.getenv("ENABLE_DIAG", "0") != "1"):
         raise HTTPException(status_code=404, detail="Not found")
-
     sess = request.session or {}
     headers = {
         "user_agent": request.headers.get("user-agent", ""),
@@ -1170,14 +1194,11 @@ async def chat_openai(request: Request):
         (h for h in historial if h.get("usuario") == usuario_actual and h.get("resumen")),
         None
     )
-
     if ultimo_analisis_usuario:
-        ultimo_resumen = f"""
-📌 Último análisis del usuario actual:
+        ultimo_resumen = f""" 📌 Último análisis del usuario actual:
 - Fecha: {ultimo_analisis_usuario.get('fecha')}
 - Archivo: {ultimo_analisis_usuario.get('nombre_archivo')}
-- Resumen:
-{ultimo_analisis_usuario.get('resumen')}
+- Resumen: {ultimo_analisis_usuario.get('resumen')}
 """
     else:
         ultimo_resumen = "(El usuario aún no tiene análisis registrados.)"
@@ -1186,17 +1207,16 @@ async def chat_openai(request: Request):
         f"- [{h.get('fecha')}] {h.get('usuario')} analizó '{h.get('nombre_archivo')}' y obtuvo:\n{h.get('resumen')}\n"
         for h in historial if h.get("resumen")
     ])
-
     contexto = f"{ultimo_resumen}\n\n📚 Historial completo:\n{contexto_general}"
 
     respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
     return JSONResponse({"respuesta": respuesta})
 
+
 @app.post("/api/chat-openai")
 async def api_chat_openai(request: Request, payload: dict = Body(...)):
     mensaje = (payload or {}).get("message", "").strip()
     usuario_actual = request.session.get("usuario", "Desconocido")
-
     if not mensaje:
         return JSONResponse({"reply": "Decime qué necesitás revisar del pliego 👌"})
 
@@ -1209,14 +1229,11 @@ async def api_chat_openai(request: Request, payload: dict = Body(...)):
         (h for h in historial if h.get("usuario") == usuario_actual and h.get("resumen")),
         None
     )
-
     if ultimo_analisis_usuario:
-        ultimo_resumen = f"""
-📌 Último análisis del usuario actual:
+        ultimo_resumen = f""" 📌 Último análisis del usuario actual:
 - Fecha: {ultimo_analisis_usuario.get('fecha')}
 - Archivo: {ultimo_analisis_usuario.get('nombre_archivo')}
-- Resumen:
-{ultimo_analisis_usuario.get('resumen')}
+- Resumen: {ultimo_analisis_usuario.get('resumen')}
 """
     else:
         ultimo_resumen = "(El usuario aún no tiene análisis registrados.)"
@@ -1225,57 +1242,59 @@ async def api_chat_openai(request: Request, payload: dict = Body(...)):
         f"- [{h.get('fecha')}] {h.get('usuario')} analizó '{h.get('nombre_archivo')}' y obtuvo:\n{h.get('resumen')}\n"
         for h in historial if h.get("resumen")
     ])
-
     contexto = f"{ultimo_resumen}\n\n📚 Historial completo:\n{contexto_general}"
 
     respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
     return JSONResponse({"reply": respuesta})
+
 
 # ===== Mini vista embebida para el widget del topbar/FAB =====
 @app.get("/chat_openai_embed", response_class=HTMLResponse)
 async def chat_openai_embed(request: Request):
     if not request.session.get("usuario"):
         return HTMLResponse("<div style='padding:12px'>Iniciá sesión para usar el chat.</div>")
-    html = """
-    <!doctype html><html><head>
-    <meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
-    <style>#t{ resize:none; min-height:42px; max-height:150px; }</style>
-    </head><body class="p-2" style="background:transparent">
-      <div id="log" class="mb-2" style="height:410px; overflow:auto; background:#f6f8fb; border-radius:12px; padding:8px;"></div>
-      <form id="f" class="d-flex gap-2">
-        <textarea id="t" class="form-control" placeholder="Escribe tu mensaje..." autocomplete="off" autofocus></textarea>
-        <button id="send" type="button" class="btn btn-primary">Enviar</button>
-      </form>
-      <script>
-        const log  = document.getElementById('log');
-        const ta   = document.getElementById('t');
-        const btn  = document.getElementById('send');
-        function esc(s){ return (s||'').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
-        function add(b){ const p=document.createElement('div'); p.innerHTML=b; log.appendChild(p); log.scrollTop=log.scrollHeight; }
-        function autosize(){ ta.style.height='auto'; ta.style.height = Math.min(ta.scrollHeight, 150) + 'px'; }
-        ta.addEventListener('input', autosize); autosize();
-        let busy = false;
-        async function send(){
-          if(busy) return;
-          const v = ta.value.trim();
-          if(!v) return;
-          busy = true; btn.disabled = true;
-          add('<div><b>Tú:</b> '+esc(v)+'</div>');
-          ta.value=''; autosize();
-          try{
-            const r = await fetch('/chat-openai', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mensaje:v}) });
-            const j = await r.json().catch(()=>({}));
-            add('<div class="mt-1"><b>IA:</b> '+(j.respuesta||'')+'</div>');
-          }catch(_){ add('<div class="text-danger mt-1"><b>Error:</b> No se pudo enviar.</div>'); }
-          finally{ busy=false; btn.disabled=false; ta.focus(); }
-        }
-        ta.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
-        btn.addEventListener('click', (e)=>{ e.preventDefault(); send(); });
-      </script>
-    </body></html>
-    """
+    html = """<!doctype html><html><head>
+<meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+<style>#t{ resize:none; min-height:42px; max-height:150px; }</style>
+</head><body class="p-2" style="background:transparent">
+<div id="log" class="mb-2" style="height:410px; overflow:auto; background:#f6f8fb; border-radius:12px; padding:8px;"></div>
+<form id="f" class="d-flex gap-2">
+  <textarea id="t" class="form-control" placeholder="Escribe tu mensaje..." autocomplete="off" autofocus></textarea>
+  <button id="send" type="button" class="btn btn-primary">Enviar</button>
+</form>
+<script>
+ const log = document.getElementById('log');
+ const ta = document.getElementById('t');
+ const btn = document.getElementById('send');
+ function esc(s){ return (s||'').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+ function add(b){ const p=document.createElement('div'); p.innerHTML=b; log.appendChild(p); log.scrollTop=log.scrollHeight; }
+ function autosize(){ ta.style.height='auto'; ta.style.height = Math.min(ta.scrollHeight, 150) + 'px'; }
+ ta.addEventListener('input', autosize); autosize();
+ let busy = false;
+ async function send(){
+   if(busy) return;
+   const v = ta.value.trim();
+   if(!v) return;
+   busy = true; btn.disabled = true;
+   add('<div><b>Tú:</b> '+esc(v)+'</div>');
+   ta.value=''; autosize();
+   try{
+     const r = await fetch('/chat-openai', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mensaje:v}) });
+     const j = await r.json().catch(()=>({}));
+     add('<div class="mt-1"><b>IA:</b> '+(j.respuesta||'')+'</div>');
+   }catch(_){
+     add('<div class="text-danger mt-1"><b>Error:</b> No se pudo enviar.</div>');
+   } finally{
+     busy=false; btn.disabled=false; ta.focus();
+   }
+ }
+ ta.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
+ btn.addEventListener('click', (e)=>{ e.preventDefault(); send(); });
+</script>
+</body></html>"""
     return HTMLResponse(html)
+
 
 # ================== Chat interno (UI) ==================
 @app.get("/chat", response_class=HTMLResponse)
@@ -1284,6 +1303,7 @@ async def chat_view(request: Request):
         return RedirectResponse("/login")
     return templates.TemplateResponse("chat.html", {"request": request})
 
+
 # ================== Chat interno (API) ==================
 def _is_no_table_error(e: Exception) -> bool:
     return isinstance(e, sqlite3.OperationalError) and "no such table" in str(e).lower()
@@ -1291,9 +1311,12 @@ def _is_no_table_error(e: Exception) -> bool:
 # ---------- NORMALIZADOR DE USUARIOS (tupla/dict) ----------
 def _norm_rol(s: str) -> str:
     s = (s or "").strip().lower()
-    if s.startswith("admin"): return "admin"
-    if s.startswith("usuar"): return "usuario"
-    if s == "borrado": return "borrado"
+    if s.startswith("admin"):
+        return "admin"
+    if s.startswith("usuar"):
+        return "usuario"
+    if s == "borrado":
+        return "borrado"
     return "usuario"
 
 def _user_row_to_dict(u):
@@ -1310,18 +1333,14 @@ def _user_row_to_dict(u):
         # (id, nombre, email, password, rol, activo)
         if len(u) >= 6:
             return {
-                "id": u[0],
-                "nombre": u[1] or "",
-                "email": (u[2] or "").lower(),
+                "id": u[0], "nombre": u[1] or "", "email": (u[2] or "").lower(),
                 "rol": _norm_rol(u[4] or "usuario"),
                 "activo": int(u[5]) if u[5] is not None else 1,
             }
         # (id, nombre, email, rol, activo)
         if len(u) == 5:
             return {
-                "id": u[0],
-                "nombre": u[1] or "",
-                "email": (u[2] or "").lower(),
+                "id": u[0], "nombre": u[1] or "", "email": (u[2] or "").lower(),
                 "rol": _norm_rol(u[3] or "usuario"),
                 "activo": int(u[4]) if u[4] is not None else 1,
             }
@@ -1346,19 +1365,15 @@ async def api_buscar_usuarios(request: Request, term: str = "", limit: int = 8):
 async def chat_enviar(request: Request):
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
-
     data = await request.json()
     para = data.get("para")
     texto = data.get("texto", "").strip()
     if not para or not texto:
         return JSONResponse({"error": "Faltan campos: para, texto"}, status_code=400)
-
     de = request.session.get("usuario")
     actor_user_id, ip = _actor_info(request)
-
     try:
-        msg_id = enviar_mensaje(de_email=de, para_email=para, texto=texto,
-                                actor_user_id=actor_user_id, ip=ip)
+        msg_id = enviar_mensaje(de_email=de, para_email=para, texto=texto, actor_user_id=actor_user_id, ip=ip)
         await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=texto)
         return JSONResponse({"ok": True, "id": msg_id})
     except Exception as e:
@@ -1379,7 +1394,6 @@ async def chat_enviar_archivos(
         return JSONResponse({"error": "No autenticado"}, status_code=401)
 
     de = request.session.get("usuario")
-
     files = [a for a in archivos if a and a.filename]
     if len(files) > CHAT_MAX_FILES:
         return JSONResponse({"error": f"Máximo {CHAT_MAX_FILES} archivos por mensaje"}, status_code=400)
@@ -1396,22 +1410,21 @@ async def chat_enviar_archivos(
 
     ts = now_stamp_ar()
     total_bytes = 0
-
     for i, archivo in enumerate(files, start=1):
         orig = archivo.filename
         _validate_ext(orig)
-
         ext = os.path.splitext(orig)[1].lower()
         base = _safe_basename(orig)
         safe_name = f"{ts}_{de.replace('@','_at_')}_{i:02d}_{base}{ext}"
         path = os.path.join(CHAT_ATTACH_DIR, safe_name)
-
         written = await _save_upload_stream(archivo, path)
         total_bytes += written
-        if (total_bytes / (1024 * 1024)) > INCID_MAX_TOTAL_MB:
+
+        # ✅ FIX: usar el límite del chat (antes comparaba con INCID_MAX_TOTAL_MB por error)
+        if (total_bytes / (1024 * 1024)) > CHAT_MAX_TOTAL_MB:
             try:
                 os.remove(path)
-            except:
+            except Exception:
                 pass
             return JSONResponse({"error": f"Tamaño total supera {CHAT_MAX_TOTAL_MB} MB"}, status_code=400)
 
@@ -1611,7 +1624,7 @@ DEFAULT_NEW_USER_PASSWORD = os.getenv("DEFAULT_NEW_USER_PASSWORD", "1234")
 class AdminUserCreate(BaseModel):
     nombre: str
     email: EmailStr
-    rol: str = "usuario"   # acepta "Administrador"/"Usuario"
+    rol: str = "usuario"  # acepta "Administrador"/"Usuario"
 
 class AdminPasswordIn(BaseModel):
     email: EmailStr
@@ -1856,7 +1869,7 @@ def _incid_list_attachments(ticket_id: int):
             "filename": name,
             "size": size,
             "url": f"/incidencias/adjunto/{ticket_id}/{name}",
-            "original": re.sub(rf"^{re.escape(prefix)}\d+_", "", name)  # mejor esfuerzo
+            "original": re.sub(rf"^{re.escape(prefix)}\d+_", "", name)  # mejor esfuerzo para mostrar limpio
         })
     return out
 
@@ -1874,15 +1887,9 @@ def _parse_iso_utc(s: str):
             return datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
         except Exception:
             return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)  # asumir UTC si no trae tz
-    return dt.astimezone(timezone.utc)
 
 def _infer_ticket_id(usuario: str, titulo: str, descripcion: str, tipo: str, ref_iso_utc: str) -> Optional[int]:
-    """
-    Heurística para recuperar el ID del ticket recién creado cuando crear_ticket()
-    no lo devuelve: busca por user + (titulo, descripcion, tipo) cercano al now.
-    """
+    """Heurística para recuperar el ID del ticket recién creado cuando crear_ticket() no lo devuelve."""
     try:
         rows = obtener_tickets_por_usuario(usuario) or []
     except Exception:
@@ -1890,8 +1897,7 @@ def _infer_ticket_id(usuario: str, titulo: str, descripcion: str, tipo: str, ref
     ref = _parse_iso_utc(ref_iso_utc) or datetime.now(timezone.utc)
     best = None
     best_dt_diff = 999_999_999
-    for r in rows:
-        # rows: (id, usuario, titulo, descripcion, tipo, estado, fecha)
+    for r in rows:  # (id, usuario, titulo, descripcion, tipo, estado, fecha)
         if (r[2] or "").strip() != titulo.strip():
             continue
         if (r[3] or "").strip() != (descripcion or "").strip():
@@ -1905,7 +1911,10 @@ def _infer_ticket_id(usuario: str, titulo: str, descripcion: str, tipo: str, ref
             best = int(r[0])
     return best
 
-# ---- Incidencias: asegurar config aunque la Parte 1 no se haya pegado completa ----
+# ---- Incidencias: asegurar config por si falta Parte 1 (robustez) ----
+if 'INCID_ATTACH_DIR' not in globals():
+    INCID_ATTACH_DIR = os.path.join("static", "incid_adjuntos")
+    os.makedirs(INCID_ATTACH_DIR, exist_ok=True)
 if 'INCID_ALLOWED_EXT' not in globals():
     INCID_ALLOWED_EXT = CHAT_ALLOWED_EXT
 if 'INCID_MAX_FILES' not in globals():
@@ -1918,11 +1927,6 @@ def _validate_incid_ext(filename: str):
     if ext not in INCID_ALLOWED_EXT:
         raise HTTPException(status_code=400, detail=f"Tipo de archivo no permitido en incidencias: {ext}")
 
-def _validate_incid_ext(filename: str):
-    ext = os.path.splitext(filename or "")[1].lower()
-    if ext not in INCID_ALLOWED_EXT:
-        raise HTTPException(status_code=400, detail=f"Tipo de archivo no permitido: {ext}")
-
 @app.get("/incidencias", response_class=HTMLResponse)
 @app.get("/incidencias/", response_class=HTMLResponse)  # alias con barra final
 async def incidencias_view(request: Request):
@@ -1930,7 +1934,6 @@ async def incidencias_view(request: Request):
         return RedirectResponse("/login")
     email = request.session.get("usuario")
     rol = request.session.get("rol", "usuario")
-
     # admin ve todo, usuario ve las suyas
     rows = obtener_todos_los_tickets() if (rol == "admin" or es_admin(email)) else obtener_tickets_por_usuario(email)
 
@@ -1986,18 +1989,19 @@ async def incidencias_crear(
 ):
     if not request.session.get("usuario"):
         return JSONResponse({"error":"No autenticado"}, status_code=401)
+
     usuario = request.session.get("usuario")
     actor_user_id, ip = _actor_info(request)
 
-    # Creamos primero el ticket
+    # 1) Crear ticket
     now_iso = now_iso_utc()
     crear_ticket(usuario, titulo.strip(), (descripcion or "").strip(), (tipo or "General").strip(),
                  actor_user_id=actor_user_id, ip=ip)
 
-    # Intentamos inferir el ID del ticket recién creado
+    # 2) Inferir ID del ticket recién creado
     ticket_id = _infer_ticket_id(usuario, titulo, descripcion or "", tipo or "General", now_iso)
 
-    # Guardar adjuntos (si pudimos resolver el id)
+    # 3) Guardar adjuntos
     files = [a for a in (archivos or []) if (a and a.filename)]
     if ticket_id and files:
         total_bytes = 0
@@ -2010,11 +2014,15 @@ async def incidencias_crear(
             written = await _save_upload_stream(f, path)
             total_bytes += written
             if (total_bytes / (1024 * 1024)) > INCID_MAX_TOTAL_MB:
-                try: os.remove(path)
-                except: pass
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
                 return JSONResponse({"error": f"Tamaño total supera {INCID_MAX_TOTAL_MB} MB"}, status_code=400)
 
-    return ({"ok": True, "id": ticket_id} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
+    return ({"ok": True, "id": ticket_id}
+            if wants_json(request)
+            else RedirectResponse("/incidencias", status_code=303))
 
 # --- Aliases para aceptar también POST a /incidencias (JSON sin archivos) ---
 @app.post("/incidencias")
@@ -2074,7 +2082,7 @@ async def incidencias_eliminar(request: Request, id: int = Form(...)):
             if name.startswith(prefix):
                 try:
                     os.remove(os.path.join(INCID_ATTACH_DIR, name))
-                except:
+                except Exception:
                     pass
     except Exception:
         pass
@@ -2100,6 +2108,7 @@ def _diag_routes():
 # =====================================================================
 # ========================== CALENDARIO (endpoints) ===================
 # =====================================================================
+
 @app.get("/calendario", response_class=HTMLResponse)
 async def calendario_view(request: Request):
     if not request.session.get("usuario"):
@@ -2111,7 +2120,7 @@ async def cal_list():
     with cal_conn() as c:
         cur = c.execute("SELECT * FROM eventos ORDER BY start ASC")
         rows = [_event_row_to_dict(r) for r in cur.fetchall()]
-    return rows
+        return rows
 
 @app.get("/api/calendar/events")
 async def cal_list_alias():
@@ -2125,9 +2134,9 @@ async def cal_create(request: Request):
     data = await request.json()
     title = (data.get("title") or "").strip()
     start = data.get("start")
-    end   = data.get("end")
+    end = data.get("end")
     all_day = 1 if data.get("AllDay") or data.get("allDay") else 0
-    desc  = (data.get("description") or "").strip()
+    desc = (data.get("description") or "").strip()
     color = (data.get("color") or "#0ea5e9").strip()
     if not title or not start:
         return JSONResponse({"error":"Faltan campos: title, start"}, status_code=400)
@@ -2135,15 +2144,22 @@ async def cal_create(request: Request):
     evt_id = uuid.uuid4().hex
     now = _now_iso()
     created_by = request.session.get("usuario","Desconocido")
+
     with cal_conn() as c:
         c.execute("""
             INSERT INTO eventos(id,title,description,start,end,all_day,color,created_by,created_at,updated_at)
             VALUES(?,?,?,?,?,?,?,?,?,?)
         """, (evt_id,title,desc,start,end,all_day,color,created_by,now,now))
+
     await notify_async(created_by, "Evento creado", f"{title} • {start}{(' → '+end) if end else ''}")
     return {
-        "id": evt_id, "title": title, "description": desc, "start": start, "end": end,
-        "allDay": bool(all_day), "color": color
+        "id": evt_id,
+        "title": title,
+        "description": desc,
+        "start": start,
+        "end": end,
+        "allDay": bool(all_day),
+        "color": color
     }
 
 @app.patch("/calendario/eventos/{evt_id}")
@@ -2158,18 +2174,18 @@ async def cal_update(evt_id: str, request: Request):
         return v if isinstance(v, str) else str(v)
 
     title = data.get("title")
-    desc  = data.get("description")
+    desc = data.get("description")
     color = data.get("color")
     start = to_iso(data.get("start"))
-    end   = to_iso(data.get("end"))
+    end = to_iso(data.get("end"))
     all_day = data.get("AllDay") if "AllDay" in data else data.get("allDay")
 
     sets, vals = [], []
     if title is not None: sets.append("title=?"); vals.append(title)
-    if desc  is not None: sets.append("description=?"); vals.append(desc)
+    if desc is not None:  sets.append("description=?"); vals.append(desc)
     if color is not None: sets.append("color=?"); vals.append(color)
     if start is not None: sets.append("start=?"); vals.append(start)
-    if end   is not None: sets.append("end=?"); vals.append(end)
+    if end is not None:   sets.append("end=?"); vals.append(end)
     if all_day is not None: sets.append("all_day=?"); vals.append(1 if all_day else 0)
     sets.append("updated_at=?"); vals.append(_now_iso())
     vals.append(evt_id)
@@ -2189,10 +2205,12 @@ async def cal_update(evt_id: str, request: Request):
 async def cal_delete(evt_id: str, request: Request):
     if not request.session.get("usuario"):
         return JSONResponse({"error":"No autenticado"}, status_code=401)
+
     with cal_conn() as c:
         cur = c.execute("DELETE FROM eventos WHERE id=?", (evt_id,))
         if cur.rowcount == 0:
             return JSONResponse({"error":"Evento no encontrado"}, status_code=404)
+
     await notify_async(request.session.get("usuario","Desconocido"), "Evento eliminado", f"ID: {evt_id}")
     return {"ok": True}
 
@@ -2200,24 +2218,27 @@ async def cal_delete(evt_id: str, request: Request):
 # =====================================================================
 # ========================== NOTIFICACIONES ============================
 # =====================================================================
+
 @app.get("/notificaciones")
-async def notificaciones(request: Request,
-                         q: Optional[str] = Query(default=None),
-                         only_unread: Optional[bool] = Query(default=None),
-                         limit: int = Query(default=20, ge=1, le=200),
-                         offset: int = Query(default=0, ge=0)):
+async def notificaciones(
+    request: Request,
+    q: Optional[str] = Query(default=None),
+    only_unread: Optional[bool] = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0)
+):
     """
     Si el request espera HTML -> renderiza notificaciones.html
     Caso contrario -> devuelve JSON con filtros (q, only_unread, limit, offset)
     """
     user = request.session.get("usuario", "Desconocido")
-
     if _wants_html(request) and offset == 0 and q is None and only_unread is None:
         return templates.TemplateResponse("notificaciones.html", {"request": request})
 
     q_like = f"%{(q or '').strip()}%"
     where = ["user=?"]
     args: List[object] = [user]
+
     if q and q.strip():
         where.append("(LOWER(titulo) LIKE LOWER(?) OR LOWER(cuerpo) LIKE LOWER(?))")
         args += [q_like, q_like]
@@ -2229,6 +2250,7 @@ async def notificaciones(request: Request,
         total_unread = c.execute(
             "SELECT COUNT(1) FROM notificaciones WHERE user=? AND leida=0", (user,)
         ).fetchone()[0]
+
         sql = f"""
             SELECT id, titulo, cuerpo, created_at, leida
             FROM notificaciones
@@ -2281,7 +2303,10 @@ async def mark_read(request: Request):
     with cal_conn() as c:
         if isinstance(ids, list) and ids:
             placeholders = ",".join("?" for _ in ids)
-            c.execute(f"UPDATE notificaciones SET leida=1 WHERE user=? AND id IN ({placeholders})", (user, *ids))
+            c.execute(
+                f"UPDATE notificaciones SET leida=1 WHERE user=? AND id IN ({placeholders})",
+                (user, *ids)
+            )
         else:
             c.execute("UPDATE notificaciones SET leida=1 WHERE user=?", (user,))
     return {"ok": True}
@@ -2301,6 +2326,7 @@ async def notif_delete(request: Request):
 # =====================================================================
 # ========================== PRESENCIA / ONLINE =======================
 # =====================================================================
+
 SESSION_TIMEOUT_MIN = 10
 
 def init_presence_db():
@@ -2339,7 +2365,6 @@ async def presence_ping(request: Request):
 
     row = obtener_usuario_por_email(email)
     nombre = row[1] if row else email
-
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent", "")
     now = now_iso_utc()
@@ -2350,21 +2375,18 @@ async def presence_ping(request: Request):
             INSERT INTO presence(user, nombre, last_seen, ip, ua)
             VALUES(?,?,?,?,?)
             ON CONFLICT(user) DO UPDATE SET
-              nombre=excluded.nombre,
-              last_seen=excluded.last_seen,
-              ip=excluded.ip,
-              ua=excluded.ua
+                nombre=excluded.nombre,
+                last_seen=excluded.last_seen,
+                ip=excluded.ip,
+                ua=excluded.ua
         """, (email, nombre, now, ip, ua))
-
         if sid:
             c.execute("UPDATE sessions SET last_seen=? WHERE id=?", (now, sid))
-
     return {"ok": True}
 
 @app.get("/presence/online")
 async def presence_online(minutes: int = 5):
     threshold_ts = datetime.now(timezone.utc).timestamp() - (minutes * 60)
-
     items = []
     with cal_conn() as c:
         cur = c.execute("SELECT user, nombre, last_seen, ip, ua FROM presence ORDER BY last_seen DESC")
@@ -2398,6 +2420,7 @@ async def usuarios_activos(request: Request):
 # =====================================================================
 # ===================== AUDITORÍA DE ACTIVIDAD (admins) ===============
 # =====================================================================
+
 def _parse_iso(ts: Optional[str]):
     if not ts:
         return None
@@ -2441,20 +2464,15 @@ async def auditoria_actividad(
 
     q = "SELECT id, user, nombre, ip, ua, login_at, last_seen, logout_at, closed_reason FROM sessions"
     conds, args = [], []
-
     if usuario:
         conds.append("user LIKE ?")
         args.append(f"%{usuario}%")
-
     d = _parse_iso(desde)
     h = _parse_iso(hasta)
     if d:
-        conds.append("login_at >= ?")
-        args.append(d.strftime("%Y-%m-%dT00:00:00Z"))
+        conds.append("login_at >= ?"); args.append(d.strftime("%Y-%m-%dT00:00:00Z"))
     if h:
-        conds.append("login_at <= ?")
-        args.append(h.strftime("%Y-%m-%dT23:59:59Z"))
-
+        conds.append("login_at <= ?"); args.append(h.strftime("%Y-%m-%dT23:59:59Z"))
     if conds:
         q += " WHERE " + " AND ".join(conds)
     q += " ORDER BY login_at DESC LIMIT ?"
@@ -2463,9 +2481,9 @@ async def auditoria_actividad(
     with cal_conn() as c:
         cur = c.execute(q, tuple(args))
         for r in cur.fetchall():
-            login_dt = _to_dt(r["login_at"])
-            last_dt  = _to_dt(r["last_seen"])
-            logout_dt= _to_dt(r["logout_at"])
+            login_dt  = _to_dt(r["login_at"])
+            last_dt   = _to_dt(r["last_seen"])
+            logout_dt = _to_dt(r["logout_at"])
 
             if logout_dt:
                 estado = "cerrada"
@@ -2507,7 +2525,6 @@ async def auditoria_actividad_csv(
 ):
     data = await auditoria_actividad(request, usuario=usuario, desde=desde, hasta=hasta, limit=limit)
     items = data.get("items", [])
-
     headers = ["estado","usuario","nombre","login_at","last_seen","logout_at","duracion_seg","ip","ua","sid","closed_reason"]
     lines = [",".join(headers)]
     for it in items:
@@ -2525,7 +2542,6 @@ async def auditoria_actividad_csv(
             it.get("closed_reason","").replace(",", " ")
         ]
         lines.append(",".join(row))
-
     csv_body = "\n".join(lines)
     filename = "auditoria_actividad.csv"
     return Response(
