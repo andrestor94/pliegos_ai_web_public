@@ -584,8 +584,8 @@
             <i class="bi bi-star star" data-val="1" role="radio" aria-label="1 estrella" aria-checked="false" tabindex="0"></i>
             <i class="bi bi-star star" data-val="2" role="radio" aria-label="2 estrellas" aria-checked="false" tabindex="0"></i>
             <i class="bi bi-star star" data-val="3" role="radio" aria-label="3 estrellas" aria-checked="false" tabindex="0"></i>
-            <i class="bi bi-star star" data-val="4" role="radio" aria-label="4 estrellas" aria-checked="false" tabindex="0"></i>
-            <i class="bi bi-star star" data-val="5" role="radio" aria-label="5 estrellas" aria-checked="false" tabindex="0"></i>
+            <i class="bi bi-star star" data-val="4" role="radio" aria-checked="false" aria-label="4 estrellas" tabindex="0"></i>
+            <i class="bi bi-star star" data-val="5" role="radio" aria-checked="false" aria-label="5 estrellas" tabindex="0"></i>
           </div>
           <div class="rating-hint mb-3" id="ratingHint">Seleccioná una puntuación.</div>
           <label class="form-label" for="ratingComment">Comentario (opcional)</label>
@@ -784,14 +784,19 @@
       }
       window.dispatchEvent(new Event('resize'));
     }
-    mqDesktop.addEventListener?.('change', applySidebarMode);
+    /* Compatibilidad amplia para MediaQueryList (evita estados rotos del drawer) */
+    if (mqDesktop.addEventListener) {
+      mqDesktop.addEventListener('change', applySidebarMode);
+    } else if (mqDesktop.addListener) {
+      mqDesktop.addListener(applySidebarMode);
+    }
     applySidebarMode();
 
     /* ===== Chat IA (drawer) ===== */
     const CHAT_STATE_KEY = 'chatboxState';
     const chatIa = document.getElementById('chatIa');
     const chatIaOverlay = document.getElementById('chatIaOverlay');
-    the_chatIaClose = document.getElementById('chatIaClose'); // (id correcto existe)
+    const the_chatIaClose = document.getElementById('chatIaClose'); // ✅ declarado con const
     const chatIaInput = document.getElementById('chatIaInput');
     const chatIaBody  = document.getElementById('chatIaBody');
     const chatIaForm  = document.getElementById('chatIaForm');
@@ -1292,7 +1297,6 @@
       connect();
       window.addEventListener('beforeunload', ()=>{ try{ ws?.close(); }catch(_){ } });
     })();
-
     /* ==========================================================
        === CALENDARIO GLOBAL (panel + subpáginas) – robusto ===
        ========================================================== */
@@ -1302,26 +1306,41 @@
       const FC_JS  = `https://cdn.jsdelivr.net/npm/fullcalendar@${FCv}/index.global.min.js`;
       const FC_LOC = `https://cdn.jsdelivr.net/npm/fullcalendar@${FCv}/locales-all.global.min.js`;
 
-      function addCss(href){ if ([...document.styleSheets].some(s => s.href && s.href.includes('fullcalendar'))) return;
-        const l = document.createElement('link'); l.rel='stylesheet'; l.href=href; document.head.appendChild(l); }
+      function addCss(href){
+        if ([...document.styleSheets].some(s => s.href && s.href.includes('fullcalendar'))) return;
+        const l = document.createElement('link'); l.rel='stylesheet'; l.href=href; document.head.appendChild(l);
+      }
       function addScript(src){
         return new Promise((res, rej)=>{ const s = document.createElement('script'); s.defer = true; s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
       }
-      async function ensureFullCalendar(){ if (window.FullCalendar?.Calendar) return; addCss(FC_CSS); await addScript(FC_JS); await addScript(FC_LOC); }
+      async function ensureFullCalendar(){
+        if (window.FullCalendar?.Calendar) return;
+        addCss(FC_CSS);
+        await addScript(FC_JS);
+        await addScript(FC_LOC);
+      }
 
       function installFullCalendarHook(){
         const FC = window.FullCalendar; if(!FC || !FC.Calendar || FC.Calendar.__saHooked) return;
         const origRender = FC.Calendar.prototype.render;
         FC.Calendar.prototype.render = function(){
           const out = origRender.apply(this, arguments);
-          try{ this.el.__fcCalendar = this; window.AppCalendar = window.AppCalendar || this; window.__calendar = window.__calendar || this; }catch(_){}
+          try{
+            this.el.__fcCalendar = this;
+            window.AppCalendar = window.AppCalendar || this;
+            window.__calendar = window.__calendar || this;
+          }catch(_){}
           return out;
         };
         FC.Calendar.__saHooked = true;
       }
+
       function findFcRoot(btn){
         const sel = btn?.getAttribute?.('data-cal-target');
-        if (sel){ const t = document.querySelector(sel); if (t) return t.closest('#calendar, .fc, [id]') || t; }
+        if (sel){
+          const t = document.querySelector(sel);
+          if (t) return t.closest('#calendar, .fc, [id]') || t;
+        }
         return document.querySelector('#calendar') || document.querySelector('.fc') || document.body;
       }
       function getCalendarFor(btn){
@@ -1329,6 +1348,7 @@
         if (root?.__fcCalendar) return root.__fcCalendar;
         return window.AppCalendar || window.__calendar || window.calendar || window.fcCalendar || null;
       }
+
       function ensureDataAttrs(scope){
         const items = (scope || document).querySelectorAll('button, a, [role="button"]');
         const txt = (el)=> (el.textContent||'').trim().toLowerCase();
@@ -1349,6 +1369,7 @@
           if(el.tagName==='A' && el.getAttribute('href')==='#') el.setAttribute('role','button');
         });
       }
+
       function highlightActive(cal){
         try{
           const type = cal?.view?.type;
@@ -1378,13 +1399,22 @@
 
           const nav = btn.getAttribute('data-cal-nav');
           if(nav){
-            if(cal){ if(nav==='prev') cal.prev(); if(nav==='next') cal.next(); if(nav==='today') cal.today(); }
-            else { clickInside(root, NAV_SEL[nav]); }
+            if(cal){
+              if(nav==='prev') cal.prev();
+              if(nav==='next') cal.next();
+              if(nav==='today') cal.today();
+            } else {
+              clickInside(root, NAV_SEL[nav]);
+            }
           }
           const view = btn.getAttribute('data-cal-view');
           if(view){
-            if(cal){ try{ cal.changeView(view); }catch(_){} highlightActive(cal); }
-            else { clickInside(root, VIEW_SEL[view]); }
+            if(cal){
+              try{ cal.changeView(view); }catch(_){}
+              highlightActive(cal);
+            } else {
+              clickInside(root, VIEW_SEL[view]);
+            }
           }
         }).catch(()=>{ /* ignorar */ });
       }, true);
@@ -1399,10 +1429,10 @@
       };
     })();
 
-    /* >>> Fallback: asegura que los botones dentro de formularios envían el form */
-    document.querySelectorAll('form button:not([type])').forEach(b => b.setAttribute('type','submit'));
-    /* <<< */
+    /* OPCIONAL (solo debug): advertir en consola botones sin type en formularios (no modifica el DOM) */
+    // document.querySelectorAll('form button:not([type])').forEach(b => console.warn('Button sin type encontrado:', b));
   </script>
+
   {% block extra_scripts %}{% endblock %}
 </body>
 </html>
