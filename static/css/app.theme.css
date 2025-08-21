@@ -541,9 +541,6 @@ body[data-auth="1"] .content .form-text{
 
 /* =========================================================
    ===== SIDEBAR: separación de botones inferiores =========
-   - Asegura espacio uniforme entre “Cambiar contraseña”
-     y “Salir”, y respiro al borde inferior.
-   - Funciona con y sin contenedor .side-bottom
    ========================================================= */
 .sidebar .side-bottom{
   display:flex;
@@ -554,10 +551,7 @@ body[data-auth="1"] .content .form-text{
   margin-top:var(--sidebar-gap);
   padding-bottom:calc(8px + var(--safe-bottom));
 }
-
-/* Fallback si NO hay wrapper: separa los dos últimos */
 .sidebar > a.side-btn + a.side-btn{ margin-top:var(--sidebar-gap); }
-/* respiro con el borde inferior y el chip “v1”/similar */
 .sidebar > .side-small{ margin-top:var(--sidebar-gap); }
 .sidebar{ padding-bottom:calc(8px + var(--safe-bottom)); }
 
@@ -582,16 +576,12 @@ body[data-auth="1"] .content .form-text{
   background: rgba(15,18,34,.35);
   backdrop-filter: blur(2px);
 }
-/* Jerarquía del chat */
 .chat-ia{ z-index: 1201; }
 #chatIaOverlay{ z-index: 1200; }
-
-/* Botones/links siempre clickeables (por si alguna regla global tapa) */
 button, .btn, [role="button"], a.btn { pointer-events: auto !important; }
 
 /* =========================================================
    ======== REFUERZO GLOBAL DE LEGIBILIDAD (extra) =========
-   ======== (cubre textos lavados en capturas) =============
    ========================================================= */
 
 /* Un poco más de contraste en secundarios */
@@ -655,4 +645,36 @@ body[data-route*="notif"] :is(.empty,.empty-state,.no-results,.no-more, .list-fo
 /* Mantener apariencia realmente deshabilitada */
 :where(button[disabled], .btn:disabled, .disabled, [aria-disabled="true"]).opacity-50{
   opacity:.5 !important;
+}
+
+/* =========================================================
+   ======== LEGIBILIDAD EXTRA v4 — Ajuste fino final =======
+   ========================================================= */
+
+/* CHAT INTERNO: el mensaje central de vacío y subtítulos van con texto principal */
+body[data-route*="chat"] :is(.empty-state,.empty,.lead,.subtitle){
+  color: var(--text) !important;
+  opacity: 1 !important;
+  font-weight: 600;
+}
+/* neutraliza opacidades en cualquier contenedor dentro de /chat */
+body[data-route*="chat"] :is(.opacity-25,.opacity-50,.opacity-75){
+  opacity: 1 !important;
+}
+
+/* USUARIOS CONECTADOS: elimina opacidades de contenedores y fuerza contraste en metadatos */
+body[data-route*="usuario"] :is(.opacity-25,.opacity-50,.opacity-75),
+body[data-route*="user"] :is(.opacity-25,.opacity-50,.opacity-75),
+body[data-route*="presencia"] :is(.opacity-25,.opacity-50,.opacity-75),
+body[data-route*="presence"] :is(.opacity-25,.opacity-50,.opacity-75){
+  opacity: 1 !important;
+}
+/* bloques de meta a la derecha (clases sueltas o compuestas) */
+body[data-route*="usuario"] :is([class*="meta"],[class*="session"],[class*="ua"],[class*="ip"],[class*="right"],[class*="trail"],[class*="detail"]),
+body[data-route*="user"]     :is([class*="meta"],[class*="session"],[class*="ua"],[class*="ip"],[class*="right"],[class*="trail"],[class*="detail"]),
+body[data-route*="presencia"]:is([class*="meta"],[class*="session"],[class*="ua"],[class*="ip"],[class*="right"],[class*="trail"],[class*="detail"]),
+body[data-route*="presence"] :is([class*="meta"],[class*="session"],[class*="ua"],[class*="ip"],[class*="right"],[class*="trail"],[class*="detail"]){
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+  font-weight: 600;
 }
