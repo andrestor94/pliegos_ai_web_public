@@ -75,6 +75,30 @@ def iso_utc_to_ar_str(iso_utc: str, fmt: str = "%d/%m/%Y %H:%M") -> str:
             return iso_utc
     return dt_utc.astimezone(TZ_AR).strftime(fmt)
 
+# --- Normalizador robusto de datetimes a UTC aware (para comparaciones seguras) ---
+def _parse_dt_utc(value) -> Optional[datetime]:
+    """
+    Acepta datetime o str (con o sin 'Z') y devuelve datetime con tz UTC.
+    Evita 'TypeError: can't subtract offset-naive and offset-aware datetimes'.
+    """
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        s = str(value).strip().replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(s)  # Puede devolver naive si no hay offset
+        except Exception:
+            # fallback "YYYY-MM-DD HH:MM:SS"
+            try:
+                dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
 # ================== App & Middlewares ==================
 SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-in-prod")
 app = FastAPI(middleware=[
@@ -341,14 +365,7 @@ CHAT_ALLOWED_EXT = {
 CHAT_MAX_FILES = 10
 CHAT_MAX_TOTAL_MB = 50
 
-# ================== Incidencias: adjuntos (nuevo) ==================
-INCID_ATTACH_DIR = os.path.join("static", "adjuntos_incidencias")
-os.makedirs(INCID_ATTACH_DIR, exist_ok=True)
-
-# Reusamos las mismas extensiones que el chat
-INCID_ALLOWED_EXT = CHAT_ALLOWED_EXT
-INCID_MAX_FILES = 10
-INCID_MAX_TOTAL_MB = 25  # MB
+# (Se elimina aquí el bloque duplicado de adjuntos de incidencias; la versión definitiva está en PARTE 4)
 
 # ================== Avatares (perfil) ==================
 AVATAR_DIR = os.path.join("static", "avatars")
@@ -494,6 +511,10 @@ async def login_form(request: Request):
     if request.query_params.get("logout") == "1":
         msg = "Sesión cerrada."
     return templates.TemplateResponse("login.html", {"request": request, "error": None, "mensaje": msg})
+# =========================
+# main.py — PARTE 2 / 5
+# (login/logout, cambiar password, rating, analizar pliego)
+# =========================
 
 # =====================================================================
 # ========================== CALENDARIO (DB utilitaria) ===============
@@ -596,10 +617,7 @@ def _pr_get(user: str):
 def _pr_clear(user: str):
     with cal_conn() as c:
         c.execute("DELETE FROM pending_ratings WHERE user=?", (user,))
-# =========================
-# main.py — PARTE 2 / 5
-# (login/logout, cambiar password, rating, analizar pliego)
-# =========================
+
 
 # ================== Login/Logout ==================
 @app.post("/login")
@@ -1420,7 +1438,7 @@ async def chat_enviar_archivo(
 ):
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
-    archivos = [archivo] if archivo and getattr(archivo, "filename", None) else []
+    archivos = [archivo] if archivo && getattr(archivo, "filename", None) else []
     return await chat_enviar_archivos(request, para=para, texto=texto, archivos=archivos)
 
 @app.get("/chat/adjunto/{filename}")
@@ -1820,8 +1838,8 @@ async def legacy_admin_reset_session(request: Request):
 
 
 # ================== Incidencias (vista + API con adjuntos) ==================
-INCID_ATTACH_DIR = os.path.join("static", "incidencias_adjuntos")
-os.makedirs(INCID_ATTACH_DIR, exist_ok=True)
+# ⚠️ Importante: REUSAMOS INCID_ATTACH_DIR / INCID_ALLOWED_EXT / INCID_MAX_TOTAL_MB
+# definidos en la PARTE 1 (no los redefinimos acá para evitar inconsistencias).
 
 def _incid_list_attachments(ticket_id: int):
     """Lista adjuntos por convención de nombre '<id>_...ext' en el dir de incidencias."""
@@ -1843,16 +1861,23 @@ def _incid_list_attachments(ticket_id: int):
     return out
 
 def _parse_iso_utc(s: str):
+    """
+    Parsea string a datetime *aware* en UTC.
+    Evita 'can't subtract offset-naive and offset-aware datetimes'.
+    """
     if not s:
         return None
     s = s.replace("Z", "+00:00")
     try:
-        return datetime.fromisoformat(s)
+        dt = datetime.fromisoformat(s)
     except Exception:
         try:
-            return datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
         except Exception:
             return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)  # asumir UTC si no trae tz
+    return dt.astimezone(timezone.utc)
 
 def _infer_ticket_id(usuario: str, titulo: str, descripcion: str, tipo: str, ref_iso_utc: str) -> Optional[int]:
     """
@@ -1865,7 +1890,7 @@ def _infer_ticket_id(usuario: str, titulo: str, descripcion: str, tipo: str, ref
         rows = []
     ref = _parse_iso_utc(ref_iso_utc) or datetime.now(timezone.utc)
     best = None
-    best_dt_diff = 999999999
+    best_dt_diff = 999_999_999
     for r in rows:
         # rows: (id, usuario, titulo, descripcion, tipo, estado, fecha)
         if (r[2] or "").strip() != titulo.strip():
@@ -1880,6 +1905,11 @@ def _infer_ticket_id(usuario: str, titulo: str, descripcion: str, tipo: str, ref
             best_dt_diff = diff
             best = int(r[0])
     return best
+
+def _validate_incid_ext(filename: str):
+    ext = os.path.splitext(filename or "")[1].lower()
+    if ext not in INCID_ALLOWED_EXT:
+        raise HTTPException(status_code=400, detail=f"Tipo de archivo no permitido: {ext}")
 
 @app.get("/incidencias", response_class=HTMLResponse)
 @app.get("/incidencias/", response_class=HTMLResponse)  # alias con barra final
@@ -1956,21 +1986,21 @@ async def incidencias_crear(
     ticket_id = _infer_ticket_id(usuario, titulo, descripcion or "", tipo or "General", now_iso)
 
     # Guardar adjuntos (si pudimos resolver el id)
-    files = [a for a in (archivos or []) if a and a.filename]
+    files = [a for a in (archivos or []) if a && a.filename]
     if ticket_id and files:
         total_bytes = 0
         for i, f in enumerate(files, start=1):
-            _validate_ext(f.filename)
+            _validate_incid_ext(f.filename)
             ext = os.path.splitext(f.filename)[1].lower()
             safe = _safe_basename(f.filename)
             name = f"{ticket_id}_{i:02d}_{safe}{ext}"
             path = os.path.join(INCID_ATTACH_DIR, name)
             written = await _save_upload_stream(f, path)
             total_bytes += written
-            if (total_bytes / (1024 * 1024)) > CHAT_MAX_TOTAL_MB:
+            if (total_bytes / (1024 * 1024)) > INCID_MAX_TOTAL_MB:
                 try: os.remove(path)
                 except: pass
-                return JSONResponse({"error": f"Tamaño total supera {CHAT_MAX_TOTAL_MB} MB"}, status_code=400)
+                return JSONResponse({"error": f"Tamaño total supera {INCID_MAX_TOTAL_MB} MB"}, status_code=400)
 
     return ({"ok": True, "id": ticket_id} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
 
