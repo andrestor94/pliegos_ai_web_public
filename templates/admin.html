@@ -3,6 +3,7 @@
 {% block title %}Panel de Administración · Suizo Argentina{% endblock %}
 
 {% block extra_head %}
+  <!-- Axios -->
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 
   <style>
@@ -14,13 +15,11 @@
       scale: 1 !important;
       box-shadow: var(--shadow, 0 1px 2px rgba(0,0,0,.06)) !important;
     }
-
     .admin-actions .btn,
     .card-header .btn{
       transform: none !important;
       transition: background-color .15s ease, border-color .15s ease, color .15s ease;
     }
-
     .admin-actions .btn{ border-radius:12px; }
 
     .badge-role{
@@ -28,6 +27,7 @@
       color: var(--brand-500);
       border: 1px solid var(--bs-border-color, var(--border));
       font-weight: 600;
+      text-transform: lowercase;
     }
     .badge-ok{
       background: #10b981; color: #fff;
@@ -66,11 +66,16 @@
       padding-left: .75rem;
       padding-right: .75rem;
     }
+
+    /* Asegura clicabilidad extrema de los botones dentro de esta vista */
+    .card-clean button,
+    .card-clean [role="button"],
+    .card-clean a.btn{ pointer-events: auto !important; position: relative; z-index: 1; }
   </style>
 {% endblock %}
 
 {% block content %}
-<div class="container-xxl">
+<div class="container-xxl" data-route="/admin">
 
   <!-- Encabezado + acciones -->
   <section class="card-clean no-hover-lift">
@@ -115,25 +120,33 @@
       <h2 class="h6 m-0">Crear nuevo usuario</h2>
     </div>
     <div class="card-body">
-      <form id="crearUsuarioForm" class="row g-3 input-compact inside-card-row">
+      <form id="crearUsuarioForm"
+            class="row g-3 input-compact inside-card-row"
+            autocomplete="off" novalidate>
         <div class="col-md-4">
           <label class="form-label" for="nombre">Nombre</label>
-          <input type="text" class="form-control" id="nombre" required placeholder="Nombre y Apellido">
+          <input type="text" class="form-control" id="nombre" name="nombre" required
+                 placeholder="Nombre y Apellido" autocomplete="name">
         </div>
         <div class="col-md-4">
           <label class="form-label" for="email">Email</label>
-          <input type="email" class="form-control" id="email" required placeholder="usuario@suizo.com">
+          <input type="email" class="form-control" id="email" name="email" required
+                 placeholder="usuario@suizo.com" autocomplete="email">
         </div>
         <div class="col-md-3">
           <label class="form-label" for="rol">Rol</label>
-          <select class="form-select" id="rol">
+          <select class="form-select" id="rol" name="rol" required>
             <option value="usuario">Usuario</option>
             <option value="admin">Administrador</option>
           </select>
         </div>
         <div class="col-md-1 d-grid">
           <label class="form-label d-none d-md-block">&nbsp;</label>
-          <button type="submit" class="btn btn-primary">
+          <!-- Blindado: submit + form + data-submit -->
+          <button type="submit"
+                  form="crearUsuarioForm"
+                  data-submit="#crearUsuarioForm"
+                  class="btn btn-primary" id="btnCrearUsuario">
             <i class="bi bi-plus-lg"></i>
           </button>
         </div>
@@ -141,7 +154,7 @@
       <div class="mt-2 hint small">
         Se crea con contraseña inicial por defecto (luego podés blanquearla desde la tabla).
       </div>
-      <div id="mensaje" class="mt-3"></div>
+      <div id="mensaje" class="mt-3" aria-live="polite"></div>
     </div>
   </section>
 
@@ -150,7 +163,8 @@
     <div class="card-header d-flex align-items-center justify-content-between">
       <h2 class="h6 m-0">Usuarios registrados</h2>
       <div class="d-flex gap-2 align-items-center">
-        <input id="filtro" class="form-control form-control-sm" style="max-width:260px" placeholder="Filtrar por nombre o email">
+        <input id="filtro" class="form-control form-control-sm"
+               style="max-width:260px" placeholder="Filtrar por nombre o email" autocomplete="off">
         <button id="btnRefrescar" type="button" class="btn btn-sm btn-outline-secondary">
           <i class="bi bi-arrow-clockwise"></i> Refrescar
         </button>
@@ -186,6 +200,19 @@
   function toastOk(t,b){ if(window.showToast) showToast({title:t, body:b||'', icon:'check2-circle'}); }
   function toastWarn(t,b){ if(window.showToast) showToast({title:t, body:b||'', icon:'exclamation-triangle'}); }
   function toastInfo(t,b){ if(window.showToast) showToast({title:t, body:b||'', icon:'info'}); }
+
+  /* Airbag local por si faltó el de base.html */
+  document.addEventListener('click', function (e) {
+    const btn = e.target.closest('[data-submit]');
+    if (!btn) return;
+    const sel = btn.getAttribute('data-submit');
+    const form = sel ? document.querySelector(sel) : null;
+    if (form) {
+      if (form.reportValidity && !form.reportValidity()) return;
+      if (form.requestSubmit) form.requestSubmit();
+      else form.submit();
+    }
+  });
 
   /* KPI en línea */
   async function refreshOnline(){
@@ -285,13 +312,14 @@
     const rol    = document.getElementById('rol').value;
     const box = document.getElementById('mensaje'); box.innerHTML = '';
 
+    const btn = document.getElementById('btnCrearUsuario');
+    const prevHtml = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
+
     try{
       const res = await axios.post('/api/admin/users', { nombre, email, rol });
-      if(res?.data?.ok){
-        box.innerHTML = `<div class="alert alert-success">Usuario creado</div>`;
-      }else{
-        box.innerHTML = `<div class="alert alert-success">Usuario creado</div>`;
-      }
+      const ok = !!(res && (res.data?.ok ?? true));
+      box.innerHTML = `<div class="alert alert-${ok?'success':'warning'}">${ok?'Usuario creado':'Se recibió respuesta sin estado OK'}</div>`;
       e.target.reset();
       await cargarUsuarios();
       toastOk('Usuario creado', email);
@@ -299,6 +327,8 @@
       const msg = err?.response?.data?.error || 'Error al crear el usuario';
       box.innerHTML = `<div class="alert alert-danger">${escapeHtml(msg)}</div>`;
       toastWarn('Error', msg);
+    }finally{
+      btn.disabled = false; btn.innerHTML = prevHtml;
     }
   });
 
@@ -338,8 +368,9 @@
   }
 
   /* Eventos UI */
+  const debounced = (fn, ms=200)=>{ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); } };
   document.getElementById('btnRefrescar').addEventListener('click', cargarUsuarios);
-  document.getElementById('filtro').addEventListener('input', ()=> renderUsuarios(usuariosCache));
+  document.getElementById('filtro').addEventListener('input', debounced(()=> renderUsuarios(usuariosCache), 120));
 
   /* Init */
   cargarUsuarios();

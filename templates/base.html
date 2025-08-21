@@ -338,9 +338,7 @@
       body[data-auth="1"] .content{ background: linear-gradient(180deg, rgba(82,116,206,.14) 0%, rgba(4,67,106,.14) 100%), var(--bg-body); }
     }
 
-    /* ===== Drawer Chat IA =====
-       Ahora el chat se muestra DEBAJO del header y se puede abrir/cerrar
-       con el mismo botón. Además, no se muestra en login. */
+    /* ===== Drawer Chat IA ===== */
     .chat-ia-overlay{
       position:fixed; left:0; right:0; bottom:0; top: var(--header-h);
       background:rgba(15,18,34,.28); backdrop-filter: blur(2px);
@@ -784,7 +782,7 @@
       }
       window.dispatchEvent(new Event('resize'));
     }
-    /* Compatibilidad amplia para MediaQueryList (evita estados rotos del drawer) */
+    /* Compatibilidad amplia */
     if (mqDesktop.addEventListener) {
       mqDesktop.addEventListener('change', applySidebarMode);
     } else if (mqDesktop.addListener) {
@@ -796,13 +794,12 @@
     const CHAT_STATE_KEY = 'chatboxState';
     const chatIa = document.getElementById('chatIa');
     const chatIaOverlay = document.getElementById('chatIaOverlay');
-    const the_chatIaClose = document.getElementById('chatIaClose'); // ✅ declarado con const
+    const the_chatIaClose = document.getElementById('chatIaClose'); // const
     const chatIaInput = document.getElementById('chatIaInput');
     const chatIaBody  = document.getElementById('chatIaBody');
     const chatIaForm  = document.getElementById('chatIaForm');
     const chatToggleBtn = document.getElementById('btnOpenChat');
 
-    // Si estamos en login, no dejamos que el chat se muestre ni se autoabra
     const onAuth = document.body.getAttribute('data-auth') === '1';
     if (onAuth) {
       try { localStorage.removeItem(CHAT_STATE_KEY); }catch(_){}
@@ -812,7 +809,7 @@
     }
 
     function openChatIA(persist=true){
-      if(!chatIa || onAuth) return; // no abrir en login
+      if(!chatIa || onAuth) return;
       chatIa.classList.add('open');
       chatIaOverlay.classList.add('open');
       chatIa.setAttribute('aria-hidden','false');
@@ -833,17 +830,15 @@
       const isOpen = chatIa?.classList.contains('open');
       if(isOpen) closeChatIA(); else openChatIA(true);
     }
-    // Exponer por compatibilidad si algo lo llama
     function openChatAndExpand(){ openChatIA(true); }
     window.openChatAndExpand = openChatAndExpand;
 
-    // Handlers propios
     chatIaOverlay?.addEventListener('click', closeChatIA);
     the_chatIaClose?.addEventListener('click', closeChatIA);
     chatToggleBtn?.addEventListener('click', toggleChatIA);
     document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeChatIA(); });
 
-    // ✅ Delegación estricta: sólo el botón con data-ai-toggle="chat"
+    /* ✅ Delegación estricta para el toggle del chat */
     document.addEventListener('click', function(ev){
       const btn = ev.target.closest('[data-ai-toggle="chat"]');
       if(!btn) return;
@@ -852,7 +847,6 @@
       toggleChatIA();
     }, true);
 
-    // Restaurar estado (salvo en login)
     if(!onAuth && localStorage.getItem(CHAT_STATE_KEY)==='open'){ openChatIA(false); }
 
     function scrollToBottom(smooth=true){
@@ -860,7 +854,6 @@
       catch(_){ chatIaBody.scrollTop = chatIaBody.scrollHeight; }
     }
 
-    // Enter = enviar | Shift+Enter = salto de línea
     chatIaInput?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
         e.preventDefault(); chatIaForm?.requestSubmit();
@@ -1428,6 +1421,22 @@
         return { hasFC: !!(window.FullCalendar && FullCalendar.Calendar), rootFound: !!root, hasInstance: !!cal, view: cal?.view?.type || null };
       };
     })();
+
+    /* ===== Airbag global para botones con data-submit =====
+       Permite disparar formularios desde botones en cualquier lugar del DOM
+       sin depender de bubbling ni de que el botón esté dentro del <form>. */
+    document.addEventListener('click', function (e) {
+      const btn = e.target.closest('[data-submit]');
+      if (!btn) return;
+      const sel = btn.getAttribute('data-submit');
+      const form = sel ? document.querySelector(sel) : btn.closest('form');
+      if (form) {
+        // si hay validación nativa y falla, no disparamos
+        if (form.reportValidity && !form.reportValidity()) return;
+        if (form.requestSubmit) form.requestSubmit();
+        else form.submit();
+      }
+    }, true);
 
     /* OPCIONAL (solo debug): advertir en consola botones sin type en formularios (no modifica el DOM) */
     // document.querySelectorAll('form button:not([type])').forEach(b => console.warn('Button sin type encontrado:', b));
