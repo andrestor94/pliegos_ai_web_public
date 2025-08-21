@@ -1855,7 +1855,10 @@ async def legacy_admin_reset_session(request: Request):
 # definidos en la PARTE 1 (no los redefinimos acá para evitar inconsistencias).
 
 def _incid_list_attachments(ticket_id: int):
-    """Lista adjuntos por convención de nombre '<id>_...ext' en el dir de incidencias."""
+    """
+    Devuelve los adjuntos del ticket como lista de dicts.
+    Cada item incluye una URL estática directa (compat) y la URL protegida.
+    """
     prefix = f"{int(ticket_id)}_"
     out = []
     for name in sorted(os.listdir(INCID_ATTACH_DIR)):
@@ -1868,8 +1871,10 @@ def _incid_list_attachments(ticket_id: int):
         out.append({
             "filename": name,
             "size": size,
-            "url": f"/incidencias/adjunto/{ticket_id}/{name}",
-            "original": re.sub(rf"^{re.escape(prefix)}\d+_", "", name)  # mejor esfuerzo para mostrar limpio
+            # Compat: el front históricamente arma /static/adjuntos_incidencias/<name>
+            "url": f"/static/adjuntos_incidencias/{name}",
+            # Alternativa con control: valida ticket/filename
+            "download_url": f"/incidencias/adjunto/{ticket_id}/{name}",
         })
     return out
 
@@ -1913,8 +1918,10 @@ def _infer_ticket_id(usuario: str, titulo: str, descripcion: str, tipo: str, ref
 
 # ---- Incidencias: asegurar config por si falta Parte 1 (robustez) ----
 if 'INCID_ATTACH_DIR' not in globals():
-    INCID_ATTACH_DIR = os.path.join("static", "incid_adjuntos")
-    os.makedirs(INCID_ATTACH_DIR, exist_ok=True)
+    # 💡 Compat con el front: usa /static/adjuntos_incidencias
+    INCID_ATTACH_DIR = os.path.join("static", "adjuntos_incidencias")
+os.makedirs(INCID_ATTACH_DIR, exist_ok=True)
+
 if 'INCID_ALLOWED_EXT' not in globals():
     INCID_ALLOWED_EXT = CHAT_ALLOWED_EXT
 if 'INCID_MAX_FILES' not in globals():
@@ -1950,11 +1957,14 @@ async def incidencias_view(request: Request):
             "id": r[0], "usuario": r[1], "titulo": r[2], "descripcion": r[3],
             "tipo": r[4], "estado": r[5], "fecha": r[6], "fecha_legible": fecha_leg
         }
-        # 👉 adjuntos
-        try:
-            t["adjuntos"] = _incid_list_attachments(int(r[0]))
-        except Exception:
-            t["adjuntos"] = []
+        # 👉 adjuntos (compat + info)
+try:
+    _info = _incid_list_attachments(int(r[0]))
+    t["adjuntos_info"] = _info                # lista de dicts (nueva)
+    t["adjuntos"] = [x["filename"] for x in _info]  # lista de strings (compat con template viejo)
+except Exception:
+    t["adjuntos_info"] = []
+    t["adjuntos"] = []
         tickets.append(t)
 
     return templates.TemplateResponse("incidencias.html", {
@@ -1975,7 +1985,8 @@ async def incidencias_list_json(request: Request):
         items.append({
             "id": r[0], "usuario": r[1], "titulo": r[2], "descripcion": r[3],
             "tipo": r[4], "estado": r[5], "fecha": r[6],
-            "adjuntos": _incid_list_attachments(int(r[0]))
+            "adjuntos_info": _incid_list_attachments(int(r[0])),
+"adjuntos": [x["filename"] for x in _incid_list_attachments(int(r[0]))],
         })
     return {"items": items}
 

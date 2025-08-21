@@ -206,7 +206,10 @@
               (ticket.fecha if _is_map and ticket.fecha is defined else
               (ticket[6] if not _is_map else ''))) %}
           {% set _fecha_legible = (_fecha_raw | ar_time) %}
+
+          {# adjuntos (compat: strings) + adjuntos_info (objetos con url/filename) #}
           {% set _adj = (ticket.adjuntos if _is_map and ticket.adjuntos is defined else (ticket.archivos if _is_map and ticket.archivos is defined else [])) %}
+          {% set _adj_info = (ticket.adjuntos_info if _is_map and ticket.adjuntos_info is defined else []) %}
 
           <tr data-id="{{ _id }}"
               data-usuario="{{ _usuario | e }}"
@@ -222,10 +225,31 @@
             <td><span class="badge bg-primary-subtle text-primary campo-tipo">{{ _tipo }}</span></td>
             <td class="text-nowrap campo-fecha">{{ _fecha_legible }}</td>
 
-            {# ——— Adjuntos: se pasan crudos y se renderizan en el front ——— #}
+            {# ——— Adjuntos: render server-side con compatibilidad ——— #}
             <td class="small campo-adjuntos"
-                data-adj='{{ _adj | default([]) | tojson | safe }}'>
-              <span class="text-muted">—</span>
+                data-adj='{{ (_adj | default([])) | tojson | safe }}'>
+              {% if _adj_info and _adj_info|length %}
+                <div class="chips">
+                  {% for a in _adj_info %}
+                    {% set _href = (a.url if a.url is defined and a.url else ("/static/adjuntos_incidencias/" ~ (a.filename|urlencode))) %}
+                    <span class="chip">
+                      <i class="bi bi-paperclip"></i>
+                      <a href="{{ _href }}" target="_blank" rel="noopener">{{ a.filename }}</a>
+                    </span>
+                  {% endfor %}
+                </div>
+              {% elif _adj and _adj|length %}
+                <div class="chips">
+                  {% for fn in _adj %}
+                    <span class="chip">
+                      <i class="bi bi-paperclip"></i>
+                      <a href="/static/adjuntos_incidencias/{{ fn | urlencode }}" target="_blank" rel="noopener">{{ fn }}</a>
+                    </span>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
             </td>
 
             <td class="td-estado">
@@ -298,14 +322,17 @@
   const escHTML = s => (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function showToastSafe(t,b,icon){ if(window.showToast) showToast({title:t, body:b||'', icon:icon||'info'}); }
 
-  /* ====== Adjuntos: render robusto desde data-adj ====== */
+  /* ====== Adjuntos: render robusto desde data-adj (solo si no se renderizó server-side) ====== */
   function renderAdjuntos(){
     document.querySelectorAll('#incTableBody tr .campo-adjuntos').forEach(cell=>{
+      // si ya hay chips renderizados por el servidor, no tocar
+      if (cell.querySelector('.chips')) return;
+
       let raw = cell.getAttribute('data-adj');
       let val = null;
       try { val = raw ? JSON.parse(raw) : null; } catch(_){ val = raw; }
 
-      // Soporta array real, string JSON, o string simple
+      // Soporta array real, string JSON, string simple u objetos {filename,url}
       let arr = [];
       if (Array.isArray(val)) {
         arr = val;
@@ -326,11 +353,16 @@
       const wrap = document.createElement('div');
       wrap.className = 'chips';
 
-      arr.forEach(url=>{
-        const s = String(url||'').trim();
-        if(!s) return;
-        const name = s.split(/[\\/]/).pop();  // basename
-        const href = (/^https?:\/\//i.test(s) || s.startsWith('/')) ? s : ('/static/adjuntos_incidencias/' + encodeURIComponent(name));
+      arr.forEach(item=>{
+        let name='', href='';
+        if (typeof item === 'string') {
+          name = item.split(/[\\/]/).pop();
+          href = '/static/adjuntos_incidencias/' + encodeURIComponent(name);
+        } else if (item && typeof item === 'object') {
+          name = (item.filename || '').split(/[\\/]/).pop();
+          href = item.url || ('/static/adjuntos_incidencias/' + encodeURIComponent(name));
+        }
+        if(!name) return;
 
         const chip = document.createElement('span');
         chip.className = 'chip';
@@ -605,7 +637,7 @@
     }, false);
   })();
 
-  // Al cargar: pintar adjuntos.
+  // Al cargar: pintar adjuntos si NO se renderizaron del lado servidor.
   document.addEventListener('DOMContentLoaded', renderAdjuntos);
 </script>
 {% endblock %}
