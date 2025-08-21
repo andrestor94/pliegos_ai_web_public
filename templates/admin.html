@@ -3,31 +3,26 @@
 {% block title %}Panel de Administración · Suizo Argentina{% endblock %}
 
 {% block extra_head %}
-  {# axios solo aquí (la base no lo carga) #}
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 
   <style>
-    /* ===== Fix: desactivar “lift / translate” en cards de esta vista ===== */
     .no-hover-lift,
     .no-hover-lift:hover,
     .no-hover-lift:focus-within{
       transform: none !important;
       translate: 0 !important;
       scale: 1 !important;
-      box-shadow: var(--shadow, 0 1px 2px rgba(0,0,0,.06)) !important; /* sombra estable */
+      box-shadow: var(--shadow, 0 1px 2px rgba(0,0,0,.06)) !important;
     }
 
-    /* Botones dentro de headers/acciones: sin lift ni micro-traslaciones */
     .admin-actions .btn,
     .card-header .btn{
       transform: none !important;
       transition: background-color .15s ease, border-color .15s ease, color .15s ease;
     }
 
-    /* --- Estilos SCOPED y alineados al theme --- */
     .admin-actions .btn{ border-radius:12px; }
 
-    /* Badges de rol/estado usando tokens */
     .badge-role{
       background: var(--brand-100);
       color: var(--brand-500);
@@ -52,21 +47,16 @@
       border-radius:12px;
       background: var(--surface);
       min-width:160px;
-      box-shadow: var(--shadow-sm);
+      box-shadow: var(--shadow);
     }
     .kpi-num{ font-size:20px; font-weight:800; line-height:1; color: var(--text); }
     .kpi-sub{ font-size:12px; color: var(--text-2); }
 
-    /* Evitar saltos visuales en hover de filas (solo color, sin transform) */
     .table-hover tbody tr:hover{
       transform: none;
       transition: background-color .15s ease, color .15s ease;
     }
 
-    /* ===== Alineación de grids dentro de cards =====
-       Cuando una .row es hija directa de .card-body, los gutters negativos
-       de Bootstrap “sacan” la fila del padding del card. Lo neutralizamos 
-       y devolvemos separación con padding en columnas. */
     .inside-card-row{
       margin-left: 0 !important;
       margin-right: 0 !important;
@@ -80,7 +70,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="container-xxl stack">
+<div class="container-xxl">
 
   <!-- Encabezado + acciones -->
   <section class="card-clean no-hover-lift">
@@ -89,16 +79,16 @@
         <i class="bi bi-gear me-1"></i> Administración de Usuarios
       </h1>
       <div class="d-flex flex-wrap gap-2">
-        <a href="/auditoria/actividad/vista" class="btn btn-sm btn-outline-primary">
+        <a href="/auditoria/actividad/vista" class="btn btn-sm btn-outline-primary" role="button">
           <i class="bi bi-graph-up"></i> Actividad de usuarios
         </a>
-        <a href="/usuarios-activos" class="btn btn-sm btn-outline-primary">
+        <a href="/usuarios-activos" class="btn btn-sm btn-outline-primary" role="button">
           <i class="bi bi-people"></i> Usuarios activos (vivo)
         </a>
-        <a href="/auditoria" class="btn btn-sm btn-outline-secondary">
+        <a href="/auditoria" class="btn btn-sm btn-outline-secondary" role="button">
           <i class="bi bi-clipboard-data"></i> Ver auditoría
         </a>
-        <a href="/" class="btn btn-sm btn-outline-secondary">← Volver</a>
+        <a href="/" class="btn btn-sm btn-outline-secondary" role="button">← Volver</a>
       </div>
     </div>
   </section>
@@ -161,7 +151,7 @@
       <h2 class="h6 m-0">Usuarios registrados</h2>
       <div class="d-flex gap-2 align-items-center">
         <input id="filtro" class="form-control form-control-sm" style="max-width:260px" placeholder="Filtrar por nombre o email">
-        <button id="btnRefrescar" class="btn btn-sm btn-outline-secondary">
+        <button id="btnRefrescar" type="button" class="btn btn-sm btn-outline-secondary">
           <i class="bi bi-arrow-clockwise"></i> Refrescar
         </button>
       </div>
@@ -189,7 +179,7 @@
 
 {% block extra_scripts %}
 <script>
-  const DEFAULT_RESET_PASSWORD = '1234'; // ajustá si tu backend usa otra por defecto
+  const DEFAULT_RESET_PASSWORD = '1234';
 
   /* Utils */
   function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -202,7 +192,7 @@
     try{
       const r = await fetch('/presence/online?minutes=5');
       const j = await r.json();
-      document.getElementById('kpiOnline').textContent = (j.items||[]).length ?? 0;
+      document.getElementById('kpiOnline').textContent = ((j && j.items) ? j.items.length : 0);
     }catch(_){
       document.getElementById('kpiOnline').textContent = '0';
     }
@@ -217,7 +207,6 @@
         <div class="spinner-border spinner-border-sm me-2" role="status"></div> Cargando…
       </td></tr>`;
     try{
-      // API: { items: [...] }
       const res = await axios.get('/api/admin/users');
       usuariosCache = Array.isArray(res?.data?.items) ? res.data.items : [];
       renderUsuarios(usuariosCache);
@@ -256,17 +245,37 @@
         </td>
         <td class="admin-actions d-flex flex-wrap gap-2">
           ${activo
-            ? `<button class="btn btn-sm btn-outline-danger" onclick="toggleUsuario('${encodeURIComponent(u.email)}', false)">⛔ Desactivar</button>`
-            : `<button class="btn btn-sm btn-outline-success" onclick="toggleUsuario('${encodeURIComponent(u.email)}', true)">🟢 Activar</button>`
+            ? `<button type="button" class="btn btn-sm btn-outline-danger" data-action="toggle" data-email="${encodeURIComponent(u.email)}" data-on="0">⛔ Desactivar</button>`
+            : `<button type="button" class="btn btn-sm btn-outline-success" data-action="toggle" data-email="${encodeURIComponent(u.email)}" data-on="1">🟢 Activar</button>`
           }
-          <button class="btn btn-sm btn-outline-dark" onclick="blanquearPassword('${encodeURIComponent(u.email)}')">🔑 Blanquear contraseña</button>
-          <button class="btn btn-sm btn-outline-secondary" onclick="reiniciarSesion('${encodeURIComponent(u.email)}')">🔄 Reset sesión</button>
-          <button class="btn btn-sm btn-outline-danger" onclick="eliminarUsuario('${encodeURIComponent(u.email)}')">🗑️ Eliminar</button>
+          <button type="button" class="btn btn-sm btn-outline-dark" data-action="resetpass" data-email="${encodeURIComponent(u.email)}">🔑 Blanquear contraseña</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-action="resetsession" data-email="${encodeURIComponent(u.email)}">🔄 Reset sesión</button>
+          <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete" data-email="${encodeURIComponent(u.email)}">🗑️ Eliminar</button>
         </td>
       `;
       tbody.appendChild(tr);
     });
   }
+
+  /* Delegación de eventos en tabla */
+  document.getElementById('tablaUsuarios').addEventListener('click', async (e)=>{
+    const btn = e.target.closest('button[data-action]');
+    if(!btn) return;
+    const email = decodeURIComponent(btn.getAttribute('data-email')||'').trim();
+    if(!email) return;
+
+    const action = btn.getAttribute('data-action');
+    if(action === 'toggle'){
+      const activar = btn.getAttribute('data-on') === '1';
+      await toggleUsuario(email, activar);
+    }else if(action === 'resetpass'){
+      await blanquearPassword(email);
+    }else if(action === 'delete'){
+      await eliminarUsuario(email);
+    }else if(action === 'resetsession'){
+      reiniciarSesion(email);
+    }
+  });
 
   /* Acciones CRUD */
   document.getElementById('crearUsuarioForm').addEventListener('submit', async (e)=>{
@@ -293,8 +302,7 @@
     }
   });
 
-  async function blanquearPassword(emailEnc){
-    const email = decodeURIComponent(emailEnc);
+  async function blanquearPassword(email){
     try{
       await axios.post('/api/admin/users/password', { email, password: DEFAULT_RESET_PASSWORD });
       toastOk('Password blanqueado', `Usuario: ${email}`);
@@ -304,8 +312,7 @@
     }
   }
 
-  async function toggleUsuario(emailEnc, activar){
-    const email = decodeURIComponent(emailEnc);
+  async function toggleUsuario(email, activar){
     try{
       await axios.post('/api/admin/users/toggle', { email, activo: !!activar });
       await cargarUsuarios();
@@ -315,11 +322,10 @@
     }
   }
 
-  async function eliminarUsuario(emailEnc){
-    const email = decodeURIComponent(emailEnc);
+  async function eliminarUsuario(email){
     if(!confirm(`¿Eliminar definitivamente a ${email}?`)) return;
     try{
-      await axios.delete(`/api/admin/users/${encodeURIComponent(email)}`); // soft delete por defecto
+      await axios.delete(`/api/admin/users/${encodeURIComponent(email)}`);
       await cargarUsuarios();
       toastOk('Usuario eliminado', email);
     }catch(_){
@@ -327,9 +333,7 @@
     }
   }
 
-  function reiniciarSesion(emailEnc){
-    const email = decodeURIComponent(emailEnc);
-    // No hay endpoint en backend. Solo avisamos para no confundir.
+  function reiniciarSesion(email){
     toastInfo('Aviso', `Reset de sesión no implementado para ${email}`);
   }
 
