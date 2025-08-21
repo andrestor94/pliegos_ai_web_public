@@ -18,14 +18,16 @@ En base.html:
   --bg:#eeede8;              /* Fondo amarillo pálido (APP) */
   --surface:#ffffff;          /* Cards/sheets */
   --muted:#f2f1ed;            /* Paneles/inputs */
-  --text:#0f2a3a;             /* Texto principal */
-  --text-2:#4a5a6a;           /* Secundario (más oscuro para legibilidad) */
-  --border:#d9ddd8;           /* Bordes suaves */
+
+  /* === LEGIBILIDAD MEJORADA === */
+  --text:#0c2535;            /* Texto principal (más oscuro) */
+  --text-2:#2e4152;          /* Secundario (alto contraste) */
+  --border:#d9ddd8;          /* Bordes suaves */
 
   /* Accesibilidad inputs/placeholder */
   --input-bg:#ffffff;
   --input-text:var(--text);
-  --input-placeholder:var(--text-2);
+  --input-placeholder:#415566;        /* +legible */
   --input-border:var(--border);
   --input-border-focus:#5274ce;
   --input-shadow-focus:0 0 0 .25rem rgba(82,116,206,.25);
@@ -35,7 +37,7 @@ En base.html:
   --chip-text: #233a80;
 
   /* Iconos */
-  --icon: #5b6b7a;           /* usa currentColor en SVG */
+  --icon:#3d4e5c;            /* +legible en claro */
 
   /* Pasteles (opcional) */
   --mint-200:#e4f5ee; --sky-200:#e7ecfa; --peach-200:#fff2e8; --violet-200:#f2f0ff;
@@ -75,8 +77,10 @@ html[data-theme="dark"]{
   --bg:#0F141A;
   --surface:#151B22;
   --muted:#1B232C;
-  --text:#E5ECF3;
-  --text-2:#A9B6C6;       /* secundario claro PERO legible */
+
+  /* === LEGIBILIDAD MEJORADA (DARK) === */
+  --text:#ECF2F8;            /* texto principal claro */
+  --text-2:#C5D0DC;          /* secundario legible (contraste >4.5:1) */
   --border:#263140;
 
   /* elevar brillo de marca en dark para contraste */
@@ -87,7 +91,7 @@ html[data-theme="dark"]{
   /* Inputs/placeholder */
   --input-bg:#151B22;
   --input-text:var(--text);
-  --input-placeholder:var(--text-2);
+  --input-placeholder:#C5D0DC; /* +legible */
   --input-border:#263140;
   --input-border-focus:#5b76b4;
   --input-shadow-focus:0 0 0 .25rem rgba(90,134,255,.30);
@@ -97,7 +101,7 @@ html[data-theme="dark"]{
   --chip-text:#c7d3ff;
 
   /* Iconos */
-  --icon:#a8b3c7;
+  --icon:#D0DAE6;            /* +legible en oscuro */
 
   --shadow-lg: 0 16px 40px rgba(0,0,0,.45);
   --shadow-md: 0 10px 24px rgba(0,0,0,.40);
@@ -128,13 +132,19 @@ a:hover{ color: var(--bs-link-hover-color); text-decoration: underline; }
   box-shadow: 0 2px 10px rgba(8,30,61,.04);
 }
 .app-topbar .navbar-brand{font-weight:700; letter-spacing:.2px; color: var(--brand-500); }
-.app-topbar .nav-link, .app-topbar .navbar-text{color:var(--text-2);} 
+
+/* === LEGIBILIDAD: nav/topbar sin opacidades bajas === */
+.app-topbar .nav-link, .app-topbar .navbar-text{
+  color:var(--text) !important;
+  opacity:1 !important;
+}
+
 .app-topbar .btn-chat{ border-radius: 999px; padding:.5rem 1rem; font-weight:600; }
 .app-topbar.brand{ background: var(--brand-500); border-bottom-color: transparent; }
 .app-topbar.brand .navbar-brand,
 .app-topbar.brand .nav-link,
-.app-topbar.brand .navbar-text{ color:#ffffffcc; }
-.app-topbar.brand .nav-link:hover{ color:#ffffff; }
+.app-topbar.brand .navbar-text{ color:#fff !important; opacity:1 !important; }
+.app-topbar.brand .nav-link:hover{ color:#ffffff !important; }
 
 @media (max-width: 575.98px){
   .app-topbar .navbar-text{ display:none; }
@@ -222,7 +232,7 @@ a:hover{ color: var(--bs-link-hover-color); text-decoration: underline; }
   color:var(--chip-text);
   border:1px solid var(--border);
   border-radius:999px;
-  font-weight:600;
+  font-weight:700; /* +legible */
 }
 
 /* ---------- Iconos ---------- */
@@ -234,6 +244,7 @@ a:hover{ color: var(--bs-link-hover-color); text-decoration: underline; }
 .table-wrap{ width:100%; overflow-x:auto; -webkit-overflow-scrolling: touch; }
 .table-wrap > .table{ width:100%; white-space:nowrap; margin-bottom:0; }
 .table thead{ background:var(--muted); }
+.table thead th, .table thead td{ color:var(--text) !important; opacity:1 !important; }
 html[data-theme="dark"] .table thead{ background:#0f172a; }
 
 /* ---------- AI widget ---------- */
@@ -386,6 +397,8 @@ textarea::placeholder{
 .accordion-body * ,
 .toast *, .toast-body * ,
 .chat-ia *, .chat-ia__body * { }
+
+/* Fuerza contraste en clases “claras” habituales dentro de contenedores */
 .card .text-white-50, .card-clean .text-white-50, .cardx .text-white-50,
 .modal-content .text-white-50,
 .offcanvas .text-white-50,
@@ -532,8 +545,6 @@ body[data-auth="1"] .content .form-text{
      y “Salir”, y respiro al borde inferior.
    - Funciona con y sin contenedor .side-bottom
    ========================================================= */
-
-/* Si usas un wrapper .side-bottom (recomendado) */
 .sidebar .side-bottom{
   display:flex;
   flex-direction:column;
@@ -553,8 +564,6 @@ body[data-auth="1"] .content .form-text{
 /* =========================================================
    ======= SAFE GUARDS: overlays y clicabilidad ============
    ========================================================= */
-
-/* Overlays inertes por defecto; solo capturan clics al abrir */
 #chatIaOverlay,
 .sidebar-overlay{
   position: fixed;
