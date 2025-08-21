@@ -588,3 +588,71 @@ body[data-auth="1"] .content .form-text{
 
 /* Botones/links siempre clickeables (por si alguna regla global tapa) */
 button, .btn, [role="button"], a.btn { pointer-events: auto !important; }
+
+/* =========================================================
+   ======== REFUERZO GLOBAL DE LEGIBILIDAD (extra) =========
+   ======== (cubre textos lavados en capturas) =============
+   ========================================================= */
+
+/* Un poco más de contraste en secundarios */
+:root{ --text-2:#2b3e4f; } /* oscurece levemente */
+
+/* Utilidades que “lavan” texto: forzamos legibilidad SOLO en elementos de texto */
+:where(p,span,small,div,em,strong,li,td,th,a,label).opacity-25:not(.disabled):not([disabled]):not([aria-disabled="true"]),
+:where(p,span,small,div,em,strong,li,td,th,a,label).opacity-50:not(.disabled):not([disabled]):not([aria-disabled="true"]),
+:where(p,span,small,div,em,strong,li,td,th,a,label).opacity-75:not(.disabled):not([disabled]):not([aria-disabled="true"]),
+.text-white-50, .text-white-75,
+.text-muted, .text-body-secondary, .text-secondary{
+  opacity:1 !important;
+  color:var(--text-2) !important;
+}
+
+/* Mensajes de ayuda / vacíos / notas y metadatos comunes */
+:where(.help-text,.hint,.helper,.note,.caption,.subtle,
+       .empty,.empty-state,.placeholder,
+       .meta,.meta *, .user-meta, .session-meta,
+       .user-email, .email, .no-results, .no-more){
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+}
+
+/* Contadores como “0/4000”, “x mostradas”, etc. */
+:where(.char-count,.counter,.chars,.count,.small-count){
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+  font-weight:600;
+}
+
+/* Chat (incluye chat interno y rutas que contengan “chat”) */
+body[data-route*="chat"] .conversations *,
+body[data-route*="chat"] .chat-body *,
+body[data-route*="chat"] .chat-header *,
+body[data-route*="chat"] .composer *,
+body[data-route*="chat"] .hint,
+body[data-route*="chat"] .empty-state{
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+}
+
+/* Incidencias: hints bajo textarea, chip de título lateral, contadores */
+body[data-route*="incidencia"] :is(.form-text, small, .hint, .helper, .counter, .caption){
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+}
+
+/* Usuarios conectados: email y panel derecho con meta/UA/IP */
+body[data-route*="usuario"] :is(.user-email,.email,.meta,.user-meta,.session-meta, .ua, .ip, .info){
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+}
+
+/* Notificaciones: vacíos/footers tipo “No hay más resultados” */
+body[data-route*="notif"] :is(.empty,.empty-state,.no-results,.no-more, .list-footer, .footer-note){
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+}
+
+/* Mantener apariencia realmente deshabilitada */
+:where(button[disabled], .btn:disabled, .disabled, [aria-disabled="true"]).opacity-50{
+  opacity:.5 !important;
+}
