@@ -1905,6 +1905,19 @@ def _infer_ticket_id(usuario: str, titulo: str, descripcion: str, tipo: str, ref
             best = int(r[0])
     return best
 
+# ---- Incidencias: asegurar config aunque la Parte 1 no se haya pegado completa ----
+if 'INCID_ALLOWED_EXT' not in globals():
+    INCID_ALLOWED_EXT = CHAT_ALLOWED_EXT
+if 'INCID_MAX_FILES' not in globals():
+    INCID_MAX_FILES = 10
+if 'INCID_MAX_TOTAL_MB' not in globals():
+    INCID_MAX_TOTAL_MB = 25
+
+def _validate_incid_ext(filename: str):
+    ext = os.path.splitext(filename or "")[1].lower()
+    if ext not in INCID_ALLOWED_EXT:
+        raise HTTPException(status_code=400, detail=f"Tipo de archivo no permitido en incidencias: {ext}")
+
 def _validate_incid_ext(filename: str):
     ext = os.path.splitext(filename or "")[1].lower()
     if ext not in INCID_ALLOWED_EXT:
