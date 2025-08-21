@@ -549,3 +549,33 @@ body[data-auth="1"] .content .form-text{
 /* respiro con el borde inferior y el chip “v1”/similar */
 .sidebar > .side-small{ margin-top:var(--sidebar-gap); }
 .sidebar{ padding-bottom:calc(8px + var(--safe-bottom)); }
+
+/* =========================================================
+   ======= SAFE GUARDS: overlays y clicabilidad ============
+   ========================================================= */
+
+/* Overlays inertes por defecto; solo capturan clics al abrir */
+#chatIaOverlay,
+.sidebar-overlay{
+  position: fixed;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none !important;
+  background: transparent;
+  backdrop-filter: none;
+  transition: opacity .2s ease;
+  z-index: 1010;
+}
+#chatIaOverlay.open,
+.sidebar-overlay.open{
+  opacity: 1;
+  pointer-events: auto !important;
+  background: rgba(15,18,34,.35);
+  backdrop-filter: blur(2px);
+}
+/* Jerarquía del chat */
+.chat-ia{ z-index: 1201; }
+#chatIaOverlay{ z-index: 1200; }
+
+/* Botones/links siempre clickeables (por si alguna regla global tapa) */
+button, .btn, [role="button"], a.btn { pointer-events: auto !important; }
