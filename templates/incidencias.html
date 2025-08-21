@@ -100,7 +100,8 @@
       <span class="subtle">Reportá un problema o solicitud</span>
     </div>
 
-    <form method="post" action="/incidencias" enctype="multipart/form-data"
+    {# ⚠️ Enviar SIEMPRE al endpoint canónico que crea: /incidencias/crear #}
+    <form method="post" action="/incidencias/crear" enctype="multipart/form-data"
           class="row g-3 form-neo" id="formInc" autocomplete="off" novalidate>
       <div class="col-12 col-md-6">
         <label for="titulo" class="form-label">Título</label>
@@ -135,9 +136,7 @@
       </div>
 
       <div class="col-12 d-flex gap-2">
-        <!-- Blindado: aunque el botón se mueva, siempre envía #formInc -->
-        <button type="submit" class="btn btn-primary"
-                form="formInc" data-submit="#formInc">
+        <button type="submit" class="btn btn-primary" form="formInc" data-submit="#formInc">
           <i class="bi bi-plus-circle me-1"></i> Crear incidencia
         </button>
         <button type="reset" class="btn btn-outline-secondary">
@@ -194,36 +193,51 @@
         </thead>
         <tbody id="incTableBody">
           {% for ticket in tickets %}
-          <tr data-id="{{ ticket.id }}"
-              data-usuario="{{ ticket.usuario | e }}"
-              data-titulo="{{ ticket.titulo | e }}"
-              data-descripcion="{{ ticket.descripcion | e }}"
-              data-tipo="{{ ticket.tipo | e }}"
-              data-fecha="{{ ticket.fecha_legible | e }}"
-              data-estado="{{ ticket.estado | e }}">
-            <td class="text-muted td-id">{{ ticket.id }}</td>
-            <td class="campo-usuario">{{ ticket.usuario }}</td>
-            <td class="fw-semibold campo-titulo">{{ ticket.titulo }}</td>
-            <td class="small campo-descripcion">{{ ticket.descripcion }}</td>
-            <td><span class="badge bg-primary-subtle text-primary campo-tipo">{{ ticket.tipo }}</span></td>
-            <td class="text-nowrap campo-fecha">{{ ticket.fecha_legible }}</td>
+          {# ——— Normalización: tupla (sqlite) o dict ——— #}
+          {% set _is_map = ticket is mapping %}
+          {% set _id = (ticket.id if _is_map and ticket.id is defined else (ticket[0] if not _is_map else None)) %}
+          {% set _usuario = (ticket.usuario if _is_map and ticket.usuario is defined else (ticket[1] if not _is_map else '')) %}
+          {% set _titulo = (ticket.titulo if _is_map and ticket.titulo is defined else (ticket[2] if not _is_map else '')) %}
+          {% set _descripcion = (ticket.descripcion if _is_map and ticket.descripcion is defined else (ticket[3] if not _is_map else '')) %}
+          {% set _tipo = (ticket.tipo if _is_map and ticket.tipo is defined else (ticket[4] if not _is_map else '')) %}
+          {% set _estado = (ticket.estado if _is_map and ticket.estado is defined else (ticket[5] if not _is_map else 'Abierto')) %}
+          {% set _fecha_raw =
+              (ticket.fecha_legible if _is_map and ticket.fecha_legible is defined else
+              (ticket.fecha if _is_map and ticket.fecha is defined else
+              (ticket[6] if not _is_map else ''))) %}
+          {% set _fecha_legible = (_fecha_raw | ar_time) %}
+          {% set _adj = (ticket.adjuntos if _is_map and ticket.adjuntos is defined else (ticket.archivos if _is_map and ticket.archivos is defined else [])) %}
+
+          <tr data-id="{{ _id }}"
+              data-usuario="{{ _usuario | e }}"
+              data-titulo="{{ _titulo | e }}"
+              data-descripcion="{{ _descripcion | e }}"
+              data-tipo="{{ _tipo | e }}"
+              data-fecha="{{ _fecha_legible | e }}"
+              data-estado="{{ _estado | e }}">
+            <td class="text-muted td-id">{{ _id }}</td>
+            <td class="campo-usuario">{{ _usuario }}</td>
+            <td class="fw-semibold campo-titulo">{{ _titulo }}</td>
+            <td class="small campo-descripcion">{{ _descripcion }}</td>
+            <td><span class="badge bg-primary-subtle text-primary campo-tipo">{{ _tipo }}</span></td>
+            <td class="text-nowrap campo-fecha">{{ _fecha_legible }}</td>
 
             {# ——— Adjuntos: se pasan crudos y se renderizan en el front ——— #}
             <td class="small campo-adjuntos"
-                data-adj='{{ (ticket.adjuntos or ticket.archivos) | tojson | safe }}'>
+                data-adj='{{ _adj | default([]) | tojson | safe }}'>
               <span class="text-muted">—</span>
             </td>
 
             <td class="td-estado">
-              {% if ticket.estado == 'Cerrado' %}
+              {% if _estado == 'Cerrado' %}
                 <span class="badge-state badge-cerrado">Cerrado</span>
               {% else %}
                 <span class="badge-state badge-abierto">Abierto</span>
               {% endif %}
             </td>
             <td class="text-nowrap">
-              {% if ticket.estado != 'Cerrado' %}
-              <form method="post" action="/incidencias/cerrar/{{ ticket.id }}" class="d-inline">
+              {% if _estado != 'Cerrado' %}
+              <form method="post" action="/incidencias/cerrar/{{ _id }}" class="d-inline">
                 <button type="submit" class="btn btn-sm btn-outline-success action-cerrar">
                   <i class="bi bi-check2-circle me-1"></i> Cerrar
                 </button>
@@ -232,9 +246,11 @@
               <span class="text-muted small">—</span>
               {% endif %}
 
-              {% if usuario_actual.rol == 'admin' %}
-              <form method="post" action="/incidencias/eliminar/{{ ticket.id }}" class="d-inline ms-1"
-                    onsubmit="return confirm('¿Eliminar incidencia #{{ ticket.id }}?');">
+              {# Mostrar “Eliminar” sólo si llega usuario_actual.admin #}
+              {% set _is_admin = (usuario_actual is defined and usuario_actual and (usuario_actual.rol is defined) and usuario_actual.rol == 'admin') %}
+              {% if _is_admin %}
+              <form method="post" action="/incidencias/eliminar/{{ _id }}" class="d-inline ms-1"
+                    onsubmit="return confirm('¿Eliminar incidencia #{{ _id }}?');">
                 <button type="submit" class="btn btn-sm btn-outline-danger action-eliminar">
                   <i class="bi bi-trash me-1"></i> Eliminar
                 </button>
@@ -289,7 +305,7 @@
       let val = null;
       try { val = raw ? JSON.parse(raw) : null; } catch(_){ val = raw; }
 
-      // Soporta: array real, string JSON (p.ej. '["a","b"]'), string simple (una ruta)
+      // Soporta array real, string JSON, o string simple
       let arr = [];
       if (Array.isArray(val)) {
         arr = val;
@@ -558,21 +574,12 @@
       try{
         busy(btn, true);
         const headers = { 'X-Requested-With': 'fetch' };
-        // Si usás CSRF y lo exponés en base.html: <meta name="csrf-token" content="...">
         const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
         if(csrf) headers['X-CSRF-Token'] = csrf;
 
-        const res = await fetch(action, {
-          method,
-          credentials: 'same-origin',
-          headers
-        });
+        const res = await fetch(action, { method, credentials: 'same-origin', headers });
 
-        // Si el backend redirige después de operar, seguimos esa URL
-        if(res.redirected){
-          location.href = res.url;
-          return;
-        }
+        if(res.redirected){ location.href = res.url; return; }
 
         let data=null; try{ data = await res.clone().json(); }catch(_){}
         if(!res.ok || (data && data.ok === false)){
@@ -584,16 +591,13 @@
           showToastSafe('Incidencias', 'Incidencia eliminada', 'check2-circle');
         }else{
           const estadoCell = tr?.querySelector('.td-estado');
-          if(estadoCell){
-            estadoCell.innerHTML = '<span class="badge-state badge-cerrado">Cerrado</span>';
-          }
+          if(estadoCell){ estadoCell.innerHTML = '<span class="badge-state badge-cerrado">Cerrado</span>'; }
           form.remove?.();
           showToastSafe('Incidencias', 'Incidencia cerrada', 'check2-circle');
         }
 
-        applyFilters(); // recalcular vista/paginación
+        applyFilters();
       }catch(err){
-        // Plan B: envío normal del form
         try{ form.submit(); }catch(__){}
       }finally{
         busy(btn, false);

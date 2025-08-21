@@ -1868,7 +1868,7 @@ async def incidencias_cerrar(request: Request, id: int = Form(...)):
     if not request.session.get("usuario"):
         return JSONResponse({"error":"No autenticado"}, status_code=401)
     actor_user_id, ip = _actor_info(request)
-    actualizar_estado_ticket(id, "Resuelto", actor_user_id=actor_user_id, ip=ip)
+    actualizar_estado_ticket(id, "Cerrado", actor_user_id=actor_user_id, ip=ip)
     return ({"ok": True} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
 
 @app.post("/incidencias/eliminar")
@@ -1878,11 +1878,88 @@ async def incidencias_eliminar(request: Request, id: int = Form(...)):
     actor_user_id, ip = _actor_info(request)
     eliminar_ticket(id, actor_user_id=actor_user_id, ip=ip)
     return ({"ok": True} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
+@app.post("/incidencias/cerrar/{id}")
+async def incidencias_cerrar_path(id: int, request: Request):
+    # reusa la lógica existente
+    return await incidencias_cerrar(request, id=id)
+
+@app.post("/incidencias/eliminar/{id}")
+async def incidencias_eliminar_path(id: int, request: Request):
+    # reusa la lógica existente
+    return await incidencias_eliminar(request, id=id)
+
 
 # (Opcional) diagnóstico de rutas
 @app.get("/__diag/routes")
 def _diag_routes():
     return {"routes": sorted({getattr(r, "path", "") for r in app.routes})}
+# ================== Incidencias (vista + crear) ==================
+async def incidencias_view(request: Request):
+    if not request.session.get("usuario"):
+        return RedirectResponse("/login")
+    email = request.session.get("usuario")
+    try:
+        if es_admin(email):
+            items = obtener_todos_los_tickets()
+        else:
+            items = obtener_tickets_por_usuario(email)
+    except Exception:
+        items = []
+    # Renderizamos la vista con la lista (tu template ya existe)
+    return templates.TemplateResponse("incidencias.html", {
+        "request": request,
+        "tickets": items
+    })
+
+@app.post("/incidencias/crear")
+async def incidencias_crear(
+    request: Request,
+    titulo: str = Form(...),
+    descripcion: str = Form(default=""),
+    tipo: str = Form(default="General"),
+):
+    email = request.session.get("usuario")
+    if not email:
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+
+    actor_user_id, ip = _actor_info(request)
+    try:
+        # Nota: crear_ticket no devuelve el id; si lo necesitás, podríamos ajustarlo en database.py
+        crear_ticket(email, titulo.strip(), descripcion.strip(), tipo.strip() or "General",
+                     actor_user_id=actor_user_id, ip=ip)
+    except Exception as e:
+        print("❌ incidencias_crear:", repr(e))
+        return JSONResponse({"error": "No se pudo registrar la incidencia"}, status_code=500)
+
+    # Si el cliente pidió JSON (fetch/AJAX), devolvemos JSON. Si no, redirigimos a la vista.
+    if wants_json(request):
+        return {"ok": True}
+    return RedirectResponse("/incidencias", status_code=303)
+
+# --- Aliases para aceptar también POST a /incidencias (evita 405) ---
+@app.post("/incidencias")
+@app.post("/incidencias/")
+async def incidencias_post_alias(
+    request: Request,
+    titulo: Optional[str] = Form(default=None),
+    descripcion: Optional[str] = Form(default=""),
+    tipo: Optional[str] = Form(default="General"),
+):
+    # Si vino por fetch JSON:
+    if titulo is None:
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        titulo = (data.get("titulo") or data.get("title") or "").strip()
+        descripcion = (data.get("descripcion") or data.get("description") or "")
+        tipo = (data.get("tipo") or data.get("type") or "General")
+    return await incidencias_crear(
+        request,
+        titulo=titulo or "",
+        descripcion=descripcion or "",
+        tipo=tipo or "General",
+    )
 # =========================
 # main.py — PARTE 5 / 5
 # (Calendario, Notificaciones, Presencia/Online, Auditoría de actividad + CSV)
