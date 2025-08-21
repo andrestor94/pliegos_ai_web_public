@@ -196,7 +196,7 @@
     [data-theme="dark"] .menu-btn{ background:var(--panel); color:var(--ink); }
     @media (max-width: 992px){ .menu-btn{ display:inline-flex; } }
 
-    .brand{ display:flex; align-items:center; gap:14px; padding:8px 14px; border-radius:16px; border:1px solid var(--bs-border-color, var(--border)); background:var(--surface); }
+    .brand{ display:flex; align-items:center; gap:14px; padding:8px 14px; border:1px solid var(--bs-border-color, var(--border)); background:var(--surface); }
     .brand img{ height:34px; width:auto; object-fit:contain; }
     .brand .brand-title{ font-weight:700; letter-spacing:.2px; color: var(--brand-500); }
     [data-theme="dark"] .brand{ background:var(--panel); }
@@ -516,7 +516,7 @@
             <span id="chatBadge" class="chat-badge">0</span>
           </a>
 
-          <!-- Botón con toggle (abre/cierra el drawer) -->
+          <!-- Botón con toggle (abre/cierra el drawer de IA) -->
           <button class="pill pill-grad pill-icon" id="btnOpenChat" type="button"
                   data-ai-toggle="chat"
                   aria-label="Abrir chat con IA" aria-pressed="false">
@@ -534,6 +534,7 @@
           </div>
         </div>
       </header>
+
       <!-- ===== Área de contenido ===== -->
       <main class="content" id="mainContent">
         {% block content %}{% endblock %}
@@ -838,7 +839,7 @@
     chatToggleBtn?.addEventListener('click', toggleChatIA);
     document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeChatIA(); });
 
-    // ✅ Delegación estricta: solo el botón con data-ai-toggle="chat"
+    // ✅ Delegación estricta: sólo el botón con data-ai-toggle="chat"
     document.addEventListener('click', function(ev){
       const btn = ev.target.closest('[data-ai-toggle="chat"]');
       if(!btn) return;
