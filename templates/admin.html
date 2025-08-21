@@ -242,11 +242,18 @@
     }
   }
 
+  /* Render con reglas:
+     - Oculta soft-deletes: rol === "borrado" (case-insensitive) o flag u.eliminado
+     - Aplica filtro por texto
+  */
   function renderUsuarios(items){
     const tbody = document.getElementById('tablaUsuarios');
     const filtro = (document.getElementById('filtro').value||'').toLowerCase().trim();
 
-    const data = items.filter(u=>{
+    // ⬇️ oculta soft-deletes
+    const visibles = (items||[]).filter(u => (String(u.rol||'').toLowerCase() !== 'borrado') && !u.eliminado);
+
+    const data = visibles.filter(u=>{
       if(!filtro) return true;
       const hay = `${u.nombre||''} ${u.email||''}`.toLowerCase();
       return hay.includes(filtro);
@@ -352,12 +359,17 @@
     }
   }
 
+  // ⬇️ Eliminar: quita del cache inmediatamente y re-renderiza.
   async function eliminarUsuario(email){
     if(!confirm(`¿Eliminar definitivamente a ${email}?`)) return;
     try{
-      await axios.delete(`/api/admin/users/${encodeURIComponent(email)}`);
-      await cargarUsuarios();
+      await axios.delete(`/api/admin/users/${encodeURIComponent(email)}`, { headers:{'Accept':'application/json'} });
+      // saca del cache, aunque el backend haga soft-delete
+      usuariosCache = (usuariosCache||[]).filter(u => (u.email||'').toLowerCase() !== email.toLowerCase());
+      renderUsuarios(usuariosCache);
       toastOk('Usuario eliminado', email);
+      // refresh silencioso para quedar en sync con el backend
+      setTimeout(cargarUsuarios, 400);
     }catch(_){
       toastWarn('Error', 'No se pudo eliminar');
     }

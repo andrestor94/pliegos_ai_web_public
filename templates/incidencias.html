@@ -129,7 +129,7 @@
       <div class="col-12">
         <label for="archivo" class="form-label">Adjuntar archivos (opcional)</label>
         <input class="form-control" type="file" name="archivos" id="archivo" multiple
-               accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.csv,.xlsx,.xls,.docx,.doc,.pptx">
+               accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.csv,.xlsx,.xls,.doc,.docx,.pptx">
         <div class="form-text file-hint">Imágenes, PDF, Word, Excel, etc. Máx. 10 archivos • 25 MB totales.</div>
         <div id="selFiles" class="file-list" aria-live="polite"></div>
       </div>
@@ -448,6 +448,61 @@
     $pager.appendChild(make('»', pages, STATE.page===pages));
   }
 
+  // ===== Intercepto Cerrar/Eliminar para asegurar acción por fetch (sin recargar)
+  function trById(id){ return document.querySelector(`#incTableBody tr[data-id="${id}"]`); }
+  function markClosed(id){
+    const tr = trById(id); if(!tr) return;
+    tr.dataset.estado = 'Cerrado';
+    const tdEstado = tr.querySelector('.td-estado');
+    if(tdEstado){
+      tdEstado.innerHTML = '<span class="badge-state badge-cerrado">Cerrado</span>';
+    }
+    // quitar botón "Cerrar"
+    const cellAcc = tr.lastElementChild;
+    if(cellAcc){
+      const closeForm = cellAcc.querySelector('form[action*="/incidencias/cerrar/"]');
+      if(closeForm) closeForm.remove();
+      // si no hay nada más, dejar guion
+      if(!cellAcc.querySelector('form') && !cellAcc.querySelector('button')) cellAcc.innerHTML = '<span class="text-muted small">—</span>';
+    }
+    applyFilters();
+  }
+  function removeRow(id){
+    const tr = trById(id); if(!tr) return;
+    tr.remove();
+    applyFilters();
+  }
+
+  document.addEventListener('submit', async (e)=>{
+    const form = e.target;
+    if(!(form instanceof HTMLFormElement)) return;
+    const action = (form.getAttribute('action')||'') + '';
+    if(!/\/incidencias\/(cerrar|eliminar)\/\d+/.test(action)) return;
+    if(e.defaultPrevented) return; // respetar confirm() cancelado
+    e.preventDefault();
+
+    // Evitar doble submit
+    if(form.__submitting) return;
+    form.__submitting = true;
+    const btn = form.querySelector('button[type="submit"]');
+    const prev = btn ? btn.innerHTML : '';
+    if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>…'; }
+
+    try{
+      const res = await fetch(action, { method: form.method || 'POST', credentials:'same-origin', headers:{'X-Requested-With':'fetch'} });
+      if(!res.ok) throw new Error('Respuesta no OK');
+
+      const m = action.match(/\/(cerrar|eliminar)\/(\d+)/);
+      const type = m && m[1]; const id = m && Number(m[2]);
+      if(type === 'cerrar'){ markClosed(id); showToastSafe('Incidencias', `Incidencia #${id} cerrada.`, 'check2-circle'); }
+      else { removeRow(id); showToastSafe('Incidencias', `Incidencia #${id} eliminada.`, 'trash'); }
+    }catch(_){
+      showToastSafe('Error', 'No se pudo procesar la acción.', 'exclamation-triangle');
+      if(btn){ btn.disabled = false; btn.innerHTML = prev; }
+      form.__submitting = false;
+    }
+  });
+
   // UI bindings
   (function(){
     const $q = $('#filterInput');
@@ -472,7 +527,7 @@
       const rows = STATE.filtered.map(r=>({
         id: r.id, usuario: r.usuario, titulo: r.titulo, descripcion: r.descripcion, tipo: r.tipo, fecha: r.fecha, estado: r.estado
       }));
-      if(!rows.length){ showToastSafe('Exportar', 'No hay resultados para exportar', 'exclamation-trriangle'); return; }
+      if(!rows.length){ showToastSafe('Exportar', 'No hay resultados para exportar', 'exclamation-triangle'); return; }
       const headers = Object.keys(rows[0]);
       const esc = v => `"${String(v??'').replace(/"/g,'""')}"`;
       const csv = [headers.map(esc).join(',')].concat(rows.map(r=>headers.map(h=>esc(r[h])).join(','))).join('\n');
