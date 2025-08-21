@@ -207,9 +207,10 @@
               (ticket[6] if not _is_map else ''))) %}
           {% set _fecha_legible = (_fecha_raw | ar_time) %}
 
-          {# adjuntos (compat: strings) + adjuntos_info (objetos con url/filename) #}
+          {# Preferimos adjuntos_info (estructurado). Si no, caemos a adjuntos/archivos. #}
           {% set _adj = (ticket.adjuntos if _is_map and ticket.adjuntos is defined else (ticket.archivos if _is_map and ticket.archivos is defined else [])) %}
           {% set _adj_info = (ticket.adjuntos_info if _is_map and ticket.adjuntos_info is defined else []) %}
+          {% set _files = (_adj_info if _adj_info and (_adj_info|length)>0 else _adj) %}
 
           <tr data-id="{{ _id }}"
               data-usuario="{{ _usuario | e }}"
@@ -227,23 +228,21 @@
 
             {# ——— Adjuntos: render server-side con compatibilidad ——— #}
             <td class="small campo-adjuntos"
-                data-adj='{{ (_adj | default([])) | tojson | safe }}'>
-              {% if _adj_info and _adj_info|length %}
+                data-adj='{{ _files | default([]) | tojson | safe }}'>
+
+              {% if _files and _files|length > 0 %}
                 <div class="chips">
-                  {% for a in _adj_info %}
-                    {% set _href = (a.url if a.url is defined and a.url else ("/static/adjuntos_incidencias/" ~ (a.filename|urlencode))) %}
+                  {% for a in _files %}
+                    {% set item = a if a is mapping else {'url': a} %}
+                    {% set name = (item.original if (item.original is defined and item.original) else
+                                   (item.filename if (item.filename is defined and item.filename) else
+                                    ((item.url.split('?')[0].split('#')[0].split('/')[-1]) if (item.url is defined and item.url) else 'archivo'))) %}
+                    {% set href = (item.download_url if (item.download_url is defined and item.download_url) else
+                                   (item.url if (item.url is defined and item.url) else
+                                    ('/incidencias/adjunto/' ~ _id ~ '/' ~ (name|urlencode)))) %}
                     <span class="chip">
                       <i class="bi bi-paperclip"></i>
-                      <a href="{{ _href }}" target="_blank" rel="noopener">{{ a.filename }}</a>
-                    </span>
-                  {% endfor %}
-                </div>
-              {% elif _adj and _adj|length %}
-                <div class="chips">
-                  {% for fn in _adj %}
-                    <span class="chip">
-                      <i class="bi bi-paperclip"></i>
-                      <a href="/static/adjuntos_incidencias/{{ fn | urlencode }}" target="_blank" rel="noopener">{{ fn }}</a>
+                      <a href="{{ href }}" target="_blank" rel="noopener" download>{{ name }}</a>
                     </span>
                   {% endfor %}
                 </div>
@@ -328,22 +327,31 @@
       // si ya hay chips renderizados por el servidor, no tocar
       if (cell.querySelector('.chips')) return;
 
-      let raw = cell.getAttribute('data-adj');
-      let val = null;
-      try { val = raw ? JSON.parse(raw) : null; } catch(_){ val = raw; }
+      const tr = cell.closest('tr');
+      const ticketId = tr ? tr.dataset.id : '';
 
-      // Soporta array real, string JSON, string simple u objetos {filename,url}
-      let arr = [];
-      if (Array.isArray(val)) {
-        arr = val;
-      } else if (typeof val === 'string' && val.trim()) {
+      let raw = cell.getAttribute('data-adj') || '[]';
+      let val = null;
+
+      // Intento JSON normal
+      try { val = JSON.parse(raw); } catch(_){ val = null; }
+
+      // Reparación básica si vino como dict/array con comillas simples
+      if (!val && /^\s*[\[{]/.test(raw)) {
         try {
-          const maybe = JSON.parse(val);
-          arr = Array.isArray(maybe) ? maybe : [val];
-        } catch(_) {
-          arr = [val];
-        }
+          const fixed = raw
+            .replace(/([{,]\s*)'([^']+)'\s*:/g, '$1"$2":')   // claves
+            .replace(/:\s*'([^']*)'/g, ':"$1"')               // valores
+            .replace(/'/g, '"');
+          val = JSON.parse(fixed);
+        } catch(_){}
       }
+
+      // Normalizo a array
+      let arr = [];
+      if (Array.isArray(val))       arr = val;
+      else if (val && typeof val==='object') arr = [val];
+      else if (typeof raw==='string' && raw.trim()) arr = [raw.trim()];
 
       if(!arr.length){
         cell.innerHTML = '<span class="text-muted">—</span>';
@@ -353,28 +361,34 @@
       const wrap = document.createElement('div');
       wrap.className = 'chips';
 
+      const base = (p)=> (p||'').split('?')[0].split('#')[0].split('/').pop() || 'archivo';
+
       arr.forEach(item=>{
         let name='', href='';
         if (typeof item === 'string') {
-          name = item.split(/[\\/]/).pop();
-          href = '/static/adjuntos_incidencias/' + encodeURIComponent(name);
+          name = base(item);
+          href = ticketId ? `/incidencias/adjunto/${encodeURIComponent(ticketId)}/${encodeURIComponent(name)}` : `/static/adjuntos_incidencias/${encodeURIComponent(name)}`;
         } else if (item && typeof item === 'object') {
-          name = (item.filename || '').split(/[\\/]/).pop();
-          href = item.url || ('/static/adjuntos_incidencias/' + encodeURIComponent(name));
+          name = item.original || item.filename || base(item.url) || base(item.download_url) || 'archivo';
+          href = item.download_url || item.url || (ticketId ? `/incidencias/adjunto/${encodeURIComponent(ticketId)}/${encodeURIComponent(name)}` : `/static/adjuntos_incidencias/${encodeURIComponent(name)}`);
         }
-        if(!name) return;
+        if(!href) return;
 
         const chip = document.createElement('span');
         chip.className = 'chip';
-        chip.innerHTML = '<i class="bi bi-paperclip"></i> <a target="_blank" rel="noopener"></a>';
+        chip.innerHTML = '<i class="bi bi-paperclip"></i> <a target="_blank" rel="noopener" download></a>';
         const a = chip.querySelector('a');
         a.href = href;
         a.textContent = name;
         wrap.appendChild(chip);
       });
 
-      cell.innerHTML = '';
-      cell.appendChild(wrap);
+      if (wrap.childNodes.length) {
+        cell.innerHTML = '';
+        cell.appendChild(wrap);
+      } else {
+        cell.innerHTML = '<span class="text-muted">—</span>';
+      }
     });
   }
 
