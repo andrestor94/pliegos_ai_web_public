@@ -8,6 +8,7 @@ import sqlite3
 import uuid
 import asyncio
 import re
+import json
 from typing import List, Optional, Dict, Set
 from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body, WebSocket, WebSocketDisconnect, Depends, status, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse, Response
@@ -339,6 +340,15 @@ CHAT_ALLOWED_EXT = {
 }
 CHAT_MAX_FILES = 10
 CHAT_MAX_TOTAL_MB = 50
+
+# ================== Incidencias: adjuntos (nuevo) ==================
+INCID_ATTACH_DIR = os.path.join("static", "adjuntos_incidencias")
+os.makedirs(INCID_ATTACH_DIR, exist_ok=True)
+
+# Reusamos las mismas extensiones que el chat
+INCID_ALLOWED_EXT = CHAT_ALLOWED_EXT
+INCID_MAX_FILES = 10
+INCID_MAX_TOTAL_MB = 25  # MB
 
 # ================== Avatares (perfil) ==================
 AVATAR_DIR = os.path.join("static", "avatars")
@@ -1123,7 +1133,7 @@ async def debug_whoami(request: Request):
     }
 # =========================
 # main.py — PARTE 4 / 5
-# (chat OpenAI, chat interno, auditoría, admin)
+# (chat OpenAI, chat interno, auditoría, admin + Incidencias con adjuntos)
 # =========================
 
 # ================== API puente (Chat OpenAI) ==================
@@ -1807,8 +1817,69 @@ async def legacy_admin_reset_session(request: Request):
     except Exception as e:
         print("❌ legacy_admin_reset_session:", repr(e))
         return JSONResponse({"error": "No se pudo reiniciar la sesión"}, status_code=500)
-# ====== Incidencias (vista + API mínima) ======
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+
+
+# ================== Incidencias (vista + API con adjuntos) ==================
+INCID_ATTACH_DIR = os.path.join("static", "incidencias_adjuntos")
+os.makedirs(INCID_ATTACH_DIR, exist_ok=True)
+
+def _incid_list_attachments(ticket_id: int):
+    """Lista adjuntos por convención de nombre '<id>_...ext' en el dir de incidencias."""
+    prefix = f"{int(ticket_id)}_"
+    out = []
+    for name in sorted(os.listdir(INCID_ATTACH_DIR)):
+        if not name.startswith(prefix):
+            continue
+        path = os.path.join(INCID_ATTACH_DIR, name)
+        if not os.path.isfile(path):
+            continue
+        size = os.path.getsize(path)
+        out.append({
+            "filename": name,
+            "size": size,
+            "url": f"/incidencias/adjunto/{ticket_id}/{name}",
+            "original": re.sub(rf"^{re.escape(prefix)}\d+_", "", name)  # mejor esfuerzo
+        })
+    return out
+
+def _parse_iso_utc(s: str):
+    if not s:
+        return None
+    s = s.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(s)
+    except Exception:
+        try:
+            return datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+
+def _infer_ticket_id(usuario: str, titulo: str, descripcion: str, tipo: str, ref_iso_utc: str) -> Optional[int]:
+    """
+    Heurística para recuperar el ID del ticket recién creado cuando crear_ticket()
+    no lo devuelve: busca por user + (titulo, descripcion, tipo) cercano al now.
+    """
+    try:
+        rows = obtener_tickets_por_usuario(usuario) or []
+    except Exception:
+        rows = []
+    ref = _parse_iso_utc(ref_iso_utc) or datetime.now(timezone.utc)
+    best = None
+    best_dt_diff = 999999999
+    for r in rows:
+        # rows: (id, usuario, titulo, descripcion, tipo, estado, fecha)
+        if (r[2] or "").strip() != titulo.strip():
+            continue
+        if (r[3] or "").strip() != (descripcion or "").strip():
+            continue
+        if (r[4] or "").strip() != (tipo or "General").strip():
+            continue
+        dt = _parse_iso_utc(r[6]) or ref
+        diff = abs(int((dt - ref).total_seconds()))
+        if diff < best_dt_diff:
+            best_dt_diff = diff
+            best = int(r[0])
+    return best
 
 @app.get("/incidencias", response_class=HTMLResponse)
 @app.get("/incidencias/", response_class=HTMLResponse)  # alias con barra final
@@ -1820,7 +1891,7 @@ async def incidencias_view(request: Request):
 
     # admin ve todo, usuario ve las suyas
     rows = obtener_todos_los_tickets() if (rol == "admin" or es_admin(email)) else obtener_tickets_por_usuario(email)
-    # rows: (id, usuario, titulo, descripcion, tipo, estado, fecha)
+
     tickets = []
     for r in rows:
         try:
@@ -1830,10 +1901,16 @@ async def incidencias_view(request: Request):
                 fecha_leg = datetime.strptime(r[6], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M")
             except Exception:
                 fecha_leg = r[6] or ""
-        tickets.append({
+        t = {
             "id": r[0], "usuario": r[1], "titulo": r[2], "descripcion": r[3],
             "tipo": r[4], "estado": r[5], "fecha": r[6], "fecha_legible": fecha_leg
-        })
+        }
+        # 👉 adjuntos
+        try:
+            t["adjuntos"] = _incid_list_attachments(int(r[0]))
+        except Exception:
+            t["adjuntos"] = []
+        tickets.append(t)
 
     return templates.TemplateResponse("incidencias.html", {
         "request": request,
@@ -1848,95 +1925,56 @@ async def incidencias_list_json(request: Request):
     email = request.session.get("usuario")
     rol = request.session.get("rol", "usuario")
     rows = obtener_todos_los_tickets() if (rol == "admin" or es_admin(email)) else obtener_tickets_por_usuario(email)
-    items = [{"id": r[0], "usuario": r[1], "titulo": r[2], "descripcion": r[3], "tipo": r[4], "estado": r[5], "fecha": r[6]} for r in rows]
+    items = []
+    for r in rows:
+        items.append({
+            "id": r[0], "usuario": r[1], "titulo": r[2], "descripcion": r[3],
+            "tipo": r[4], "estado": r[5], "fecha": r[6],
+            "adjuntos": _incid_list_attachments(int(r[0]))
+        })
     return {"items": items}
-
-@app.post("/incidencias/crear")
-async def incidencias_crear(request: Request,
-                            titulo: str = Form(...),
-                            descripcion: str = Form(""),
-                            tipo: str = Form("General")):
-    if not request.session.get("usuario"):
-        return JSONResponse({"error":"No autenticado"}, status_code=401)
-    usuario = request.session.get("usuario")
-    actor_user_id, ip = _actor_info(request)
-    crear_ticket(usuario, titulo, descripcion, tipo, actor_user_id=actor_user_id, ip=ip)
-    return ({"ok": True} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
-
-@app.post("/incidencias/cerrar")
-async def incidencias_cerrar(request: Request, id: int = Form(...)):
-    if not request.session.get("usuario"):
-        return JSONResponse({"error":"No autenticado"}, status_code=401)
-    actor_user_id, ip = _actor_info(request)
-    actualizar_estado_ticket(id, "Cerrado", actor_user_id=actor_user_id, ip=ip)
-    return ({"ok": True} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
-
-@app.post("/incidencias/eliminar")
-async def incidencias_eliminar(request: Request, id: int = Form(...)):
-    if not request.session.get("usuario"):
-        return JSONResponse({"error":"No autenticado"}, status_code=401)
-    actor_user_id, ip = _actor_info(request)
-    eliminar_ticket(id, actor_user_id=actor_user_id, ip=ip)
-    return ({"ok": True} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
-@app.post("/incidencias/cerrar/{id}")
-async def incidencias_cerrar_path(id: int, request: Request):
-    # reusa la lógica existente
-    return await incidencias_cerrar(request, id=id)
-
-@app.post("/incidencias/eliminar/{id}")
-async def incidencias_eliminar_path(id: int, request: Request):
-    # reusa la lógica existente
-    return await incidencias_eliminar(request, id=id)
-
-
-# (Opcional) diagnóstico de rutas
-@app.get("/__diag/routes")
-def _diag_routes():
-    return {"routes": sorted({getattr(r, "path", "") for r in app.routes})}
-# ================== Incidencias (vista + crear) ==================
-async def incidencias_view(request: Request):
-    if not request.session.get("usuario"):
-        return RedirectResponse("/login")
-    email = request.session.get("usuario")
-    try:
-        if es_admin(email):
-            items = obtener_todos_los_tickets()
-        else:
-            items = obtener_tickets_por_usuario(email)
-    except Exception:
-        items = []
-    # Renderizamos la vista con la lista (tu template ya existe)
-    return templates.TemplateResponse("incidencias.html", {
-        "request": request,
-        "tickets": items
-    })
 
 @app.post("/incidencias/crear")
 async def incidencias_crear(
     request: Request,
     titulo: str = Form(...),
-    descripcion: str = Form(default=""),
-    tipo: str = Form(default="General"),
+    descripcion: str = Form(""),
+    tipo: str = Form("General"),
+    archivos: List[UploadFile] = File(default=[])  # 👈 opcional, múltiples
 ):
-    email = request.session.get("usuario")
-    if not email:
-        return JSONResponse({"error": "No autenticado"}, status_code=401)
-
+    if not request.session.get("usuario"):
+        return JSONResponse({"error":"No autenticado"}, status_code=401)
+    usuario = request.session.get("usuario")
     actor_user_id, ip = _actor_info(request)
-    try:
-        # Nota: crear_ticket no devuelve el id; si lo necesitás, podríamos ajustarlo en database.py
-        crear_ticket(email, titulo.strip(), descripcion.strip(), tipo.strip() or "General",
-                     actor_user_id=actor_user_id, ip=ip)
-    except Exception as e:
-        print("❌ incidencias_crear:", repr(e))
-        return JSONResponse({"error": "No se pudo registrar la incidencia"}, status_code=500)
 
-    # Si el cliente pidió JSON (fetch/AJAX), devolvemos JSON. Si no, redirigimos a la vista.
-    if wants_json(request):
-        return {"ok": True}
-    return RedirectResponse("/incidencias", status_code=303)
+    # Creamos primero el ticket
+    now_iso = now_iso_utc()
+    crear_ticket(usuario, titulo.strip(), (descripcion or "").strip(), (tipo or "General").strip(),
+                 actor_user_id=actor_user_id, ip=ip)
 
-# --- Aliases para aceptar también POST a /incidencias (evita 405) ---
+    # Intentamos inferir el ID del ticket recién creado
+    ticket_id = _infer_ticket_id(usuario, titulo, descripcion or "", tipo or "General", now_iso)
+
+    # Guardar adjuntos (si pudimos resolver el id)
+    files = [a for a in (archivos or []) if a and a.filename]
+    if ticket_id and files:
+        total_bytes = 0
+        for i, f in enumerate(files, start=1):
+            _validate_ext(f.filename)
+            ext = os.path.splitext(f.filename)[1].lower()
+            safe = _safe_basename(f.filename)
+            name = f"{ticket_id}_{i:02d}_{safe}{ext}"
+            path = os.path.join(INCID_ATTACH_DIR, name)
+            written = await _save_upload_stream(f, path)
+            total_bytes += written
+            if (total_bytes / (1024 * 1024)) > CHAT_MAX_TOTAL_MB:
+                try: os.remove(path)
+                except: pass
+                return JSONResponse({"error": f"Tamaño total supera {CHAT_MAX_TOTAL_MB} MB"}, status_code=400)
+
+    return ({"ok": True, "id": ticket_id} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
+
+# --- Aliases para aceptar también POST a /incidencias (JSON sin archivos) ---
 @app.post("/incidencias")
 @app.post("/incidencias/")
 async def incidencias_post_alias(
@@ -1959,7 +1997,59 @@ async def incidencias_post_alias(
         titulo=titulo or "",
         descripcion=descripcion or "",
         tipo=tipo or "General",
+        archivos=[],
     )
+
+@app.get("/incidencias/adjunto/{ticket_id}/{filename}")
+async def incidencias_adjunto(ticket_id: int, filename: str):
+    """Sirve un adjunto de incidencia, validando que el filename pertenezca al ticket."""
+    filename = os.path.basename(filename)
+    if not filename.startswith(f"{int(ticket_id)}_"):
+        return JSONResponse({"error": "Adjunto inválido"}, status_code=400)
+    path = os.path.join(INCID_ATTACH_DIR, filename)
+    if not os.path.isfile(path):
+        return JSONResponse({"error": "No encontrado"}, status_code=404)
+    return FileResponse(path)
+
+@app.post("/incidencias/cerrar")
+async def incidencias_cerrar(request: Request, id: int = Form(...)):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error":"No autenticado"}, status_code=401)
+    actor_user_id, ip = _actor_info(request)
+    actualizar_estado_ticket(id, "Cerrado", actor_user_id=actor_user_id, ip=ip)
+    return ({"ok": True} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
+
+@app.post("/incidencias/eliminar")
+async def incidencias_eliminar(request: Request, id: int = Form(...)):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error":"No autenticado"}, status_code=401)
+    actor_user_id, ip = _actor_info(request)
+    eliminar_ticket(id, actor_user_id=actor_user_id, ip=ip)
+    # también podemos eliminar adjuntos del disco
+    prefix = f"{int(id)}_"
+    try:
+        for name in list(os.listdir(INCID_ATTACH_DIR)):
+            if name.startswith(prefix):
+                try:
+                    os.remove(os.path.join(INCID_ATTACH_DIR, name))
+                except:
+                    pass
+    except Exception:
+        pass
+    return ({"ok": True} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
+
+@app.post("/incidencias/cerrar/{id}")
+async def incidencias_cerrar_path(id: int, request: Request):
+    return await incidencias_cerrar(request, id=id)
+
+@app.post("/incidencias/eliminar/{id}")
+async def incidencias_eliminar_path(id: int, request: Request):
+    return await incidencias_eliminar(request, id=id)
+
+# (Opcional) diagnóstico de rutas
+@app.get("/__diag/routes")
+def _diag_routes():
+    return {"routes": sorted({getattr(r, "path", "") for r in app.routes})}
 # =========================
 # main.py — PARTE 5 / 5
 # (Calendario, Notificaciones, Presencia/Online, Auditoría de actividad + CSV)
@@ -2065,11 +2155,9 @@ async def cal_delete(evt_id: str, request: Request):
     return {"ok": True}
 
 
-# ================== Notificaciones (HTML o JSON según Accept) ==================
-def _wants_html(req: Request) -> bool:
-    acc = (req.headers.get("accept") or "").lower()
-    return "text/html" in acc and "application/json" not in acc
-
+# =====================================================================
+# ========================== NOTIFICACIONES ============================
+# =====================================================================
 @app.get("/notificaciones")
 async def notificaciones(request: Request,
                          q: Optional[str] = Query(default=None),
@@ -2265,7 +2353,9 @@ async def usuarios_activos(request: Request):
     })
 
 
-# ========================== Auditoría de Actividad (admins) =================
+# =====================================================================
+# ===================== AUDITORÍA DE ACTIVIDAD (admins) ===============
+# =====================================================================
 def _parse_iso(ts: Optional[str]):
     if not ts:
         return None
