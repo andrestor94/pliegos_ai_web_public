@@ -200,8 +200,7 @@
               data-descripcion="{{ ticket.descripcion | e }}"
               data-tipo="{{ ticket.tipo | e }}"
               data-fecha="{{ ticket.fecha_legible | e }}"
-              data-estado="{{ ticket.estado | e }}"
-              data-adjuntos="{{ (ticket.adjuntos|join('|')) if ticket.adjuntos else '' | e }}">
+              data-estado="{{ ticket.estado | e }}">
             <td class="text-muted td-id">{{ ticket.id }}</td>
             <td class="campo-usuario">{{ ticket.usuario }}</td>
             <td class="fw-semibold campo-titulo">{{ ticket.titulo }}</td>
@@ -233,7 +232,7 @@
             </td>
             <td class="text-nowrap">
               {% if ticket.estado != 'Cerrado' %}
-              <form method="post" action="/incidencias/cerrar/{{ ticket.id }}" class="d-inline inc-action inc-close">
+              <form method="post" action="/incidencias/cerrar/{{ ticket.id }}" class="d-inline inc-cerrar-form">
                 <button type="submit" class="btn btn-sm btn-outline-success">
                   <i class="bi bi-check2-circle me-1"></i> Cerrar
                 </button>
@@ -243,7 +242,7 @@
               {% endif %}
 
               {% if usuario_actual.rol == 'admin' %}
-              <form method="post" action="/incidencias/eliminar/{{ ticket.id }}" class="d-inline ms-1 inc-action inc-delete"
+              <form method="post" action="/incidencias/eliminar/{{ ticket.id }}" class="d-inline ms-1 inc-eliminar-form"
                     onsubmit="return confirm('¿Eliminar incidencia #{{ ticket.id }}?');">
                 <button type="submit" class="btn btn-sm btn-outline-danger">
                   <i class="bi bi-trash me-1"></i> Eliminar
@@ -273,7 +272,7 @@
 
 {% block extra_scripts %}
 <script>
-  /* ===== Airbag local para [data-submit] (por si faltara el global en base.html) ===== */
+  /* ===== Airbag local para [data-submit] ===== */
   document.addEventListener('click', function (e) {
     const btn = e.target.closest('[data-submit]');
     if (!btn) return;
@@ -286,13 +285,13 @@
     }
   });
 
-  /* ====== Helpers ====== */
+  /* ===== Helpers ===== */
   const $ = (s,sc)=> (sc||document).querySelector(s);
   const $$ = (s,sc)=> Array.from((sc||document).querySelectorAll(s));
   const escHTML = s => (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function showToastSafe(t,b,icon){ if(window.showToast) showToast({title:t, body:b||'', icon:icon||'info'}); }
 
-  /* ====== Form: contador y validación de adjuntos ====== */
+  /* ===== Form: contador + validación de adjuntos ===== */
   (function(){
     const $desc = $('#descripcion'), $cnt = $('#descCnt');
     if($desc && $cnt){
@@ -320,8 +319,7 @@
     $file?.addEventListener('change', ()=>{
       const files=[...$file.files];
       const wrong = files.filter(f=>!ALLOWED.test(f.name));
-      if(wrong.length) showToastSafe('Archivos no permitidos', wrong.map(f=>f.name).join(', '), 'exclamation-triangle');
-
+      if(wrong.length){ showToastSafe('Archivos no permitidos', wrong.map(f=>f.name).join(', '), 'exclamation-triangle'); }
       const tooMany = files.length > MAX_FILES;
       const totalMB = files.reduce((a,b)=>a+b.size,0)/1024/1024;
       const tooBig  = totalMB > MAX_TOTAL_MB;
@@ -344,7 +342,7 @@
     });
   })();
 
-  /* ====== Listado: búsqueda + filtros + orden + paginación + export ====== */
+  /* ===== Listado: búsqueda + filtros + orden + paginación + export ===== */
   const rowsAll = () => $$('#incTableBody tr').map(tr => ({
     tr,
     id: Number(tr.dataset.id || tr.querySelector('.td-id')?.textContent || 0),
@@ -440,66 +438,7 @@
     $pager.appendChild(make('»', pages, STATE.page===pages));
   }
 
-  // ===== Fallback robusto para Cerrar / Eliminar por fetch =====
-  (function installIncidentsActions(){
-    const tbody = $('#incTableBody');
-    if(!tbody) return;
-
-    async function postAction(url){
-      const res = await fetch(url, { method:'POST', headers:{'X-Requested-With':'fetch'} });
-      // Aceptamos 2xx como OK; si el backend devuelve JSON con {ok:true} también sirve
-      let ok = res.ok;
-      try{
-        const j = await res.clone().json();
-        if(typeof j?.ok !== 'undefined') ok = !!j.ok;
-      }catch(_){ /* puede no ser JSON */ }
-      return ok;
-    }
-
-    tbody.addEventListener('submit', async (e)=>{
-      const form = e.target.closest('.inc-action'); if(!form) return;
-      e.preventDefault();
-
-      const url = form.getAttribute('action') || '';
-      const tr  = form.closest('tr'); if(!tr) return;
-      const id  = tr.getAttribute('data-id');
-
-      const btn = form.querySelector('button[type="submit"]');
-      const old = btn ? btn.innerHTML : '';
-      if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>…'; }
-
-      try{
-        const ok = await postAction(url);
-        if(!ok) throw new Error('Respuesta no OK');
-
-        if(url.includes('/cerrar/')){
-          // Estado -> Cerrado
-          const td = tr.querySelector('.td-estado');
-          if(td) td.innerHTML = '<span class="badge-state badge-cerrado">Cerrado</span>';
-          // Quitar botón Cerrar (dejar guion si no hay más acciones)
-          form.remove();
-          if(!tr.querySelector('.inc-action')) {
-            const lastTd = tr.querySelector('td:last-child');
-            if(lastTd) lastTd.innerHTML = '<span class="text-muted small">—</span>';
-          }
-          showToastSafe('Incidencia cerrada', `#${id}`, 'check2-circle');
-        }else if(url.includes('/eliminar/')){
-          tr.remove();
-          // Reaplicar filtros y repintar contador/paginación
-          applyFilters();
-          showToastSafe('Incidencia eliminada', `#${id}`, 'trash');
-        }else{
-          // Desconocido, recargar por seguridad
-          location.reload();
-        }
-      }catch(_){
-        showToastSafe('Error', 'No se pudo completar la acción.', 'exclamation-triangle');
-        if(btn){ btn.disabled = false; btn.innerHTML = old; }
-      }
-    }, true);
-  })();
-
-  // UI bindings (filtros/orden/export)
+  // UI bindings
   (function(){
     const $q = $('#filterInput');
     let dId=null;
@@ -520,9 +459,7 @@
 
     // Export CSV (filtrado actual)
     $('#btnExport').addEventListener('click', ()=>{
-      const rows = STATE.filtered.map(r=>({
-        id: r.id, usuario: r.usuario, titulo: r.titulo, descripcion: r.descripcion, tipo: r.tipo, fecha: r.fecha, estado: r.estado
-      }));
+      const rows = STATE.filtered.map(r=>({ id:r.id, usuario:r.usuario, titulo:r.titulo, descripcion:r.descripcion, tipo:r.tipo, fecha:r.fecha, estado:r.estado }));
       if(!rows.length){ showToastSafe('Exportar', 'No hay resultados para exportar', 'exclamation-triangle'); return; }
       const headers = Object.keys(rows[0]);
       const esc = v => `"${String(v??'').replace(/"/g,'""')}"`;
@@ -534,26 +471,61 @@
       showToastSafe('Exportado', 'Se descargó el CSV del filtro actual', 'check2-circle');
     });
 
-    // Restaurar criterio desde hash
-    try{
-      const h = new URLSearchParams(location.hash.replace(/^#/,''));
-      if(h.get('q')){ $q.value = decodeURIComponent(h.get('q')); STATE.term = $q.value; }
-      if(h.get('estado')){ $('#filterEstado').value = h.get('estado'); STATE.estado = h.get('estado'); }
-      if(h.get('tipo')){ $('#filterTipo').value = h.get('tipo'); STATE.tipo = h.get('tipo'); }
-    }catch(_){}
-    // Persistir en hash
-    const persistHash = ()=>{
-      const p = new URLSearchParams();
-      if(STATE.term) p.set('q', STATE.term);
-      if(STATE.estado) p.set('estado', STATE.estado);
-      if(STATE.tipo) p.set('tipo', STATE.tipo);
-      history.replaceState(null,'', '#'+p.toString());
-    };
-    const _apply = applyFilters;
-    applyFilters = function(){ _apply(); persistHash(); };
-
     // Init
-    _apply();
+    applyFilters();
+  })();
+
+  /* ====== FIX BOTONES: interceptar POST de cerrar/eliminar por fetch ====== */
+  (function bindTicketActions(){
+    const body = $('#incTableBody');
+    if(!body) return;
+
+    body.addEventListener('submit', async (e)=>{
+      const form = e.target.closest('form');
+      if(!form) return;
+      const action = (form.getAttribute('action')||'').toLowerCase();
+      if(!/\/incidencias\/(cerrar|eliminar)\//.test(action)) return;
+
+      e.preventDefault(); // evitamos que el submit falle silenciosamente en algunos entornos
+
+      const btn = form.querySelector('button[type="submit"]');
+      const prev = btn ? btn.innerHTML : '';
+      if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Procesando…'; }
+
+      try{
+        const res = await fetch(action, { method:'POST', credentials:'same-origin' });
+        if(!res.ok){ throw new Error('Respuesta no OK'); }
+
+        const tr = form.closest('tr');
+
+        if(action.includes('/cerrar/')){
+          // Actualiza badge y bloquea acciones
+          const estadoCell = tr.querySelector('.td-estado');
+          if(estadoCell){
+            estadoCell.innerHTML = '<span class="badge-state badge-cerrado">Cerrado</span>';
+          }
+          tr.setAttribute('data-estado','Cerrado');
+          // Reemplazar botones por guión
+          const actionsTd = form.parentElement;
+          if(actionsTd){
+            // quitamos sólo el form de "Cerrar"
+            form.remove();
+            // si quedó vacío (o sólo espacios), mostramos guión
+            if(actionsTd.textContent.trim()===''){ actionsTd.innerHTML = '<span class="text-muted small">—</span>'; }
+          }
+          showToastSafe('Incidencia', 'Se cerró correctamente.', 'check2-circle');
+          applyFilters(); // re-evaluar filtros/orden
+        }else{
+          // Eliminar: remover la fila
+          tr?.remove();
+          showToastSafe('Incidencia', 'Se eliminó correctamente.', 'trash');
+          applyFilters();
+        }
+      }catch(_){
+        showToastSafe('Incidencia', 'No se pudo completar la acción.', 'exclamation-triangle');
+        if(btn){ btn.disabled = false; btn.innerHTML = prev; }
+      }
+    });
   })();
 </script>
 {% endblock %}
