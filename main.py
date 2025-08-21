@@ -1,3 +1,8 @@
+# =========================
+# main.py — PARTE 1 / 5
+# (imports, helpers base, app init, WS, utils)
+# =========================
+
 import os
 import sqlite3
 import uuid
@@ -229,6 +234,20 @@ def require_admin(request: Request):
     except Exception:
         pass
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admins")
+
+# ================== Preferencias de respuesta (HTML/JSON) ==================
+def wants_json(request: Request) -> bool:
+    """
+    True si el cliente espera JSON (útil para que /incidencias/cerrar|eliminar
+    respondan {ok:true} cuando vienen por fetch).
+    """
+    acc = (request.headers.get("accept") or "").lower()
+    xrw = (request.headers.get("x-requested-with") or "").lower()
+    return ("application/json" in acc) or (xrw in ("fetch", "xmlhttprequest")) or (request.query_params.get("_json") == "1")
+
+def _wants_html(req: Request) -> bool:
+    acc = (req.headers.get("accept") or "").lower()
+    return "text/html" in acc and "application/json" not in acc
 
 # ================== Alert/WS manager ==================
 class ConnectionManager:
@@ -567,6 +586,10 @@ def _pr_get(user: str):
 def _pr_clear(user: str):
     with cal_conn() as c:
         c.execute("DELETE FROM pending_ratings WHERE user=?", (user,))
+# =========================
+# main.py — PARTE 2 / 5
+# (login/logout, cambiar password, rating, analizar pliego)
+# =========================
 
 # ================== Login/Logout ==================
 @app.post("/login")
@@ -582,10 +605,7 @@ async def login(request: Request,
     raw = (email or "").strip().lower()
     if "@" not in raw and " " not in raw:
         domain = (os.getenv("LOGIN_DEFAULT_DOMAIN", "suizo.com") or "").strip().lower()
-        if domain:
-            email = f"{raw}@{domain}"
-        else:
-            email = raw  # fallback
+        email = f"{raw}@{domain}" if domain else raw
     else:
         email = raw
 
@@ -773,6 +793,7 @@ async def cambiar_password_underscore_post_slash(
 ):
     return await cambiar_password_post(request, actual=actual, nueva=nueva, confirmar=confirmar)
 
+
 # ================== Rating/Análisis ==================
 class RatingIn(BaseModel):
     historial_id: Optional[int] = None
@@ -941,7 +962,10 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         "historial_id": historial_id,
         "analisis_id": analisis_id
     }
-
+# =========================
+# main.py — PARTE 3 / 5
+# (historial, usuario/avatares, diagnóstico)
+# =========================
 
 # ================== Historial ==================
 @app.get("/historial")
@@ -1020,6 +1044,7 @@ async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
     prefix = _email_safe(email)
     dst = os.path.join(AVATAR_DIR, prefix + ext)
 
+    # elimina variantes anteriores (si existían)
     for e in (".webp", ".png", ".jpg", ".jpeg"):
         p = os.path.join(AVATAR_DIR, prefix + e)
         if os.path.isfile(p) and p != dst:
@@ -1096,91 +1121,10 @@ async def debug_whoami(request: Request):
         "cookie_present": ("session" in (request.cookies or {})),
         "route": str(request.url)
     }
-
-# ================== Incidencias ==================
-@app.get("/incidencias", response_class=HTMLResponse)
-async def vista_incidencias(request: Request):
-    if not request.session.get("usuario"):
-        return RedirectResponse("/login")
-    usuario = request.session.get("usuario")
-    rol = request.session.get("rol")
-    tickets_raw = obtener_todos_los_tickets() if rol == "admin" else obtener_tickets_por_usuario(usuario)
-    tickets = []
-    for t in tickets_raw:
-        if len(t) < 7:
-            continue
-        try:
-            fecha_legible = iso_utc_to_ar_str(t[6], "%d/%m/%Y %H:%M")
-        except Exception:
-            try:
-                fecha_legible = datetime.strptime(t[6], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M")
-            except Exception:
-                fecha_legible = t[6]
-        carpeta_adjuntos = os.path.join("static", "adjuntos_incidencias")
-        os.makedirs(carpeta_adjuntos, exist_ok=True)
-        prefix = f"{t[1]}_{(t[6] or '').replace(':','').replace('-','').replace(' ','')[:14]}"
-        adjuntos = []
-        if os.path.exists(carpeta_adjuntos):
-            for file in os.listdir(carpeta_adjuntos):
-                if file.startswith(prefix):
-                    adjuntos.append(file)
-        tickets.append({
-            "id": t[0],
-            "usuario": t[1],
-            "titulo": t[2],
-            "descripcion": t[3],
-            "tipo": t[4],
-            "estado": t[5],
-            "fecha": t[6],
-            "fecha_legible": fecha_legible,
-            "adjuntos": adjuntos
-        })
-    return templates.TemplateResponse("incidencias.html", {
-        "request": request,
-        "tickets": tickets,
-        "usuario_actual": {"nombre": usuario, "rol": rol}
-    })
-
-@app.post("/incidencias")
-async def crear_incidencia_form(
-    request: Request,
-    titulo: str = Form(...),
-    descripcion: str = Form(...),
-    tipo: str = Form(...),
-    archivos: List[UploadFile] = File(default=[])
-):
-    usuario = request.session.get("usuario", "Anónimo")
-    timestamp = now_stamp_ar()
-
-    actor_user_id, ip = _actor_info(request)
-    crear_ticket(usuario, titulo, descripcion, tipo, actor_user_id=actor_user_id, ip=ip)
-
-    carpeta_adjuntos = os.path.join("static", "adjuntos_incidencias")
-    os.makedirs(carpeta_adjuntos, exist_ok=True)
-
-    for archivo in archivos:
-        if archivo.filename:
-            nombre_archivo = f"{usuario}_{timestamp}_{archivo.filename}".replace(" ", "_")
-            ruta_archivo = os.path.join(carpeta_adjuntos, nombre_archivo)
-            with open(ruta_archivo, "wb") as buffer:
-                buffer.write(await archivo.read())
-
-    return RedirectResponse("/incidencias", status_code=303)
-
-@app.post("/incidencias/cerrar/{id}")
-async def cerrar_incidencia_form(request: Request, id: int):
-    actor_user_id, ip = _actor_info(request)
-    actualizar_estado_ticket(id, "Cerrado", actor_user_id=actor_user_id, ip=ip)
-    return RedirectResponse("/incidencias", status_code=303)
-
-@app.post("/incidencias/eliminar/{id}")
-async def eliminar_incidencia_form(request: Request, id: int):
-    if request.session.get("rol") != "admin":
-        return JSONResponse({"error": "Acceso denegado"}, status_code=403)
-    actor_user_id, ip = _actor_info(request)
-    eliminar_ticket(id, actor_user_id=actor_user_id, ip=ip)
-    return RedirectResponse("/incidencias", status_code=303)
-
+# =========================
+# main.py — PARTE 4 / 5
+# (chat OpenAI, chat interno, auditoría, admin)
+# =========================
 
 # ================== API puente (Chat OpenAI) ==================
 @app.post("/chat-openai")
@@ -1189,26 +1133,30 @@ async def chat_openai(request: Request):
     mensaje = data.get("mensaje", "")
     usuario_actual = request.session.get("usuario", "Desconocido")
 
-    historial = obtener_historial_completo()
+    try:
+        historial = obtener_historial_completo()
+    except Exception:
+        historial = []
+
     ultimo_analisis_usuario = next(
-        (h for h in historial if h["usuario"] == usuario_actual and h["resumen"]),
+        (h for h in historial if h.get("usuario") == usuario_actual and h.get("resumen")),
         None
     )
 
     if ultimo_analisis_usuario:
         ultimo_resumen = f"""
 📌 Último análisis del usuario actual:
-- Fecha: {ultimo_analisis_usuario['fecha']}
-- Archivo: {ultimo_analisis_usuario['nombre_archivo']}
+- Fecha: {ultimo_analisis_usuario.get('fecha')}
+- Archivo: {ultimo_analisis_usuario.get('nombre_archivo')}
 - Resumen:
-{ultimo_analisis_usuario['resumen']}
+{ultimo_analisis_usuario.get('resumen')}
 """
     else:
         ultimo_resumen = "(El usuario aún no tiene análisis registrados.)"
 
     contexto_general = "\n".join([
-        f"- [{h['fecha']}] {h['usuario']} analizó '{h['nombre_archivo']}' y obtuvo:\n{h['resumen']}\n"
-        for h in historial if h['resumen']
+        f"- [{h.get('fecha')}] {h.get('usuario')} analizó '{h.get('nombre_archivo')}' y obtuvo:\n{h.get('resumen')}\n"
+        for h in historial if h.get("resumen")
     ])
 
     contexto = f"{ultimo_resumen}\n\n📚 Historial completo:\n{contexto_general}"
@@ -1307,7 +1255,6 @@ async def chat_view(request: Request):
     if not request.session.get("usuario"):
         return RedirectResponse("/login")
     return templates.TemplateResponse("chat.html", {"request": request})
-
 
 # ================== Chat interno (API) ==================
 def _is_no_table_error(e: Exception) -> bool:
@@ -1535,7 +1482,6 @@ async def chat_no_leidos(request: Request):
         return JSONResponse({"no_leidos": total})
     except Exception as e:
         if _is_no_table_error(e):
-            # autocorrección para evitar el error de Render
             ensure_chat_tables()
             return JSONResponse({"no_leidos": 0})
         print("❌ Error chat_no_leidos:", repr(e))
@@ -1861,6 +1807,10 @@ async def legacy_admin_reset_session(request: Request):
     except Exception as e:
         print("❌ legacy_admin_reset_session:", repr(e))
         return JSONResponse({"error": "No se pudo reiniciar la sesión"}, status_code=500)
+# =========================
+# main.py — PARTE 5 / 5
+# (Calendario, Notificaciones, Presencia/Online, Auditoría de actividad + CSV)
+# =========================
 
 # =====================================================================
 # ========================== CALENDARIO (endpoints) ===================

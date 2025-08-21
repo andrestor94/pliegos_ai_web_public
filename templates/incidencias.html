@@ -207,24 +207,13 @@
             <td class="small campo-descripcion">{{ ticket.descripcion }}</td>
             <td><span class="badge bg-primary-subtle text-primary campo-tipo">{{ ticket.tipo }}</span></td>
             <td class="text-nowrap campo-fecha">{{ ticket.fecha_legible }}</td>
-            <td class="small campo-adjuntos">
-              {% set files = ticket.adjuntos or ticket.archivos %}
-              {% if files %}
-                <div class="chips">
-                  {% for file in files %}
-                    {% set name = (file|string).split('/')[-1].split('\\\\')[-1] %}
-                    <span class="chip">
-                      <i class="bi bi-paperclip"></i>
-                      <a href="/static/adjuntos_incidencias/{{ name }}" target="_blank" rel="noopener">
-                        {{ name }}
-                      </a>
-                    </span>
-                  {% endfor %}
-                </div>
-              {% else %}
-                <span class="text-muted">—</span>
-              {% endif %}
+
+            {# ——— Adjuntos: se pasan crudos y se renderizan en el front ——— #}
+            <td class="small campo-adjuntos"
+                data-adj='{{ (ticket.adjuntos or ticket.archivos) | tojson | safe }}'>
+              <span class="text-muted">—</span>
             </td>
+
             <td class="td-estado">
               {% if ticket.estado == 'Cerrado' %}
                 <span class="badge-state badge-cerrado">Cerrado</span>
@@ -292,6 +281,54 @@
   const $$ = (s,sc)=> Array.from((sc||document).querySelectorAll(s));
   const escHTML = s => (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function showToastSafe(t,b,icon){ if(window.showToast) showToast({title:t, body:b||'', icon:icon||'info'}); }
+
+  /* ====== Adjuntos: render robusto desde data-adj ====== */
+  function renderAdjuntos(){
+    document.querySelectorAll('#incTableBody tr .campo-adjuntos').forEach(cell=>{
+      let raw = cell.getAttribute('data-adj');
+      let val = null;
+      try { val = raw ? JSON.parse(raw) : null; } catch(_){ val = raw; }
+
+      // Soporta: array real, string JSON (p.ej. '["a","b"]'), string simple (una ruta)
+      let arr = [];
+      if (Array.isArray(val)) {
+        arr = val;
+      } else if (typeof val === 'string' && val.trim()) {
+        try {
+          const maybe = JSON.parse(val);
+          arr = Array.isArray(maybe) ? maybe : [val];
+        } catch(_) {
+          arr = [val];
+        }
+      }
+
+      if(!arr.length){
+        cell.innerHTML = '<span class="text-muted">—</span>';
+        return;
+      }
+
+      const wrap = document.createElement('div');
+      wrap.className = 'chips';
+
+      arr.forEach(url=>{
+        const s = String(url||'').trim();
+        if(!s) return;
+        const name = s.split(/[\\/]/).pop();  // basename
+        const href = (/^https?:\/\//i.test(s) || s.startsWith('/')) ? s : ('/static/adjuntos_incidencias/' + encodeURIComponent(name));
+
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.innerHTML = '<i class="bi bi-paperclip"></i> <a target="_blank" rel="noopener"></a>';
+        const a = chip.querySelector('a');
+        a.href = href;
+        a.textContent = name;
+        wrap.appendChild(chip);
+      });
+
+      cell.innerHTML = '';
+      cell.appendChild(wrap);
+    });
+  }
 
   /* ====== Form: contador y validación de adjuntos ====== */
   (function(){
@@ -488,35 +525,59 @@
     _apply();
   })();
 
-  /* ====== Delegación robusta: Cerrar / Eliminar por fetch con fallback ====== */
+  /* ====== Cerrar / Eliminar con fetch + fallback a submit ====== */
   (function(){
     const tbody = document.getElementById('incTableBody');
     if(!tbody) return;
 
     function busy(btn, on){
-      if(!btn) return; btn.disabled = !!on;
+      if(!btn) return;
+      btn.disabled = !!on;
       if(on){
         btn.dataset._html = btn.innerHTML;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>' + btn.textContent.trim();
-      }else if(btn.dataset._html){ btn.innerHTML = btn.dataset._html; }
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>' + (btn.textContent || '').trim();
+      }else if(btn.dataset._html){
+        btn.innerHTML = btn.dataset._html;
+        delete btn.dataset._html;
+      }
     }
 
     tbody.addEventListener('click', async (e)=>{
-      const btn = e.target.closest('form[action^="/incidencias/"] button[type="submit"]');
+      const btn = e.target.closest('button.action-cerrar, button.action-eliminar');
       if(!btn) return;
-      const form = btn.closest('form'); if(!form) return;
 
-      // Usamos fetch; si falla, dejamos pasar el submit normal.
-      e.preventDefault();
-      const action = form.getAttribute('action') || '';
+      const form = btn.closest('form[action^="/incidencias/"]');
+      if(!form) return;
+
+      e.preventDefault(); // intentamos vía fetch primero
+      const action = form.action || form.getAttribute('action') || '';
+      const method = (form.method || 'POST').toUpperCase();
       const isDelete = /\/eliminar\//.test(action);
       const tr = form.closest('tr');
 
       try{
         busy(btn, true);
-        const res = await fetch(action, { method:'POST' });
-        let data=null; try{ data = await res.clone().json(); }catch(_){ /* html/redirect */ }
-        if(!res.ok || (data && data.ok===false)) throw new Error((data&&data.error)||('HTTP '+res.status));
+        const headers = { 'X-Requested-With': 'fetch' };
+        // Si usás CSRF y lo exponés en base.html: <meta name="csrf-token" content="...">
+        const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
+        if(csrf) headers['X-CSRF-Token'] = csrf;
+
+        const res = await fetch(action, {
+          method,
+          credentials: 'same-origin',
+          headers
+        });
+
+        // Si el backend redirige después de operar, seguimos esa URL
+        if(res.redirected){
+          location.href = res.url;
+          return;
+        }
+
+        let data=null; try{ data = await res.clone().json(); }catch(_){}
+        if(!res.ok || (data && data.ok === false)){
+          throw new Error((data && data.error) || ('HTTP '+res.status));
+        }
 
         if(isDelete){
           tr?.remove();
@@ -525,20 +586,22 @@
           const estadoCell = tr?.querySelector('.td-estado');
           if(estadoCell){
             estadoCell.innerHTML = '<span class="badge-state badge-cerrado">Cerrado</span>';
-            // quitar botón Cerrar
-            form.remove();
           }
+          form.remove?.();
           showToastSafe('Incidencias', 'Incidencia cerrada', 'check2-circle');
         }
-        // Recalcular vista/paginación
-        applyFilters();
-      }catch(_err){
-        // Fallback: envío normal del form
+
+        applyFilters(); // recalcular vista/paginación
+      }catch(err){
+        // Plan B: envío normal del form
         try{ form.submit(); }catch(__){}
       }finally{
         busy(btn, false);
       }
-    });
+    }, false);
   })();
+
+  // Al cargar: pintar adjuntos.
+  document.addEventListener('DOMContentLoaded', renderAdjuntos);
 </script>
 {% endblock %}
