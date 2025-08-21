@@ -1807,6 +1807,82 @@ async def legacy_admin_reset_session(request: Request):
     except Exception as e:
         print("❌ legacy_admin_reset_session:", repr(e))
         return JSONResponse({"error": "No se pudo reiniciar la sesión"}, status_code=500)
+# ====== Incidencias (vista + API mínima) ======
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+
+@app.get("/incidencias", response_class=HTMLResponse)
+@app.get("/incidencias/", response_class=HTMLResponse)  # alias con barra final
+async def incidencias_view(request: Request):
+    if not request.session.get("usuario"):
+        return RedirectResponse("/login")
+    email = request.session.get("usuario")
+    rol = request.session.get("rol", "usuario")
+
+    # admin ve todo, usuario ve las suyas
+    rows = obtener_todos_los_tickets() if (rol == "admin" or es_admin(email)) else obtener_tickets_por_usuario(email)
+    # rows: (id, usuario, titulo, descripcion, tipo, estado, fecha)
+    tickets = []
+    for r in rows:
+        try:
+            fecha_leg = iso_utc_to_ar_str(r[6]) if r[6] else ""
+        except Exception:
+            try:
+                fecha_leg = datetime.strptime(r[6], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M")
+            except Exception:
+                fecha_leg = r[6] or ""
+        tickets.append({
+            "id": r[0], "usuario": r[1], "titulo": r[2], "descripcion": r[3],
+            "tipo": r[4], "estado": r[5], "fecha": r[6], "fecha_legible": fecha_leg
+        })
+
+    return templates.TemplateResponse("incidencias.html", {
+        "request": request,
+        "tickets": tickets,
+        "usuario_actual": {"nombre": request.session.get("nombre") or email, "rol": rol}
+    })
+
+@app.get("/api/incidencias")
+async def incidencias_list_json(request: Request):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+    email = request.session.get("usuario")
+    rol = request.session.get("rol", "usuario")
+    rows = obtener_todos_los_tickets() if (rol == "admin" or es_admin(email)) else obtener_tickets_por_usuario(email)
+    items = [{"id": r[0], "usuario": r[1], "titulo": r[2], "descripcion": r[3], "tipo": r[4], "estado": r[5], "fecha": r[6]} for r in rows]
+    return {"items": items}
+
+@app.post("/incidencias/crear")
+async def incidencias_crear(request: Request,
+                            titulo: str = Form(...),
+                            descripcion: str = Form(""),
+                            tipo: str = Form("General")):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error":"No autenticado"}, status_code=401)
+    usuario = request.session.get("usuario")
+    actor_user_id, ip = _actor_info(request)
+    crear_ticket(usuario, titulo, descripcion, tipo, actor_user_id=actor_user_id, ip=ip)
+    return ({"ok": True} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
+
+@app.post("/incidencias/cerrar")
+async def incidencias_cerrar(request: Request, id: int = Form(...)):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error":"No autenticado"}, status_code=401)
+    actor_user_id, ip = _actor_info(request)
+    actualizar_estado_ticket(id, "Resuelto", actor_user_id=actor_user_id, ip=ip)
+    return ({"ok": True} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
+
+@app.post("/incidencias/eliminar")
+async def incidencias_eliminar(request: Request, id: int = Form(...)):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error":"No autenticado"}, status_code=401)
+    actor_user_id, ip = _actor_info(request)
+    eliminar_ticket(id, actor_user_id=actor_user_id, ip=ip)
+    return ({"ok": True} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
+
+# (Opcional) diagnóstico de rutas
+@app.get("/__diag/routes")
+def _diag_routes():
+    return {"routes": sorted({getattr(r, "path", "") for r in app.routes})}
 # =========================
 # main.py — PARTE 5 / 5
 # (Calendario, Notificaciones, Presencia/Online, Auditoría de actividad + CSV)
