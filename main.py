@@ -1939,13 +1939,16 @@ def _validate_incid_ext(filename: str):
 async def incidencias_view(request: Request):
     if not request.session.get("usuario"):
         return RedirectResponse("/login")
+
     email = request.session.get("usuario")
     rol = request.session.get("rol", "usuario")
+
     # admin ve todo, usuario ve las suyas
     rows = obtener_todos_los_tickets() if (rol == "admin" or es_admin(email)) else obtener_tickets_por_usuario(email)
 
     tickets = []
     for r in rows:
+        # fecha legible robusta
         try:
             fecha_leg = iso_utc_to_ar_str(r[6]) if r[6] else ""
         except Exception:
@@ -1953,25 +1956,34 @@ async def incidencias_view(request: Request):
                 fecha_leg = datetime.strptime(r[6], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M")
             except Exception:
                 fecha_leg = r[6] or ""
-        t = {
-            "id": r[0], "usuario": r[1], "titulo": r[2], "descripcion": r[3],
-            "tipo": r[4], "estado": r[5], "fecha": r[6], "fecha_legible": fecha_leg
-        }
-        # 👉 adjuntos (compat + info)
-try:
-    _info = _incid_list_attachments(int(r[0]))
-    t["adjuntos_info"] = _info                # lista de dicts (nueva)
-    t["adjuntos"] = [x["filename"] for x in _info]  # lista de strings (compat con template viejo)
-except Exception:
-    t["adjuntos_info"] = []
-    t["adjuntos"] = []
-        tickets.append(t)
 
-    return templates.TemplateResponse("incidencias.html", {
-        "request": request,
-        "tickets": tickets,
-        "usuario_actual": {"nombre": request.session.get("nombre") or email, "rol": rol}
-    })
+        t = {
+            "id": r[0],
+            "usuario": r[1],
+            "titulo": r[2],
+            "descripcion": r[3],
+            "tipo": r[4],
+            "estado": r[5],
+            "fecha": r[6],
+            "fecha_legible": fecha_leg,
+        }
+
+        # 👉 adjuntos (no romper si el dir está vacío)
+        try:
+            t["adjuntos"] = _incid_list_attachments(int(r[0]))
+        except Exception:
+            t["adjuntos"] = []
+
+        tickets.append(t)  # ← este debía ir al mismo nivel que el try/except anterior
+
+    return templates.TemplateResponse(
+        "incidencias.html",
+        {
+            "request": request,
+            "tickets": tickets,
+            "usuario_actual": {"nombre": request.session.get("nombre") or email, "rol": rol},
+        },
+    )
 
 @app.get("/api/incidencias")
 async def incidencias_list_json(request: Request):
