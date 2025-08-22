@@ -5,29 +5,8 @@
   <!-- FullCalendar -->
   <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css" rel="stylesheet"/>
   <style>
-    .segmented .btn{ border-radius:999px; }
-    .segmented .btn.active{ background:var(--pill); border-color:var(--accent-a); color:var(--accent-a); }
-
-    /* ✅ asegura altura visible del calendario en todas las vistas */
-    #calMini{ min-height:360px; }
-    #calMini .fc .fc-view-harness{ min-height:420px !important; }
-
-    /* Compactado de la toolbar interna */
-    #calMini.calendar-compact .fc .fc-toolbar{ margin:8px 0 12px; }
-
-    /* ===== Historial paginación ===== */
-    .hist-toolbar{ gap:.5rem; flex-wrap:wrap; }
-    .hist-pager .btn{ min-width:36px; }
-    .hist-pager .btn[disabled]{ pointer-events:none; opacity:.6; }
-    .hist-empty{ color: var(--muted); padding: 10px 0; }
-    .hist-meta{ font-size:.9rem; color:var(--muted); }
-    .hist-item{ border-color: var(--border); }
-    .w-110{ width:110px; }
-    .spinner-sm{
-      width: 1.25rem; height:1.25rem; border:.2rem solid #ddd; border-top-color: var(--accent);
-      border-radius:50%; animation: spin 0.8s linear infinite; display:inline-block; vertical-align:middle;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    /* Todo lo de estilos principales vive en app.theme.css.
+       Dejamos este bloque vacío para evitar pisar tokens. */
   </style>
 {% endblock %}
 
@@ -81,11 +60,11 @@
 
         <div id="historial-meta" class="hist-meta mb-2"></div>
         <div id="historial-list"></div>
-
         <div id="historial-empty" class="hist-empty d-none">Sin análisis aún.</div>
 
         <div class="d-flex align-items-center justify-content-between mt-3">
-          <div id="historial-count" class="hist-meta"></div>
+          <!-- más visible con .pager-info (estilo en app.theme.css) -->
+          <div id="historial-count" class="hist-meta pager-info"></div>
           <div id="historial-pager" class="hist-pager btn-group"></div>
         </div>
       </div>
@@ -102,34 +81,20 @@
         <!-- Controles externos -->
         <div class="d-flex align-items-center gap-2 mt-2">
           <div class="segmented">
-            <button class="btn btn-sm btn-light active"
-                    type="button"
-                    data-cal-view="dayGridMonth"
-                    data-cal-target="#calMini">Mes</button>
-            <button class="btn btn-sm btn-light"
-                    type="button"
-                    data-cal-view="timeGridWeek"
-                    data-cal-target="#calMini">Semana</button>
-            <button class="btn btn-sm btn-light"
-                    type="button"
-                    data-cal-view="listWeek"
-                    data-cal-target="#calMini">Lista</button>
+            <button class="btn btn-sm btn-light active" type="button"
+                    data-cal-view="dayGridMonth" data-cal-target="#calMini">Mes</button>
+            <button class="btn btn-sm btn-light" type="button"
+                    data-cal-view="timeGridWeek" data-cal-target="#calMini">Semana</button>
+            <button class="btn btn-sm btn-light" type="button"
+                    data-cal-view="listWeek" data-cal-target="#calMini">Lista</button>
           </div>
           <div class="ms-auto d-flex align-items-center gap-2">
-            <button class="btn btn-sm btn-outline-secondary"
-                    type="button"
-                    aria-label="Anterior"
-                    data-cal-nav="prev"
-                    data-cal-target="#calMini"><i class="bi bi-chevron-left"></i></button>
-            <button class="btn btn-sm btn-outline-secondary"
-                    type="button"
-                    data-cal-nav="today"
-                    data-cal-target="#calMini">Hoy</button>
-            <button class="btn btn-sm btn-outline-secondary"
-                    type="button"
-                    aria-label="Siguiente"
-                    data-cal-nav="next"
-                    data-cal-target="#calMini"><i class="bi bi-chevron-right"></i></button>
+            <button class="btn btn-sm btn-outline-secondary" type="button" aria-label="Anterior"
+                    data-cal-nav="prev" data-cal-target="#calMini"><i class="bi bi-chevron-left"></i></button>
+            <button class="btn btn-sm btn-outline-secondary" type="button"
+                    data-cal-nav="today" data-cal-target="#calMini">Hoy</button>
+            <button class="btn btn-sm btn-outline-secondary" type="button" aria-label="Siguiente"
+                    data-cal-nav="next" data-cal-target="#calMini"><i class="bi bi-chevron-right"></i></button>
           </div>
         </div>
       </div>
@@ -293,11 +258,7 @@
     };
 
     function setLoading(loading){
-      if(loading){
-        els.meta.innerHTML = '<span class="spinner-sm"></span> Cargando historial...';
-      }else{
-        els.meta.innerHTML = '';
-      }
+      els.meta.innerHTML = loading ? '<span class="spinner-sm"></span> Cargando historial...' : '';
     }
 
     function fmtRange(p, per, total){
@@ -320,14 +281,17 @@
               <div class="text-muted small"><strong>🕓 Fecha:</strong> ${fecha} &nbsp; • &nbsp; <strong>👤 Usuario:</strong> ${entry.usuario}</div>
             </div>
             <div class="d-flex gap-2">
-              <a href="/descargar/${pdfName}" class="btn btn-sm btn-primary"><i class="bi bi-download me-1"></i> PDF</a>
-              <button class="btn btn-sm btn-outline-danger" data-ts="${entry.timestamp}"><i class="bi bi-trash me-1"></i> Eliminar</button>
+              <a href="/descargar/${pdfName}" class="btn btn-compact btn-ghost-primary btn-pill" aria-label="Descargar PDF">
+                <i class="bi bi-file-earmark-pdf me-1"></i> PDF
+              </a>
+              <button class="btn btn-compact btn-ghost-danger btn-pill" data-ts="${entry.timestamp}">
+                <i class="bi bi-trash me-1"></i> Eliminar
+              </button>
             </div>
           </div>`;
-        const btn = div.querySelector('button.btn-outline-danger');
+        const btn = div.querySelector('button.btn-ghost-danger');
         btn.onclick = async ()=>{
           await fetch(`/eliminar/${entry.timestamp}`, { method:'DELETE' });
-          // si la página queda vacía, retrocede una página
           if(els.list.childElementCount === 1 && page>1){ page--; }
           await load();
         };
@@ -351,10 +315,8 @@
         return b;
       };
 
-      // Prev
       els.pager.appendChild(mkBtn('‹', p<=1, ()=>{ page--; load(); }, 'Anterior'));
 
-      // Números (ventana deslizante)
       const windowSize = 5;
       const start = Math.max(1, p - Math.floor(windowSize/2));
       const end = Math.min(totalPages, start + windowSize - 1);
@@ -364,7 +326,6 @@
         els.pager.appendChild(b);
       }
 
-      // Next
       els.pager.appendChild(mkBtn('›', p>=totalPages, ()=>{ page++; load(); }, 'Siguiente'));
     }
 
@@ -418,7 +379,6 @@
       }, 300);
     });
 
-    // Exponer API mínima
     return { load, setPage: (p)=>{ page=p; load(); } };
   })();
 

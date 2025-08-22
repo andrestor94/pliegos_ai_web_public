@@ -123,6 +123,7 @@ img, video, canvas, iframe{ max-width:100%; height:auto; }
 /* Enlaces */
 a{ color: var(--bs-link-color); text-decoration: none; }
 a:hover{ color: var(--bs-link-hover-color); text-decoration: underline; }
+a.btn:hover{ text-decoration: none; } /* no subrayar botones */
 
 /* ---------- Topbar (sticky) ---------- */
 .app-topbar{
@@ -236,6 +237,15 @@ html[data-theme="dark"] .cardx .title{ color:#e8f0ff; }
 .btn-outline-primary:hover{ color:#fff; background: var(--brand-500); border-color: var(--brand-500); }
 .btn-outline-secondary{ color: var(--brand-300); border-color: var(--brand-300); }
 .btn-outline-secondary:hover{ color:#fff; background: var(--brand-300); border-color: var(--brand-300); }
+
+/* Compact actions (PDF / Eliminar) */
+.btn-compact{ padding:.32rem .6rem; font-size:.9rem; line-height:1.1; border-radius:12px; }
+.btn-pill{ border-radius:999px !important; }
+.btn-ghost-primary{ background:transparent; border:1px solid var(--border); color:var(--brand-500); }
+.btn-ghost-primary:hover{ background:rgba(4,67,106,.08); border-color:var(--brand-500); }
+.btn-ghost-danger{ background:transparent; border:1px solid var(--border); color:#b02a37; }
+.btn-ghost-danger:hover{ background:rgba(220,53,69,.08); border-color:#dc3545; color:#a52834; }
+.btn-compact i{ font-size:1rem; line-height:1; }
 
 /* ---------- Badges / Chips ---------- */
 .badge, .chip{
@@ -653,10 +663,12 @@ body[data-route*="usuario"] :is(.user-email,.email,.meta,.user-meta,.session-met
   opacity: 1 !important;
 }
 
-/* Notificaciones: vacíos/footers tipo “No hay más resultados” */
-body[data-route*="notif"] :is(.empty,.empty-state,.no-results,.no-more, .list-footer, .footer-note){
+/* Notificaciones (vista): refuerzo de contraste */
+body[data-route^="/notificaciones"] :is(.text-muted,.opacity-25,.opacity-50,.opacity-75,.small,.caption,
+  .empty,.empty-state,.no-results,.no-more,.list-footer,.footer-note){
   color: var(--text-2) !important;
   opacity: 1 !important;
+  font-weight:600;
 }
 
 /* Mantener apariencia realmente deshabilitada */
@@ -765,3 +777,13 @@ body[data-route*="presence"] :is([class*="meta"],[class*="session"],[class*="ua"
   display:inline-block; vertical-align:middle;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* =========================================================
+   ======== HISTORIAL: pie/paginador legible (NUEVO) =======
+   ========================================================= */
+#historial .pager-info,
+#historial .pager-info *{
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+  font-weight:600;
+}
