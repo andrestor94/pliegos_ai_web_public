@@ -648,6 +648,55 @@ body[data-route*="notif"] :is(.empty,.empty-state,.no-results,.no-more, .list-fo
 }
 
 /* =========================================================
+   ======== NEUTRALIZADOR DE TOKENS POR RUTA (clave) =======
+   == Evita que CSS de otras vistas pise :root y lave texto ==
+   ========================================================= */
+
+/* Chat interno */
+body[data-route^="/chat"]{
+  /* forzamos tokens de texto y su alias --ink usados por el CSS de /chat */
+  --text:#0c2535;
+  --ink:#0c2535;
+  --text-2:#2b3e4f;
+  --input-placeholder:#415566;
+  --icon:#3d4e5c;
+}
+html[data-theme="dark"] body[data-route^="/chat"]{
+  --text:#ECF2F8;
+  --ink:#ECF2F8;
+  --text-2:#C5D0DC;
+  --input-placeholder:#C5D0DC;
+  --icon:#D0DAE6;
+}
+
+/* Usuarios conectados / presencia */
+body[data-route*="usuarios"],
+body[data-route*="presence"],
+body[data-route*="presencia"]{
+  --text:#0c2535;
+  --ink:#0c2535;
+  --text-2:#2b3e4f;
+  --input-placeholder:#415566;
+  --icon:#3d4e5c;
+}
+html[data-theme="dark"] body[data-route*="usuarios"],
+html[data-theme="dark"] body[data-route*="presence"],
+html[data-theme="dark"] body[data-route*="presencia"]{
+  --text:#ECF2F8;
+  --ink:#ECF2F8;
+  --text-2:#C5D0DC;
+  --input-placeholder:#C5D0DC;
+  --icon:#D0DAE6;
+}
+
+/* Refuerzo final en /chat y /usuarios por si quedan utilidades con opacidad */
+body[data-route^="/chat"] :is(.conversations, .chat-body, .chat-header, .composer, .msg, .empty-state, .hint, .small, small, .text-muted, .text-secondary, .text-white-50, .opacity-25, .opacity-50, .opacity-75),
+body[data-route*="usuarios"] :is(.list-group-item, .card, .user-email, .email, .ua, .ip, .meta, .session-meta, .small, small, .text-muted, .text-secondary, .text-white-50, .opacity-25, .opacity-50, .opacity-75){
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+}
+
+/* =========================================================
    ======== LEGIBILIDAD EXTRA v4 — Ajuste fino final =======
    ========================================================= */
 
