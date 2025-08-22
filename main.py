@@ -9,6 +9,7 @@ import uuid
 import asyncio
 import re
 import json
+from math import ceil
 from typing import List, Optional, Dict, Set
 
 from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Body, WebSocket, WebSocketDisconnect, Depends, status, Query
@@ -519,14 +520,94 @@ async def chat_config():
     }
 
 
+# ========= Helpers para HISTORIAL en home (paginado) =========
+def _paginate(items: List[dict], page: int, per_page: int):
+    per_page = max(1, min(int(per_page or 10), 100))
+    page = max(1, int(page or 1))
+    total = len(items)
+    total_pages = max(1, ceil(total / per_page))
+    if page > total_pages:
+        page = total_pages
+    start = (page - 1) * per_page
+    return items[start:start + per_page], page, per_page, total_pages, total
+
+def _historial_para_home(email: str, rol: str, q: str = "") -> List[dict]:
+    """
+    Devuelve el historial (dicts) filtrado para el usuario/rol y ordenado DESC por fecha/timestamp.
+    """
+    try:
+        data = obtener_historial_completo() or []
+    except Exception:
+        data = []
+
+    # Filtrar por rol: admin ve todo, usuario solo lo suyo
+    if (rol or "").lower() != "admin" and not es_admin(email):
+        data = [h for h in data if (h.get("usuario") or "").lower() == (email or "").lower()]
+
+    # Normalizar y ordenar
+    def _sort_key(h):
+        # intenta por 'fecha' (ISO) y si no por 'timestamp' (YYYYMMDDHHMMSS)
+        dt = _parse_dt_utc(h.get("fecha"))
+        if not dt:
+            ts = (h.get("timestamp") or "")[:14]
+            try:
+                dt = datetime.strptime(ts, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+            except Exception:
+                dt = datetime.min.replace(tzinfo=timezone.utc)
+        return dt
+
+    data.sort(key=_sort_key, reverse=True)
+
+    # Búsqueda simple
+    ql = (q or "").strip().lower()
+    if ql:
+        def _match(h):
+            corpus = " ".join([
+                str(h.get("nombre_archivo") or ""),
+                str(h.get("usuario") or ""),
+                str(h.get("resumen") or ""),
+                str(h.get("ruta_pdf") or ""),
+            ]).lower()
+            return ql in corpus
+        data = [h for h in data if _match(h)]
+
+    # Añadir 'fecha_legible' para comodidad del template
+    for h in data:
+        try:
+            h["fecha_legible"] = iso_utc_to_ar_str(h.get("fecha"))
+        except Exception:
+            pass
+    return data
+
+
 # ================== Rutas base ==================
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
+async def home(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=10, ge=1, le=100),
+    q: str = Query(default="")
+):
     if not request.session.get("usuario"):
         return RedirectResponse("/login")
+
+    email = request.session.get("usuario")
+    rol = request.session.get("rol", "usuario")
+
+    # Historial con filtros del querystring
+    hist = _historial_para_home(email=email, rol=rol, q=q)
+    items, page, per_page, total_pages, total_items = _paginate(hist, page, per_page)
+
     return templates.TemplateResponse("index.html", {
         "request": request,
-        "rol": request.session.get("rol", "usuario")
+        "rol": rol,
+        # ↙️ variables nuevas para la paginación del historial
+        "historial_items": items,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+        "total_items": total_items,
+        "q": q,
     })
 
 @app.get("/login", response_class=HTMLResponse)
@@ -1023,8 +1104,33 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
 
 # ================== Historial ==================
 @app.get("/historial")
-async def ver_historial():
-    return JSONResponse(obtener_historial())
+async def ver_historial(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=20, ge=1, le=100),
+    q: str = Query(default="")
+):
+    """
+    Devuelve el historial paginado en JSON (filtrado por usuario/rol).
+    Útil para futuras mejoras de UI (carga perezosa, búsqueda, etc.).
+    """
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+
+    email = request.session.get("usuario")
+    rol = request.session.get("rol", "usuario")
+
+    data = _historial_para_home(email=email, rol=rol, q=q)
+    items, page, per_page, total_pages, total_items = _paginate(data, page, per_page)
+
+    return {
+        "items": items,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+        "total_items": total_items,
+        "q": q
+    }
 
 @app.get("/historia")
 async def alias_historia():
@@ -1041,15 +1147,18 @@ async def descargar_pdf(archivo: str):
     archivo = os.path.basename(archivo)
     ruta = os.path.join("generated_pdfs", archivo)
     if os.path.exists(ruta) and os.path.isfile(ruta):
-        return FileResponse(ruta, media_type='application/pdf', filename=archivo)
-    return {"error": "Archivo no encontrado"}
+        return FileResponse(ruta, media_type="application/pdf", filename=archivo)
+    return JSONResponse({"error": "Archivo no encontrado"}, status_code=404)
 
 @app.delete("/eliminar/{timestamp}")
 async def eliminar_archivo(timestamp: str):
     eliminar_del_historial(timestamp)
     ruta = os.path.join("generated_pdfs", f"resumen_{os.path.basename(timestamp)}.pdf")
     if os.path.exists(ruta):
-        os.remove(ruta)
+        try:
+            os.remove(ruta)
+        except Exception:
+            pass
     return {"mensaje": "Eliminado correctamente"}
 
 
@@ -1420,7 +1529,7 @@ async def chat_enviar_archivos(
         written = await _save_upload_stream(archivo, path)
         total_bytes += written
 
-        # ✅ FIX: usar el límite del chat (antes comparaba con INCID_MAX_TOTAL_MB por error)
+        # ✅ Límite correcto del chat
         if (total_bytes / (1024 * 1024)) > CHAT_MAX_TOTAL_MB:
             try:
                 os.remove(path)
@@ -1857,7 +1966,7 @@ async def legacy_admin_reset_session(request: Request):
 def _incid_list_attachments(ticket_id: int):
     """
     Devuelve los adjuntos del ticket como lista de dicts.
-    Cada item incluye una URL estática directa (compat) y la URL protegida.
+    Incluye una URL estática directa y una protegida (download_url).
     """
     prefix = f"{int(ticket_id)}_"
     out = []
@@ -1868,12 +1977,15 @@ def _incid_list_attachments(ticket_id: int):
         if not os.path.isfile(path):
             continue
         size = os.path.getsize(path)
+        # Ruta estática real según INCID_ATTACH_DIR
+        static_url = "/" + INCID_ATTACH_DIR.replace(os.sep, "/") + "/" + name
+        # Compatibilidad histórica con /static/adjuntos_incidencias/
+        compat_url = f"/static/adjuntos_incidencias/{name}"
         out.append({
             "filename": name,
             "size": size,
-            # Compat: el front históricamente arma /static/adjuntos_incidencias/<name>
-            "url": f"/static/adjuntos_incidencias/{name}",
-            # Alternativa con control: valida ticket/filename
+            "url": static_url,
+            "compat_url": compat_url,
             "download_url": f"/incidencias/adjunto/{ticket_id}/{name}",
         })
     return out
@@ -1918,7 +2030,6 @@ def _infer_ticket_id(usuario: str, titulo: str, descripcion: str, tipo: str, ref
 
 # ---- Incidencias: asegurar config por si falta Parte 1 (robustez) ----
 if 'INCID_ATTACH_DIR' not in globals():
-    # 💡 Compat con el front: usa /static/adjuntos_incidencias
     INCID_ATTACH_DIR = os.path.join("static", "adjuntos_incidencias")
 os.makedirs(INCID_ATTACH_DIR, exist_ok=True)
 
@@ -1968,13 +2079,13 @@ async def incidencias_view(request: Request):
             "fecha_legible": fecha_leg,
         }
 
-        # 👉 adjuntos (no romper si el dir está vacío)
+        # Adjuntos
         try:
             t["adjuntos"] = _incid_list_attachments(int(r[0]))
         except Exception:
             t["adjuntos"] = []
 
-        tickets.append(t)  # ← este debía ir al mismo nivel que el try/except anterior
+        tickets.append(t)
 
     return templates.TemplateResponse(
         "incidencias.html",
@@ -1998,7 +2109,7 @@ async def incidencias_list_json(request: Request):
             "id": r[0], "usuario": r[1], "titulo": r[2], "descripcion": r[3],
             "tipo": r[4], "estado": r[5], "fecha": r[6],
             "adjuntos_info": _incid_list_attachments(int(r[0])),
-"adjuntos": [x["filename"] for x in _incid_list_attachments(int(r[0]))],
+            "adjuntos": [x["filename"] for x in _incid_list_attachments(int(r[0]))],
         })
     return {"items": items}
 
@@ -2008,7 +2119,7 @@ async def incidencias_crear(
     titulo: str = Form(...),
     descripcion: str = Form(""),
     tipo: str = Form("General"),
-    archivos: List[UploadFile] = File(default=[])  # 👈 opcional, múltiples
+    archivos: List[UploadFile] = File(default=[])  # opcional, múltiples
 ):
     if not request.session.get("usuario"):
         return JSONResponse({"error":"No autenticado"}, status_code=401)

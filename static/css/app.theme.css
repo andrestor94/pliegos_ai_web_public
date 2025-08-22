@@ -167,6 +167,17 @@ a:hover{ color: var(--bs-link-hover-color); text-decoration: underline; }
 .card-clean .card-header{ background:linear-gradient(180deg, rgba(4,67,106,.06), rgba(4,67,106,0)); border-bottom:1px solid var(--border); }
 .card-clean .card-body{ padding:1rem 1.25rem; }
 
+/* NUEVO: contenedor base usado en el panel (index.html) */
+.cardx{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow-sm);
+  padding:1rem 1.25rem;
+}
+.cardx .title{ font-weight:800; color:var(--brand-700); }
+html[data-theme="dark"] .cardx .title{ color:#e8f0ff; }
+
 /* ---------- Segmented control ---------- */
 .segmented{ display:inline-flex; background:var(--muted); border-radius:999px; padding:4px; gap:4px; border:1px solid var(--border); }
 .segmented .btn{ border-radius:999px; font-weight:600; }
@@ -284,6 +295,11 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
 .fc .fc-button{ border-radius:999px; border-color:var(--border); background:var(--surface); color:var(--text); }
 .fc .fc-button-primary:not(:disabled).fc-button-active{ background:var(--brand-500); border-color:var(--brand-500); }
 
+/* NUEVO: mini-calendario compacto reutilizable */
+.calendar-compact{ min-height:360px; }
+.calendar-compact .fc .fc-view-harness{ min-height:420px !important; }
+.calendar-card .segmented .btn.active{ background:var(--pill); border-color:var(--brand-300); color:var(--brand-300); }
+
 /* ---------- Utilities ---------- */
 .hero-title{
   font-size:clamp(1.6rem, 1.2rem + 1.2vw, 2rem);
@@ -293,6 +309,7 @@ html[data-theme="dark"] .table thead{ background:#0f172a; }
 .help-text{ color:var(--text-2); font-size:.925rem; }
 .shadow-hover{ transition: box-shadow .18s cubic-bezier(0.22,1,0.36,1), transform .18s; }
 .shadow-hover:hover{ box-shadow:var(--shadow-md); transform: translateY(-2px); }
+.w-110{ width:110px; } /* NUEVO: usado por selector "por página" */
 
 /* Utilidades de marca */
 .text-brand{ color: var(--brand-500) !important; }
@@ -727,3 +744,24 @@ body[data-route*="presence"] :is([class*="meta"],[class*="session"],[class*="ua"
   opacity: 1 !important;
   font-weight: 600;
 }
+
+/* =========================================================
+   ======== HISTORIAL: paginación & estados (NUEVO) ========
+   ========================================================= */
+.hist-toolbar{ gap:.5rem; flex-wrap:wrap; }
+.hist-meta{ font-size:.9rem; color:var(--text-2); }
+.hist-empty{ color: var(--text-2); padding: 10px 0; }
+.hist-item{ border:1px solid var(--border); border-radius:16px; background:var(--surface); }
+.hist-pager .btn{ min-width:36px; }
+.hist-pager .btn[disabled]{ pointer-events:none; opacity:.6; }
+
+/* spinner pequeño accesible */
+.spinner-sm{
+  width: 1.25rem; height:1.25rem;
+  border:.2rem solid #ddd;
+  border-top-color: rgba(var(--ring-color), 1);
+  border-radius:50%;
+  animation: spin .8s linear infinite;
+  display:inline-block; vertical-align:middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

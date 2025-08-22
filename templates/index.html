@@ -14,6 +14,20 @@
 
     /* Compactado de la toolbar interna */
     #calMini.calendar-compact .fc .fc-toolbar{ margin:8px 0 12px; }
+
+    /* ===== Historial paginación ===== */
+    .hist-toolbar{ gap:.5rem; flex-wrap:wrap; }
+    .hist-pager .btn{ min-width:36px; }
+    .hist-pager .btn[disabled]{ pointer-events:none; opacity:.6; }
+    .hist-empty{ color: var(--muted); padding: 10px 0; }
+    .hist-meta{ font-size:.9rem; color:var(--muted); }
+    .hist-item{ border-color: var(--border); }
+    .w-110{ width:110px; }
+    .spinner-sm{
+      width: 1.25rem; height:1.25rem; border:.2rem solid #ddd; border-top-color: var(--accent);
+      border-radius:50%; animation: spin 0.8s linear infinite; display:inline-block; vertical-align:middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 {% endblock %}
 
@@ -52,11 +66,28 @@
     <!-- 2) Historial -->
     <div class="col-12" id="historial">
       <div class="cardx">
-        <div class="d-flex align-items-center justify-content-between mb-2">
-          <div class="title"><i class="bi bi-clock-history me-2"></i> Historial de análisis</div>
-          <input type="text" id="search-input" class="form-control form-control-sm" placeholder="Buscar en el historial..." style="max-width:260px"/>
+        <div class="d-flex align-items-center justify-content-between mb-2 hist-toolbar">
+          <div class="title mb-0"><i class="bi bi-clock-history me-2"></i> Historial de análisis</div>
+          <div class="d-flex align-items-center ms-auto gap-2">
+            <input type="text" id="search-input" class="form-control form-control-sm" placeholder="Buscar en el historial..." style="max-width:260px"/>
+            <select id="per-page" class="form-select form-select-sm w-110" title="Ítems por página">
+              <option value="10">10 / pág</option>
+              <option value="20" selected>20 / pág</option>
+              <option value="50">50 / pág</option>
+              <option value="100">100 / pág</option>
+            </select>
+          </div>
         </div>
+
+        <div id="historial-meta" class="hist-meta mb-2"></div>
         <div id="historial-list"></div>
+
+        <div id="historial-empty" class="hist-empty d-none">Sin análisis aún.</div>
+
+        <div class="d-flex align-items-center justify-content-between mt-3">
+          <div id="historial-count" class="hist-meta"></div>
+          <div id="historial-pager" class="hist-pager btn-group"></div>
+        </div>
       </div>
     </div>
 
@@ -181,11 +212,10 @@
     });
     calendar.render();
 
-    // 👇 Exponer instancia para que los botones externos funcionen (manejador global en base.html)
+    // Exponer instancia para que los botones externos funcionen
     el.__fcCalendar = calendar;
-    window.MiniCalendar = calendar; // opcional: debug
+    window.MiniCalendar = calendar;
 
-    // fuerza recálculo inicial y en cambios de tamaño
     setTimeout(()=>{ try{ calendar.updateSize(); }catch(_){} }, 80);
     window.addEventListener('resize', ()=>{ try{ calendar.updateSize(); }catch(_){} });
   })();
@@ -226,7 +256,7 @@
     if(r.ok){
       resumenGlobal=j.resumen; ultimoPDF=j.pdf;
       document.getElementById("result").innerHTML = `<div class="alert alert-success"><strong>✅ Análisis completo.</strong><br><br>${resumenGlobal}</div>`;
-      await loadHistorial();
+      await Historial.load(); // recarga la página actual con los nuevos datos
       document.getElementById('historial')?.scrollIntoView({behavior:'smooth', block:'start'});
     }else{
       document.getElementById("result").innerHTML = `<div class="alert alert-danger">❌ ${j.error||'No se pudo analizar.'}</div>`;
@@ -241,49 +271,156 @@
     window.location.href = `/descargar/${ultimoPDF}`;
   });
 
-  async function loadHistorial(){
-    const r = await fetch("/historial");
-    const hist = await r.json();
-    const cont = document.getElementById("historial-list");
-    cont.innerHTML="";
-    if(!Array.isArray(hist) || !hist.length){
-      cont.innerHTML = '<div class="text-muted">Sin análisis aún.</div>';
-      return;
-    }
-    hist.forEach(entry=>{
-      const fecha=entry.fecha_legible || entry.fecha || "—";
-      const pdfName = (entry.ruta_pdf||'').split('/').pop() || entry.nombre_archivo || '';
-      const div=document.createElement("div");
-      div.className="mb-3 p-3 border rounded-3";
-      div.style.borderColor="var(--border)";
-      div.innerHTML = `
-        <div><strong>📄 Archivo:</strong> ${entry.nombre_archivo}</div>
-        <div><strong>🕓 Fecha:</strong> ${fecha}</div>
-        <div><strong>👤 Usuario:</strong> ${entry.usuario}</div>
-        <div class="d-flex gap-2 mt-2">
-          <a href="/descargar/${pdfName}" class="btn btn-sm btn-primary">Descargar PDF</a>
-          <button class="btn btn-sm btn-outline-danger" onclick="eliminarHist('${entry.timestamp}')">Eliminar</button>
-        </div>`;
-      cont.appendChild(div);
-    });
-  }
-  async function eliminarHist(ts){
-    await fetch(`/eliminar/${ts}`,{method:"DELETE"});
-    await loadHistorial();
-  }
   function limpiar(){
     archivosSeleccionados=[]; document.getElementById("lista-archivos").innerHTML="";
     document.getElementById("result").innerHTML=""; resumenGlobal=""; ultimoPDF="";
   }
 
-  // Buscador en historial
-  document.addEventListener("input", (e)=>{
-    if(e.target?.id!=="search-input") return;
-    const q=e.target.value.toLowerCase();
-    document.querySelectorAll("#historial-list > div").forEach(node=>{
-      node.style.display = node.textContent.toLowerCase().includes(q) ? "" : "none";
+  // ===== Historial (server-side pagination) =====
+  const Historial = (function(){
+    let page = 1;
+    let perPage = parseInt(document.getElementById('per-page').value, 10) || 20;
+    let q = "";
+
+    const els = {
+      list: document.getElementById('historial-list'),
+      empty: document.getElementById('historial-empty'),
+      pager: document.getElementById('historial-pager'),
+      count: document.getElementById('historial-count'),
+      meta: document.getElementById('historial-meta'),
+      per: document.getElementById('per-page'),
+      search: document.getElementById('search-input'),
+    };
+
+    function setLoading(loading){
+      if(loading){
+        els.meta.innerHTML = '<span class="spinner-sm"></span> Cargando historial...';
+      }else{
+        els.meta.innerHTML = '';
+      }
+    }
+
+    function fmtRange(p, per, total){
+      const start = total ? ((p-1)*per + 1) : 0;
+      const end = Math.min(p*per, total);
+      return `${start}–${end} de ${total}`;
+    }
+
+    function renderItems(items){
+      els.list.innerHTML = "";
+      items.forEach(entry=>{
+        const fecha=entry.fecha_legible || entry.fecha || "—";
+        const pdfName = (entry.ruta_pdf||'').split('/').pop() || entry.nombre_archivo || '';
+        const div=document.createElement("div");
+        div.className="mb-3 p-3 border rounded-3 hist-item";
+        div.innerHTML = `
+          <div class="d-flex flex-wrap justify-content-between gap-2">
+            <div>
+              <div><strong>📄 Archivo:</strong> ${entry.nombre_archivo}</div>
+              <div class="text-muted small"><strong>🕓 Fecha:</strong> ${fecha} &nbsp; • &nbsp; <strong>👤 Usuario:</strong> ${entry.usuario}</div>
+            </div>
+            <div class="d-flex gap-2">
+              <a href="/descargar/${pdfName}" class="btn btn-sm btn-primary"><i class="bi bi-download me-1"></i> PDF</a>
+              <button class="btn btn-sm btn-outline-danger" data-ts="${entry.timestamp}"><i class="bi bi-trash me-1"></i> Eliminar</button>
+            </div>
+          </div>`;
+        const btn = div.querySelector('button.btn-outline-danger');
+        btn.onclick = async ()=>{
+          await fetch(`/eliminar/${entry.timestamp}`, { method:'DELETE' });
+          // si la página queda vacía, retrocede una página
+          if(els.list.childElementCount === 1 && page>1){ page--; }
+          await load();
+        };
+        els.list.appendChild(div);
+      });
+    }
+
+    function renderPager(totalPages){
+      const p = page;
+      els.pager.innerHTML = "";
+      if(totalPages<=1) return;
+
+      const mkBtn = (label, disabled, onClick, aria) => {
+        const b = document.createElement('button');
+        b.type='button';
+        b.className='btn btn-sm btn-light';
+        b.textContent=label;
+        if(aria) b.setAttribute('aria-label', aria);
+        if(disabled) b.setAttribute('disabled','disabled');
+        if(onClick) b.addEventListener('click', onClick);
+        return b;
+      };
+
+      // Prev
+      els.pager.appendChild(mkBtn('‹', p<=1, ()=>{ page--; load(); }, 'Anterior'));
+
+      // Números (ventana deslizante)
+      const windowSize = 5;
+      const start = Math.max(1, p - Math.floor(windowSize/2));
+      const end = Math.min(totalPages, start + windowSize - 1);
+      for(let i = start; i<=end; i++){
+        const b = mkBtn(String(i), false, ()=>{ page = i; load(); });
+        if(i===p){ b.classList.add('active'); b.classList.remove('btn-light'); b.classList.add('btn-primary'); }
+        els.pager.appendChild(b);
+      }
+
+      // Next
+      els.pager.appendChild(mkBtn('›', p>=totalPages, ()=>{ page++; load(); }, 'Siguiente'));
+    }
+
+    async function load(){
+      setLoading(true);
+      els.empty.classList.add('d-none');
+      els.list.innerHTML="";
+
+      const params = new URLSearchParams({ page:String(page), per_page:String(perPage) });
+      if(q && q.trim()) params.set('q', q.trim());
+
+      try{
+        const r = await fetch(`/historial?${params.toString()}`);
+        const j = await r.json();
+        const items = Array.isArray(j.items) ? j.items : (Array.isArray(j) ? j : []);
+        const totalPages = j.total_pages || 1;
+        const totalItems = j.total_items ?? items.length;
+
+        if(!items.length){
+          els.empty.classList.remove('d-none');
+        }else{
+          renderItems(items);
+        }
+        els.count.textContent = fmtRange(j.page||1, j.per_page||perPage, totalItems);
+        renderPager(totalPages);
+      }catch(e){
+        els.empty.classList.remove('d-none');
+        els.count.textContent = "";
+        els.pager.innerHTML="";
+      }finally{
+        setLoading(false);
+      }
+    }
+
+    // Eventos UI
+    els.per.addEventListener('change', ()=>{
+      perPage = parseInt(els.per.value,10) || 20;
+      page = 1;
+      load();
     });
-  });
+
+    // Búsqueda con debounce
+    let t=null;
+    els.search.addEventListener('input', ()=>{
+      const val = els.search.value || "";
+      if(t) clearTimeout(t);
+      t = setTimeout(()=>{
+        q = val;
+        page = 1;
+        load();
+      }, 300);
+    });
+
+    // Exponer API mínima
+    return { load, setPage: (p)=>{ page=p; load(); } };
+  })();
 
   // Scroll por hash / query
   function scrollByAnchorOrQuery(){
@@ -314,10 +451,9 @@
     }catch(_){}
   })();
 
-  window.addEventListener('load', ()=>{
-    loadHistorial();
+  window.addEventListener('load', async ()=>{
+    await Historial.load();
     scrollByAnchorOrQuery();
-    // por si el CSS tarda en aplicar alturas, recalcula calendario
     setTimeout(()=>{ try{ calendar && calendar.updateSize(); }catch(_){} }, 200);
   });
 </script>
