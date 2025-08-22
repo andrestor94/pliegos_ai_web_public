@@ -280,10 +280,9 @@
               <div><strong>📄 Archivo:</strong> ${entry.nombre_archivo}</div>
               <div class="text-muted small"><strong>🕓 Fecha:</strong> ${fecha} &nbsp; • &nbsp; <strong>👤 Usuario:</strong> ${entry.usuario}</div>
             </div>
-            <div class="d-flex gap-2">
-              <a href="/descargar/${pdfName}" class="btn btn-compact btn-ghost-primary btn-pill" aria-label="Descargar PDF">
-                <i class="bi bi-file-earmark-pdf me-1"></i> PDF
-              </a>
+            <div class="d-flex gap-2 align-items-center">
+              <!-- Botón PDF centrado en círculo -->
+              <a href="/descargar/${pdfName}" class="btn btn-outline-primary btn-circle btn-sm" aria-label="Descargar PDF">PDF</a>
               <button class="btn btn-compact btn-ghost-danger btn-pill" data-ts="${entry.timestamp}">
                 <i class="bi bi-trash me-1"></i> Eliminar
               </button>

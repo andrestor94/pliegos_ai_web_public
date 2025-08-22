@@ -787,3 +787,40 @@ body[data-route*="presence"] :is([class*="meta"],[class*="session"],[class*="ua"
   opacity: 1 !important;
   font-weight:600;
 }
+/* ===== FIX 1: botón PDF centrado en su “círculo” ===== */
+.btn-circle{
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;               /* evita que el texto quede “alto” */
+  font-weight: 700;
+}
+.btn-circle.btn-sm{ width: 40px; height: 40px; font-size: .85rem; }
+
+/* Si ya usás botones compactos, también alineamos esos */
+.btn-chip-circle,
+.btn-ghost-compact{
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  line-height: 1 !important;
+}
+
+/* ===== FIX 2: legibilidad en NOTIFICACIONES (vacíos / pie) ===== */
+body[data-route*="notific"] :is(.empty,.empty-state,.no-results,.no-more,
+  .list-footer,.footer-note,.table-empty,.no-data,[class*="empty"],[class*="no-"]){
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+  font-weight: 600;
+}
+/* Por si viene dentro de tabla/pie */
+body[data-route*="notific"] table tfoot td{
+  color: var(--text-2) !important;
+  opacity: 1 !important;
+  font-weight: 600;
+}
+
