@@ -62,26 +62,22 @@
   .chat-chip-file button{ border:none; background:transparent; line-height:1; font-size:14px; }
   .chat-chip-thumb{ width:26px; height:26px; border-radius:6px; object-fit:cover; background:#fff; border:1px solid var(--border); }
 
-  /* Tips / estados */
   .tip { font-size:12px; color:var(--text-2); }
   .status-dot{ width:10px; height:10px; border-radius:999px; display:inline-block; margin-right:6px; background:#22c55e; }
   .status-off{ background:#94a3b8; }
 
-  /* Toasts */
   .toast-area{ position:fixed; right:16px; bottom:16px; z-index: 3000; display:flex; flex-direction:column; gap:10px; }
   .toast{ background:#111827; color:#fff; padding:10px 12px; border-radius:12px; box-shadow: var(--shadow); min-width: 220px; max-width: 340px; }
   .toast .t{ font-weight:600; margin-bottom:4px; }
   .toast .x{ float:right; border:none; background:transparent; color:#fff; opacity:.7; }
   .toast .x:hover{ opacity:1; }
 
-  /* Toggle sonido */
   .sound-wrap{ display:flex; align-items:center; gap:8px; }
   .sound-toggle{ display:inline-flex; align-items:center; gap:6px; cursor:pointer; user-select:none; }
   .sound-toggle input{ accent-color: var(--brand); cursor:pointer; }
   .sound-vol{ width:120px; height:6px; }
   @media (max-width: 480px){ .sound-vol{ width:80px; } }
 
-  /* Drag & drop sobre la ventana de chat */
   .drop-hint{ position:absolute; inset:0; display:none; align-items:center; justify-content:center; background:rgba(37,99,235,.08); border:2px dashed #93c5fd; border-radius:12px; font-weight:600; color:#1e3a8a; }
   .drop-hint.show{ display:flex; }
 </style>
@@ -155,15 +151,15 @@
 
 <!-- Área de toasts y audios de notificación -->
 <div class="toast-area" id="toastArea" aria-live="polite" aria-atomic="true"></div>
-<audio id="notif-msg"   src="/static/sounds/notification-message.mp3" preload="auto"></audio>
-<audio id="notif-alert" src="/static/sounds/notification-alert.mp3"   preload="auto"></audio>
+<!-- MP3 (si faltan, hay fallback por WebAudio) -->
+<audio id="notif-msg"   src="/static/sounds/notification-message.mp3" preload="auto" crossorigin="anonymous"></audio>
+<audio id="notif-alert" src="/static/sounds/notification-alert.mp3"   preload="auto" crossorigin="anonymous"></audio>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-  /* ===== Helpers ===== */
+  /* ===================== Helpers ===================== */
   function escapeHtml(str){ return (str||'').toString().replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
-  // Urlify seguro: primero escapamos, luego enlazamos patrones http(s)
   function urlifySafe(plain){
     const esc = escapeHtml(plain);
     const rx = /\bhttps?:\/\/[^\s<>'"]+/g;
@@ -177,12 +173,39 @@
     return payload;
   }
 
-  /* ===== Notificación sonora / toasts ===== */
+  /* ===================== Sonido (robusto) ===================== */
   const MUTE_KEY = 'chat.muted';
   const VOL_KEY  = 'chat.volume';
   const $mute = document.getElementById('muteToggle');
   const $muteLabel = document.getElementById('muteLabel');
   const $vol = document.getElementById('volRange');
+
+  // Instancias de <audio> (si los MP3 existen)
+  const audioMsgEl   = document.getElementById('notif-msg');
+  const audioAlertEl = document.getElementById('notif-alert');
+
+  // Fallback WebAudio (beep)
+  let AC = null, gainNode = null;
+  function ensureAC(){
+    if(!AC){
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if(Ctx){ AC = new Ctx(); gainNode = AC.createGain(); gainNode.gain.value = getVolume()/100; gainNode.connect(AC.destination); }
+    }
+    return AC;
+  }
+  function playBeep(freq=880, ms=140){
+    if(!ensureAC()) return; // si no hay WebAudio, no pasa nada
+    const osc = AC.createOscillator();
+    const g = AC.createGain();
+    osc.type = 'sine'; osc.frequency.value = freq;
+    g.gain.value = 0.0001; // fade in corto para evitar clic
+    osc.connect(g); g.connect(gainNode || AC.destination);
+    const now = AC.currentTime;
+    g.gain.linearRampToValueAtTime((getMuted()?0: (getVolume()/100)), now + 0.01);
+    g.gain.linearRampToValueAtTime(0.0001, now + (ms/1000));
+    osc.start(now);
+    osc.stop(now + (ms/1000) + 0.02);
+  }
 
   function getMuted(){ return localStorage.getItem(MUTE_KEY) === '1'; }
   function setMuted(v){ localStorage.setItem(MUTE_KEY, v ? '1' : '0'); updateMuteUI(); }
@@ -196,31 +219,42 @@
   }
   function applyVolume(){
     const vol = getVolume()/100;
-    const audios = [document.getElementById('notif-msg'), document.getElementById('notif-alert')];
-    audios.forEach(a => { if(a){ a.volume = vol; } });
+    if(audioMsgEl)   audioMsgEl.volume   = vol;
+    if(audioAlertEl) audioAlertEl.volume = vol;
+    if(gainNode)     gainNode.gain.value = vol;
     $vol.value = String(getVolume());
   }
 
+  // Desbloqueo por primer gesto del usuario (necesario en Chrome/Edge)
   let soundUnlocked = false;
   function unlockSoundOnce(){
     if(soundUnlocked) return;
-    const a1 = document.getElementById('notif-msg');
-    const a2 = document.getElementById('notif-alert');
-    [a1,a2].forEach(a=>{
+    soundUnlocked = true;
+    // Reanudar contexto WebAudio si existe
+    if(ensureAC() && AC.state === 'suspended'){ AC.resume().catch(()=>{}); }
+    // Intentar “tocar y pausar” los MP3 para desbloquear
+    [audioMsgEl, audioAlertEl].forEach(a=>{
       if(!a) return;
       a.muted = false;
-      a.play().then(()=>{ a.pause(); soundUnlocked = true; }).catch(()=>{});
+      try{ a.play().then(()=>{ a.pause(); a.currentTime = 0; }).catch(()=>{}); }catch(_){}
     });
   }
   window.addEventListener('pointerdown', unlockSoundOnce, { once: true });
 
-  function playNotif(kind){ // kind: 'msg' | 'alert'
+  function playNotif(kind){ // 'msg' | 'alert'
     if(getMuted()) return;
-    const id = kind === 'alert' ? 'notif-alert' : 'notif-msg';
-    const a = document.getElementById(id);
-    if(!a) return;
-    a.currentTime = 0;
-    a.play().catch(()=>{});
+    const a = (kind === 'alert') ? audioAlertEl : audioMsgEl;
+    // Primero intentamos con el MP3; si falla, usamos beep.
+    if(a){
+      try{
+        a.currentTime = 0;
+        a.play().catch(()=>{ playBeep(kind==='alert' ? 660 : 880, 150); });
+      }catch(_){
+        playBeep(kind==='alert' ? 660 : 880, 150);
+      }
+    }else{
+      playBeep(kind==='alert' ? 660 : 880, 150);
+    }
   }
 
   function toast(title, body){
@@ -239,7 +273,7 @@
   $vol.addEventListener('input',  () => setVolume(parseInt($vol.value,10)||0));
   updateMuteUI(); applyVolume();
 
-  /* ===== Config adjuntos ===== */
+  /* ===================== Config adjuntos ===================== */
   let CONFIG = { allowed_ext: ['pdf','png','jpg','jpeg','gif','webp','txt','csv','xlsx','xls','docx','doc','pptx'], max_files: 10, max_total_mb: 50 };
   (async function(){
     try{ const r = await fetch('/chat/config'); if(r.ok){ const cfg=await r.json(); if(cfg?.allowed_ext) CONFIG=cfg; } }catch(e){}
@@ -247,12 +281,12 @@
   function extPermitida(name){ const ext=(name.split('.').pop()||'').toLowerCase(); return CONFIG.allowed_ext.includes(ext); }
   function isImage(name){ return /\.(png|jpg|jpeg|gif|webp)$/i.test(name); }
 
-  /* ===== Estado ===== */
+  /* ===================== Estado ===================== */
   let yo = null, con = null, refresco = null, refrescoNoLeidos = null, refrescoHilos = null;
   let selectedFiles = [];
   const DRAFT_KEY = (email)=> `chat.draft.${email||'__none__'}`;
 
-  /* ===== Sidebar: hilos ===== */
+  /* ===================== Sidebar: hilos ===================== */
   function setActiveHilo(email){
     document.querySelectorAll('.chat-hilo-item').forEach(el=> el.classList.toggle('active', el.dataset.email === email));
   }
@@ -320,7 +354,7 @@
   });
   document.addEventListener('click', (e)=>{ if(!e.target.closest('.chat-auto-wrap')) $sugs.style.display='none'; });
 
-  /* ===== Mensajes ===== */
+  /* ===================== Mensajes ===================== */
   function renderMensajes(mensajes){
     const body = document.getElementById('chatBody');
     const atBottom = (body.scrollTop + body.clientHeight + 40) >= body.scrollHeight;
@@ -369,7 +403,6 @@
       await postJSON('/chat/abrir', { con: email });
       con = email; document.getElementById('conEmail').textContent = con;
       setActiveHilo(con);
-      // restaurar borrador si existe
       const draft = localStorage.getItem(DRAFT_KEY(con));
       if(draft){ document.getElementById('inputMsg').value = draft; autoResize(); }
       await marcarLeidos(con);
@@ -394,7 +427,7 @@
   }
   async function marcarLeidos(remitente){ if(!remitente) return; try{ await postJSON('/chat/marcar-leidos', { de: remitente }); }catch(e){} }
 
-  /* ===== Envío ===== */
+  /* ===================== Envío ===================== */
   const $files = document.getElementById('inputFiles');
   const $chips = document.getElementById('chips');
   const $btnPick = document.getElementById('btnPick');
@@ -402,20 +435,15 @@
   $btnPick.onclick = () => $files.click();
   $files.addEventListener('change', ()=>{ addFiles([...( $files.files || [] )]); $files.value=''; });
 
-  // Drag & drop sobre el panel
   const $window = document.getElementById('chatWindow');
   const $dropHint = document.getElementById('dropHint');
   ;['dragenter','dragover'].forEach(ev => $window.addEventListener(ev, e=>{ e.preventDefault(); e.stopPropagation(); $dropHint.classList.add('show'); }));
   ;['dragleave','drop'].forEach(ev => $window.addEventListener(ev, e=>{ e.preventDefault(); e.stopPropagation(); $dropHint.classList.remove('show'); }));
   $window.addEventListener('drop', (e)=>{ const fl = [...(e.dataTransfer?.files||[])]; if(fl.length) addFiles(fl); });
 
-  // Pegar imágenes/archivos
   document.addEventListener('paste', (e)=>{
-    const items = e.clipboardData?.items||[];
-    const files = [];
-    for(const it of items){
-      if(it.kind==='file'){ const f=it.getAsFile(); if(f) files.push(f); }
-    }
+    const items = e.clipboardData?.items||[]; const files = [];
+    for(const it of items){ if(it.kind==='file'){ const f=it.getAsFile(); if(f) files.push(f); } }
     if(files.length) addFiles(files);
   });
 
@@ -435,7 +463,7 @@
     $chips.innerHTML=''; if(!selectedFiles.length) return;
     selectedFiles.forEach((f, idx)=>{
       const chip=document.createElement('span'); chip.className='chat-chip-file';
-      if(isImage(f.name)){
+      if(/\.(png|jpg|jpeg|gif|webp)$/i.test(f.name)){
         const img=document.createElement('img'); img.className='chat-chip-thumb'; img.alt=f.name;
         const fr=new FileReader(); fr.onload=e=> img.src=e.target.result; fr.readAsDataURL(f); chip.appendChild(img);
       }
@@ -480,7 +508,6 @@
   function toggleSending(sending){ const btn=document.getElementById('btnEnviar'); btn.disabled=sending; btn.textContent = sending ? 'Enviando…' : 'Enviar'; }
 
   document.getElementById('btnEnviar').onclick = enviar;
-  // Enter envía, Shift+Enter hace salto de línea, Ctrl/Cmd+Enter también envía
   const $msg = document.getElementById('inputMsg');
   function autoResize(){ $msg.style.height='auto'; $msg.style.height = Math.min(160, $msg.scrollHeight) + 'px'; }
   $msg.addEventListener('input', ()=>{ autoResize(); if(con) localStorage.setItem(DRAFT_KEY(con), $msg.value); });
@@ -492,11 +519,9 @@
   document.getElementById('btnRefrescar').onclick = ()=> { cargarMensajes(); cargarHilos(); };
   document.getElementById('btnAbrir').onclick = ()=>{ const email = $input.value.trim(); if(!email) return; abrirChat(email); };
   document.getElementById('btnEliminarChat').onclick = ()=> ocultar(con);
-
-  // Atajo global: Ctrl+K para foco en buscador
   window.addEventListener('keydown', (e)=>{ if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); $input.focus(); } });
 
-  /* ===== No leídos & auto refresh ===== */
+  /* ===================== No leídos & auto refresh ===================== */
   async function cargarNoLeidos(){
     try{
       const data = await getJSON('/chat/no-leidos');
@@ -522,7 +547,7 @@
     refrescoHilos = setInterval(()=>{ cargarHilos(); }, 12000);
   }
 
-  /* ===== WebSocket: notificaciones en vivo ===== */
+  /* ===================== WebSocket (en vivo) ===================== */
   let ws = null, wsTries = 0, wsPingTimer = null;
   function wsUrl(){
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -540,14 +565,16 @@
       ws.onmessage = async (ev) => {
         let msg = {};
         try{ msg = JSON.parse(ev.data||'{}'); }catch(_){}
-        if(!msg.event) return;
+        const evName = msg.event || msg.type || '';
+        if(!evName) return;
 
-        if(msg.event === 'chat:new_message'){
+        // Acepta varias variantes de nombre de evento
+        if(evName === 'chat:new_message' || evName === 'chat:new-message' || evName === 'chat_message'){
           playNotif('msg');
-          if(con && msg.from === con){ await cargarMensajes(); }
+          if(con && (msg.from === con || msg.de === con)){ await cargarMensajes(); }
           await cargarNoLeidos(); await cargarHilos();
         }
-        if(msg.event === 'alert:new'){
+        if(evName === 'alert:new' || evName === 'alert'){
           playNotif('alert');
           toast(msg.title || 'Alerta', msg.body || '');
         }
@@ -562,7 +589,7 @@
     }catch(e){ setTimeout(connectWS, 3000); }
   }
 
-  /* ===== Boot ===== */
+  /* ===================== Boot ===================== */
   (async ()=>{
     await cargarYo();
     await cargarHilos();
