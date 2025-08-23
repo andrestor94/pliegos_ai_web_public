@@ -16,10 +16,39 @@
     --brand: #a78bfa;
   }
 
-  /* ——— Estilos específicos de la vista ——— */
+  /* ====== Accesibilidad/contraste de esta vista ====== */
+  /* Tipos secundarios con contraste alto (fallback + color-mix) */
+  .notif-meta,
+  .empty,
+  .muted{
+    color: #475467;
+    color: color-mix(in srgb, var(--text, #1f2937) 82%, white 18%);
+  }
+  .notif-body{
+    color: #344054;
+    color: color-mix(in srgb, var(--text, #1f2937) 92%, white 8%);
+  }
+  .soft-pill{ color: var(--text); }
+
+  /* Placeholders más legibles */
+  .form-control::placeholder{
+    color:#667085;
+    color: color-mix(in srgb, var(--text, #1f2937) 65%, white 35%);
+    opacity:1;
+  }
+
+  /* ====== Estilos específicos de la vista ====== */
   .card-clean{ border:1px solid var(--border); border-radius:16px; box-shadow:var(--shadow); }
-  .shadow-hover{ transition: box-shadow .15s ease; }
-  .shadow-hover:hover{ box-shadow: 0 14px 34px rgba(16,24,40,.16); }
+
+  /* Desactivar “lift”/sombra al hover (quieto como todo lo demás) */
+  .no-hover-lift,
+  .no-hover-lift:hover,
+  .no-hover-lift:focus-within{
+    transform: none !important;
+    translate: 0 !important;
+    scale: 1 !important;
+    box-shadow: var(--shadow) !important;
+  }
 
   .toolbar{ gap:.5rem; }
   .toolbar .form-control, .toolbar .form-select{ border-radius:10px; }
@@ -34,18 +63,10 @@
   .notif-item:last-child{ border-bottom:none; }
   .notif-item.unread{ background:var(--bg-soft); }
   .notif-title{ font-weight:600; color:var(--text); }
-  .notif-meta{ font-size:.82rem; color:var(--text-2); }
-  .notif-body{ color:var(--text-1); }
-  .badge-kind{
-    background:#e3ecf5; color:var(--brand);
-    border:1px solid #b6d1ea; border-radius:999px; padding:.15rem .5rem; font-size:.72rem;
-  }
-  [data-theme="dark"] .badge-kind{
-    background:#0e223b; border-color:#1f3b61;
-  }
+  .notif-meta{ font-size:.88rem; }
   .actions .btn{ border-radius:8px!important; }
 
-  .empty{ color:var(--text-2); padding:18px; text-align:center; }
+  .empty{ padding:18px; text-align:center; }
 
   .skeleton{
     position:relative; overflow:hidden; border-bottom:1px solid var(--border);
@@ -59,9 +80,6 @@
   .sk-bar{ height:12px; background:rgba(148,163,184,.25); border-radius:6px; margin:6px 0; }
   @keyframes shimmer{ 0%{ transform:translateX(-100%);} 100%{ transform:translateX(100%);} }
 
-  .muted{ color:var(--text-2); }
-  .soft-pill{ border-radius:999px; border:1px solid var(--border); background:var(--bg-soft); padding:.2rem .5rem; font-size:.8rem; }
-
   @media (max-width:700px){
     .notif-item{ grid-template-columns: 24px 1fr; }
     .notif-item .actions{ grid-column: 1 / -1; display:flex; gap:.5rem; }
@@ -72,12 +90,13 @@
 {% block content %}
 <div class="py-3">
   <div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="hero-title mb-0">🔔 Notificaciones</h1>
+    <!-- 👇 sin campana -->
+    <h1 class="hero-title mb-0">Notificaciones</h1>
     <a href="/" class="btn btn-outline-secondary btn-sm">← Volver</a>
   </div>
 
   <!-- Filtros / acciones -->
-  <div class="card card-clean shadow-hover mb-3" role="region" aria-label="Barra de filtros">
+  <div class="card card-clean no-hover-lift mb-3" role="region" aria-label="Barra de filtros">
     <div class="card-body">
       <div class="row g-2 align-items-center toolbar">
         <div class="col-lg-5">
@@ -127,7 +146,7 @@
   </div>
 
   <!-- Lista -->
-  <div class="card card-clean shadow-hover" role="region" aria-label="Listado de notificaciones">
+  <div class="card card-clean no-hover-lift" role="region" aria-label="Listado de notificaciones">
     <div class="card-body p-0">
       <div id="list" role="list" aria-live="polite"><!-- items --></div>
       <div class="p-2 border-top d-flex justify-content-between align-items-center">
