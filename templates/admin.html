@@ -7,6 +7,24 @@
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 
   <style>
+    /* ====== Spacing específico para /admin ====== */
+    /* Wrapper que da separación vertical consistente entre cards */
+    [data-route="/admin"] .admin-stack{
+      display: flex;
+      flex-direction: column;
+      /* gap fluido: móvil 14px → desktop 24px */
+      gap: clamp(14px, 2.2vw, 24px);
+    }
+    /* Asegura que las cards no traigan márgenes propios que rompan el gap */
+    [data-route="/admin"] .card-clean{ margin: 0; }
+
+    /* Un poco de aire arriba/abajo del contenido */
+    [data-route="/admin"]{ padding-top: 12px; padding-bottom: 16px; }
+    @media (min-width: 992px){
+      [data-route="/admin"]{ padding-top: 16px; padding-bottom: 24px; }
+    }
+
+    /* ====== Estilos existentes ====== */
     .no-hover-lift,
     .no-hover-lift:hover,
     .no-hover-lift:focus-within{
@@ -76,118 +94,121 @@
 
 {% block content %}
 <div class="container-xxl" data-route="/admin">
+  <!-- Apilado con separación vertical limpia -->
+  <div class="admin-stack">
 
-  <!-- Encabezado + acciones -->
-  <section class="card-clean no-hover-lift">
-    <div class="card-header d-flex align-items-center justify-content-between">
-      <h1 class="h5 m-0 text-brand">
-        <i class="bi bi-gear me-1"></i> Administración de Usuarios
-      </h1>
-      <div class="d-flex flex-wrap gap-2">
-        <a href="/auditoria/actividad/vista" class="btn btn-sm btn-outline-primary" role="button">
-          <i class="bi bi-graph-up"></i> Actividad de usuarios
-        </a>
-        <a href="/usuarios-activos" class="btn btn-sm btn-outline-primary" role="button">
-          <i class="bi bi-people"></i> Usuarios activos (vivo)
-        </a>
-        <a href="/auditoria" class="btn btn-sm btn-outline-secondary" role="button">
-          <i class="bi bi-clipboard-data"></i> Ver auditoría
-        </a>
-        <a href="/" class="btn btn-sm btn-outline-secondary" role="button">← Volver</a>
-      </div>
-    </div>
-  </section>
-
-  <!-- Monitoreo -->
-  <section class="card-clean no-hover-lift">
-    <div class="card-body d-flex align-items-center gap-3 flex-wrap">
-      <div class="kpi-box">
-        <i class="bi bi-activity fs-5"></i>
-        <div>
-          <div id="kpiOnline" class="kpi-num">—</div>
-          <div class="kpi-sub">en línea (últ. 5 min)</div>
+    <!-- Encabezado + acciones -->
+    <section class="card-clean no-hover-lift">
+      <div class="card-header d-flex align-items-center justify-content-between">
+        <h1 class="h5 m-0 text-brand">
+          <i class="bi bi-gear me-1"></i> Administración de Usuarios
+        </h1>
+        <div class="d-flex flex-wrap gap-2">
+          <a href="/auditoria/actividad/vista" class="btn btn-sm btn-outline-primary" role="button">
+            <i class="bi bi-graph-up"></i> Actividad de usuarios
+          </a>
+          <a href="/usuarios-activos" class="btn btn-sm btn-outline-primary" role="button">
+            <i class="bi bi-people"></i> Usuarios activos (vivo)
+          </a>
+          <a href="/auditoria" class="btn btn-sm btn-outline-secondary" role="button">
+            <i class="bi bi-clipboard-data"></i> Ver auditoría
+          </a>
+          <a href="/" class="btn btn-sm btn-outline-secondary" role="button">← Volver</a>
         </div>
       </div>
-      <div class="hint">
-        La auditoría registra inicios/cierres y duración por usuario. “Usuarios activos” muestra quién está conectado ahora mismo.
-      </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- Crear usuario -->
-  <section class="card-clean no-hover-lift">
-    <div class="card-header">
-      <h2 class="h6 m-0">Crear nuevo usuario</h2>
-    </div>
-    <div class="card-body">
-      <form id="crearUsuarioForm"
-            class="row g-3 input-compact inside-card-row"
-            autocomplete="off" novalidate>
-        <div class="col-md-4">
-          <label class="form-label" for="nombre">Nombre</label>
-          <input type="text" class="form-control" id="nombre" name="nombre" required
-                 placeholder="Nombre y Apellido" autocomplete="name">
+    <!-- Monitoreo -->
+    <section class="card-clean no-hover-lift">
+      <div class="card-body d-flex align-items-center gap-3 flex-wrap">
+        <div class="kpi-box">
+          <i class="bi bi-activity fs-5"></i>
+          <div>
+            <div id="kpiOnline" class="kpi-num">—</div>
+            <div class="kpi-sub">en línea (últ. 5 min)</div>
+          </div>
         </div>
-        <div class="col-md-4">
-          <label class="form-label" for="email">Email</label>
-          <input type="email" class="form-control" id="email" name="email" required
-                 placeholder="usuario@suizo.com" autocomplete="email">
+        <div class="hint">
+          La auditoría registra inicios/cierres y duración por usuario. “Usuarios activos” muestra quién está conectado ahora mismo.
         </div>
-        <div class="col-md-3">
-          <label class="form-label" for="rol">Rol</label>
-          <select class="form-select" id="rol" name="rol" required>
-            <option value="usuario">Usuario</option>
-            <option value="admin">Administrador</option>
-          </select>
+      </div>
+    </section>
+
+    <!-- Crear usuario -->
+    <section class="card-clean no-hover-lift">
+      <div class="card-header">
+        <h2 class="h6 m-0">Crear nuevo usuario</h2>
+      </div>
+      <div class="card-body">
+        <form id="crearUsuarioForm"
+              class="row g-3 input-compact inside-card-row"
+              autocomplete="off" novalidate>
+          <div class="col-md-4">
+            <label class="form-label" for="nombre">Nombre</label>
+            <input type="text" class="form-control" id="nombre" name="nombre" required
+                   placeholder="Nombre y Apellido" autocomplete="name">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label" for="email">Email</label>
+            <input type="email" class="form-control" id="email" name="email" required
+                   placeholder="usuario@suizo.com" autocomplete="email">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label" for="rol">Rol</label>
+            <select class="form-select" id="rol" name="rol" required>
+              <option value="usuario">Usuario</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </div>
+          <div class="col-md-1 d-grid">
+            <label class="form-label d-none d-md-block">&nbsp;</label>
+            <!-- Blindado: submit + form + data-submit -->
+            <button type="submit"
+                    form="crearUsuarioForm"
+                    data-submit="#crearUsuarioForm"
+                    class="btn btn-primary" id="btnCrearUsuario">
+              <i class="bi bi-plus-lg"></i>
+            </button>
+          </div>
+        </form>
+        <div class="mt-2 hint small">
+          Se crea con contraseña inicial por defecto (luego podés blanquearla desde la tabla).
         </div>
-        <div class="col-md-1 d-grid">
-          <label class="form-label d-none d-md-block">&nbsp;</label>
-          <!-- Blindado: submit + form + data-submit -->
-          <button type="submit"
-                  form="crearUsuarioForm"
-                  data-submit="#crearUsuarioForm"
-                  class="btn btn-primary" id="btnCrearUsuario">
-            <i class="bi bi-plus-lg"></i>
+        <div id="mensaje" class="mt-3" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <!-- Lista de usuarios -->
+    <section class="card-clean no-hover-lift">
+      <div class="card-header d-flex align-items-center justify-content-between">
+        <h2 class="h6 m-0">Usuarios registrados</h2>
+        <div class="d-flex gap-2 align-items-center">
+          <input id="filtro" class="form-control form-control-sm"
+                 style="max-width:260px" placeholder="Filtrar por nombre o email" autocomplete="off">
+          <button id="btnRefrescar" type="button" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-arrow-clockwise"></i> Refrescar
           </button>
         </div>
-      </form>
-      <div class="mt-2 hint small">
-        Se crea con contraseña inicial por defecto (luego podés blanquearla desde la tabla).
       </div>
-      <div id="mensaje" class="mt-3" aria-live="polite"></div>
-    </div>
-  </section>
+      <div class="card-body">
+        <div class="table-wrap">
+          <table class="table align-middle table-hover mb-0">
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Email</th>
+                <th>Rol</th>
+                <th>Estado</th>
+                <th style="min-width:340px">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tablaUsuarios"><!-- JS --></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
 
-  <!-- Lista de usuarios -->
-  <section class="card-clean no-hover-lift">
-    <div class="card-header d-flex align-items-center justify-content-between">
-      <h2 class="h6 m-0">Usuarios registrados</h2>
-      <div class="d-flex gap-2 align-items-center">
-        <input id="filtro" class="form-control form-control-sm"
-               style="max-width:260px" placeholder="Filtrar por nombre o email" autocomplete="off">
-        <button id="btnRefrescar" type="button" class="btn btn-sm btn-outline-secondary">
-          <i class="bi bi-arrow-clockwise"></i> Refrescar
-        </button>
-      </div>
-    </div>
-    <div class="card-body">
-      <div class="table-wrap">
-        <table class="table align-middle table-hover mb-0">
-          <thead>
-            <tr>
-              <th>Nombre</th>
-              <th>Email</th>
-              <th>Rol</th>
-              <th>Estado</th>
-              <th style="min-width:340px">Acciones</th>
-            </tr>
-          </thead>
-          <tbody id="tablaUsuarios"><!-- JS --></tbody>
-        </table>
-      </div>
-    </div>
-  </section>
-
+  </div> <!-- /admin-stack -->
 </div>
 {% endblock %}
 
