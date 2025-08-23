@@ -71,8 +71,13 @@ HINTS_MAX_CHARS = int(os.getenv("HINTS_MAX_CHARS", "12000"))
 HINTS_PER_FIELD = int(os.getenv("HINTS_PER_FIELD", "8"))
 ENABLE_SECOND_PASS_COMPLETION = int(os.getenv("ENABLE_SECOND_PASS_COMPLETION", "1"))
 
-# Forzar reemplazo determinístico de 2.13 y 2.16 (cobertura total)
-FORCE_DETERMINISTIC_213_216 = int(os.getenv("FORCE_DETERMINISTIC_213_216", "1"))
+# --- Limitar enumeraciones y desactivar expansiones automáticas (nuevo) ---
+EXPAND_SECTIONS_213_216 = int(os.getenv("EXPAND_SECTIONS_213_216", "0"))   # 0 = NO expandir ni sustituir 2.13/2.16
+MAX_RENGLONES_OUT       = int(os.getenv("MAX_RENGLONES_OUT", "12"))        # tope de renglones si se arma 2.13
+MAX_ARTICULOS_OUT       = int(os.getenv("MAX_ARTICULOS_OUT", "12"))        # tope de artículos si se arma 2.16
+
+# Forzar reemplazo determinístico de 2.13 y 2.16 (cobertura total) -> default ahora 0
+FORCE_DETERMINISTIC_213_216 = int(os.getenv("FORCE_DETERMINISTIC_213_216", "0"))
 
 # ========================= Timers PERF =========================
 def _t(): return time.perf_counter()
@@ -343,14 +348,14 @@ Cobertura obligatoria por sección (según aplique)
 - 2) Datos clave: Organismo, Expediente, Tipo/Modalidad/Etapa, Objeto, Rubro, Lugar/área; contactos/portales (mails/URLs) si figuran.
 - 3) Alcance/vigencias: mantenimiento de oferta y prórroga; perfeccionamiento; ampliaciones/topes.
 - 4) Entregas: lugar/horarios; forma (única/parcelada); plazos por monto; flete/descarga.
-- 5) Presentación: sobre/caja, duplicado, firma, rotulado; documentación fiscal/registral (AFIP/ARBA/CM, A-404, Deudores Morosos, CBU BAPRO, Registro de Proveedores, poderes/DDJJ, etc.); costo/valor de pliego si existe.
-- 6) Evaluación: cuadro comparativo; tipo de cambio BNA; criterios cuali/cuantitativos; empate ≤2% (prioridad nacional, mejora, sustentable/calidad, sorteo).
+- 5) Presentación: sobre/caja, duplicado, firma, rotulado; documentación fiscal/registral; costo/valor de pliego si existe.
+- 6) Evaluación: cuadro comparativo; tipo de cambio BNA; criterios cuali/cuantitativos; empate ≤2%; mejora de oferta.
 - 7) Garantías: umbrales por UC; % mantenimiento y % cumplimiento con plazos/condiciones; contragarantías.
 - 8) Muestras/envases/etiquetado/caducidad: ANMAT/BPM; cadena de frío; rotulados; vigencia mínima.
-- 9) Renglones/planilla: enumerar TODOS los renglones con Cantidad, Código (si hay), Descripción y **especificaciones técnicas** relevantes (una línea por renglón).
+- 9) Renglones/planilla: **incluir SOLO los renglones del cuadro/planilla de cotización** (si existe). Por renglón: Cantidad, Código (si hay), Descripción y **especificaciones técnicas** relevantes en 1 línea. **No listar bullets generales ni cláusulas**. Si hay demasiados, priorizar los directamente vinculados al objeto y resumir el resto.
 - 10) Checklist: acciones para el oferente.
 - 11) Fechas críticas: presentación, apertura, mantenimiento, entregas, consultas, etc.
-- 12) Observaciones finales: alertas, condiciones condicionadas, compatibilidades, etc.
+- 12) Observaciones finales: alertas y condicionantes.
 
 Guía de sinónimos:
 {SINONIMOS}
@@ -615,10 +620,10 @@ DETECTABLE_FIELDS: Dict[str, Dict] = {
     "renglones":   {"label":"Renglones y especificaciones", "pats":[r"Rengl[oó]n\s*\d+", r"Especificaciones?\s+t[ée]cnicas?"]},
     "articulos":   {"label":"Artículos citados", "pats":[r"\bArt(?:[íi]culo|\.)\s*\d+[A-Za-z]?\b"]},
     "normativa":   {"label":"Normativa aplicable", "pats":[
-                        r"\bLey(?:\s*N[°º])?\s*\d{1,5}(?:\.\d{1,3})*(?:/\d{2,4})?",
-                        r"\bDecreto(?:\s*N[°º])?\s*\d{1,5}(?:/\d{2,4})?",
-                        r"\bResoluci[oó]n(?:\s*(?:Ministerial|Conjunta))?\s*(?:N[°º]\s*)?\d{1,6}(?:/\d{2,4})?",
-                        r"\bDisposici[oó]n\s*(?:N[°º]\s*)?\d{1,6}(?:/\d{2,4})?"
+                        r"\bLey(?:\s*N[°º])?\s*([\d\.]{1,7}(?:/\d{2,4})?)\b",
+                        r"\bDecreto(?:\s*N[°º])?\s*([\d\.]{1,7}(?:/\d{2,4})?)\b",
+                        r"\bResoluci[oó]n(?:\s*(?:Ministerial|Conjunta))?\s*(?:N[°º]\s*)?(\d{1,7}(?:/\d{2,4})?)\b",
+                        r"\bDisposici[oó]n\s*(?:N[°º]\s*)?(\d{1,7}(?:/\d{2,4})?)\b"
                     ]},
 }
 
@@ -656,24 +661,22 @@ def _extraer_articulos_con_snippets(texto: str) -> List[Tuple[str, str, int, Opt
             res.append((rotulo, snippet, p, ax))
     return res
 
-# --- Renglones robustos (tablas sin la palabra "Renglón") ---
-_ROW_START_RE = re.compile(r"(?im)^(?:reng(?:l[oó]n)?\.?\s*)?(\d{1,4})\b")
+# --- Renglones robustos (exigir literalmente "Renglón") ---
+_ROW_START_RE = re.compile(r"(?im)^(?:reng(?:l[oó]n)?\.?\s*)(\d{1,4})\b")
 _CODE_RE = re.compile(r"\b[A-Z]{1,3}\d{5,8}\b")  # p.ej. D0330113, GB079001, E5001253
 _QTY_RE = re.compile(r"\b\d{1,6}\b")
 
 def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[int, Optional[int], Optional[str], str, int, Optional[int]]]:
     """
     Devuelve lista de (num_renglon, cantidad, codigo, descripcion_full, pagina_aprox, anexo_num)
-    - Reconoce filas numeradas aunque no diga "Renglón".
+    - Reconoce filas numeradas QUE EMPIEZAN CON "Renglón".
     - Agrega líneas subsiguientes hasta el próximo comienzo de fila.
     """
     idx = _index_paginas(texto)
     idx_ax = _index_anexos(texto)
     res: List[Tuple[int, Optional[int], Optional[str], str, int, Optional[int]]] = []
 
-    # Trabajamos línea por línea para detectar cortes con más precisión
     lines = texto.splitlines()
-    # guardamos posiciones acumuladas para mapear a índice absoluto (para p./anexo)
     pos = 0
     starts: List[Tuple[int,int]] = []  # (line_index, abs_pos)
     for i, ln in enumerate(lines):
@@ -685,12 +688,12 @@ def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[int, Optiona
     if not starts:
         return res
 
-    # Añadimos un sentinel al final
+    # sentinel
     starts.append((len(lines), len(texto)))
 
     for k in range(len(starts) - 1):
         i_line, abs_pos = starts[k]
-        j_line, abs_pos_next = starts[k+1]
+        j_line, _abs_pos_next = starts[k+1]
         block_lines = lines[i_line:j_line]
         block_text = " ".join([re.sub(r"\s+", " ", x).strip() for x in block_lines if x.strip()])
 
@@ -707,14 +710,16 @@ def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[int, Optiona
             tail = lines[i_line][mnum.end():]
             mqty = _QTY_RE.search(tail)
             if mqty:
-                try: qty = int(mqty.group(0))
-                except: qty = None
+                try:
+                    qty = int(mqty.group(0))
+                except Exception:
+                    qty = None
 
         # código (en todo el bloque)
         mcode = _CODE_RE.search(block_text)
         code = mcode.group(0) if mcode else None
 
-        # descripción y especificaciones (bloque sin duplicar código/cantidad)
+        # descripción y especificaciones
         desc = block_text
         if code:
             desc = re.sub(re.escape(code), "", desc)
@@ -730,7 +735,6 @@ def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[int, Optiona
         if num_r is not None:
             res.append((num_r, qty, code, desc, p, ax))
 
-    # Ordenar por num de renglón
     res.sort(key=lambda t: t[0])
     return res
 
@@ -792,14 +796,21 @@ def _truncate_words(s: str, max_words: int) -> str:
     except Exception:
         return (s or "").strip()
 
-# ====== Generadores determinísticos de secciones 2.13 y 2.16 ======
+# Palabras-clave para filtrar artículos realmente útiles al oferente (nuevo)
+_ART_KEYS = re.compile(
+    r"(objeto|tipolog|modalidad|mantenim|pr[oó]rroga|oferta|apertura|evaluaci[oó]n|empate|mejora|adjudicaci[oó]n|"
+    r"garant[ií]a|entrega|plazo|pago|factura|sancion|penalidad|rescis[ií]n|perfeccionamiento|subsanaci[oó]n)",
+    re.I
+)
+
+# ====== Generadores determinísticos (capados) de 2.13 y 2.16 ======
 def _build_section_213(texto: str, varios_anexos: bool) -> str:
     rows = _extraer_renglones_y_especificaciones(texto)
     if not rows:
         return ""
+    rows = rows[:max(1, MAX_RENGLONES_OUT)]  # tope
     lines = ["2.13 Planilla de cotización y renglones:"]
     for (num, qty, code, desc, p, ax) in rows:
-        # Descripción acotada para evitar “volcados” largos
         desc_corta = _truncate_words(desc, RENGLON_DESC_MAX_WORDS)
         partes = [f"Renglón {num}"]
         if qty is not None: partes.append(f"Cantidad: {qty}")
@@ -813,8 +824,12 @@ def _build_section_216(texto: str, varios_anexos: bool) -> str:
     arts = _extraer_articulos_con_snippets(texto)
     if not arts:
         return ""
+    # filtrar por relevancia práctica
+    arts = [(rot, sn, p, ax) for (rot, sn, p, ax) in arts if _ART_KEYS.search(sn or "") or _ART_KEYS.search(rot or "")]
+    if not arts:
+        return ""
+    arts = arts[:max(1, MAX_ARTICULOS_OUT)]  # tope
     lines = ["2.16 Catálogo de artículos citados:"]
-    # Normalizamos el rótulo "Art. N"
     for (rot, sn, p, ax) in arts:
         rot_norm = re.sub(r"(?i)art(?:[íi]culo|\.)\s*", "Art. ", rot).strip()
         sn = _truncate_words(sn, ART_SNIPPET_MAX_WORDS)
@@ -842,7 +857,6 @@ def _extraer_contactos_con_paginas(texto: str) -> List[Tuple[str, str, int, Opti
         pos = m.start()
         p = _pagina_de_indice(idx_pag, pos)
         ax = _anexo_en_pos(idx_ax, pos)
-        # limpiar trailing puntuación común
         v = m.group(0).rstrip(").,;")
         res.append(("url", v, p, ax))
     # dedupe preservando orden
@@ -925,82 +939,40 @@ def _replace_section(text: str, header_regex: str, replacement: str) -> str:
         return text.rstrip() + "\n\n" + replacement.strip() + "\n"
     return text[:s] + replacement.strip() + "\n" + text[e:]
 
-# ==================== Ampliación / sustitución de 2.13 y 2.16 ====================
+# ==================== Ampliación / sustitución de 2.13 y 2.16 (capadas) ====================
 def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
-    evidencia, total_ren, total_art = _construir_evidencia_ampliacion(texto_fuente)
-    if not evidencia and not FORCE_DETERMINISTIC_213_216:
-        return informe
-
+    """
+    Por defecto (EXPAND_SECTIONS_213_216=0) NO toca 2.13 ni 2.16.
+    Mantiene la salida concisa (estilo Andrés) y sólo normaliza Contactos (2.3) y Normativa (2.15).
+    """
     out = informe
 
-    # 1) Intento LLM opcional (sin cambios de lógica general)
-    if evidencia and not FORCE_DETERMINISTIC_213_216:
-        en_informe_ren, en_informe_art = _conteo_en_informe(informe)
-        debe_ampliar = (
-            (total_ren and (en_informe_ren < max(1, total_ren - 1))) or
-            (total_art and (en_informe_art < max(1, total_art - 1))) or
-            (not re.search(r"(?im)^2\.13\s+Planilla", informe)) or
-            (not re.search(r"(?im)^2\.16\s+Cat[aá]logo de art", informe))
-        )
-        if debe_ampliar:
-            prompt = f"""
-(Reforzador de cobertura) Sustituye y/o expande SOLO las secciones:
-- 9) Renglones y planilla de cotización  (o, si no existe, 2.13 Planilla de cotización y renglones)
-- ANEXO — Catálogo de artículos citados  (o, si no existe, 2.16 Catálogo de artículos citados)
-
-Reglas:
-- En renglones: lista TODOS los renglones (una línea por renglón) con cantidades/códigos y **especificaciones técnicas** relevantes.
-- En artículos: lista TODOS los artículos (“Art. N — síntesis literal 1–2 líneas”).
-- Cita al final de cada línea: (Anexo X, p. N) o (p. N).
-- NO alteres ninguna otra sección del informe.
-=== INFORME ACTUAL ===
-{informe}
-
-=== EVIDENCIA LITERAL PARA AMPLIAR ===
-{evidencia}
-"""
-            try:
-                resp = _llamada_openai(
-                    [
-                        {"role": "system", "content": "Redactor técnico-jurídico. Expande renglones y artículos con listados exhaustivos y citas."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    model=_pick_model("sintesis"),
-                    max_completion_tokens=_max_out_for_text(texto_fuente)
-                )
-                out = (resp.choices[0].message.content or "").strip()
-                out = _normalize_citas_salida(_limpiar_meta(out), varios_anexos)
-            except Exception:
-                out = informe
-
-    # 2) Sustitución determinística (garantía de cobertura)
-    sec213 = _build_section_213(texto_fuente, varios_anexos)
-    if sec213:
-        # Compatibilidad nueva: 9) Renglones...
-        alt213 = sec213.replace("2.13 Planilla de cotización y renglones:", "9) Renglones y planilla de cotización:")
-        out = _replace_section(out, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla", alt213)
-        # Compatibilidad previa
-        out = _replace_section(out, r"(?im)^\s*2\.13\s+Planilla", sec213)
-
-    sec216 = _build_section_216(texto_fuente, varios_anexos)
-    if sec216:
-        # Compatibilidad nueva: ANEXO — Catálogo de artículos citados
-        alt216 = sec216.replace("2.16 Catálogo de artículos citados:", "ANEXO — Catálogo de artículos citados:")
-        out = _replace_section(out, r"(?im)^\s*(ANEXO|Anexo)s?\s*[-–—]?\s*Cat[aá]logo\s+de\s+art", alt216)
-        # Compatibilidad previa
-        out = _replace_section(out, r"(?im)^\s*2\.16\s+Cat[aá]logo\s+de\s+art", sec216)
-
-    # NUEVO: 2.3 Contactos/portales (determinístico)
+    # Siempre: actualizar determinísticamente Contactos (2.3) y Normativa (2.15)
     sec23 = _build_section_23(texto_fuente, varios_anexos)
     if sec23:
         out = _replace_section(out, r"(?im)^\s*2\.3\s+Contactos", sec23)
 
-    # NUEVO: 2.15 Normativa (determinístico)
     sec215 = _build_section_215(texto_fuente, varios_anexos)
     if sec215:
         out = _replace_section(out, r"(?im)^\s*2\.15\s+Normativa", sec215)
 
-    # Limpiezas finales
+    # Si no se solicita expansión de renglones/artículos, retornar
+    if not EXPAND_SECTIONS_213_216:
+        return out
+
+    # Construir 2.13 y 2.16 con topes/cap y reemplazar sin duplicar variantes
+    sec213 = _build_section_213(texto_fuente, varios_anexos)
+    if sec213:
+        alt213 = sec213.replace("2.13 Planilla de cotización y renglones:", "9) Renglones y planilla de cotización:")
+        out = _replace_section(out, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla", alt213)
+        out = _replace_section(out, r"(?im)^\s*2\.13\s+Planilla", sec213)
+
+    sec216 = _build_section_216(texto_fuente, varios_anexos)
+    if sec216:
+        out = _replace_section(out, r"(?im)^\s*2\.16\s+Cat[aá]logo\s+de\s+art", sec216)
+        # eliminar posibles títulos alternativos "ANEXO — Catálogo ..."
+        out = re.sub(r"(?im)^\s*(ANEXO|Anexo)\s*[-–—]?\s*Cat[aá]logo\s+de\s+art[^\n]*\n?", "", out)
+
     out = re.sub(r"(?im)^\s*informe\s+original\s*$", "", out)
     return out
 
@@ -1148,12 +1120,12 @@ def analizar_con_openai(texto: str) -> str:
     texto_len = len(texto)
     n_anexos = _contar_anexos(texto)
     varios_anexos = n_anexos >= 2
-    # Usar el nuevo prompt estilo Andrés
+    # Usar el nuevo prompt estilo Andrés (1–12)
     prompt_maestro = _prompt_andres(varios_anexos)
 
     # Hints regex (opcionales, capados por tamaño)
     hints = _build_regex_hints(texto) if ENABLE_REGEX_HINTS else ""
-    hints_block = f"\n\n=== HALLAZGOS AUTOMÁTICOS (snippets literales para verificación, NO resumir renglones) ===\n{hints}\n" if hints else ""
+    hints_block = f"\n\n=== HALLAZGOS AUTOMÁTICOS (snippets literales para verificación) ===\n{hints}\n" if hints else ""
 
     # ¿forzar dos etapas en multi-anexo grande?
     force_two_stage = (varios_anexos and texto_len >= MULTI_FORCE_TWO_STAGE_MIN_CHARS)
