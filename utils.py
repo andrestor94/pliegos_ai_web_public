@@ -309,6 +309,73 @@ SINONIMOS_CANONICOS = r"""
 Usa esta guía: si un campo aparece con sinónimos/variantes, NO lo marques como "no especificado".
 """
 
+# ======= PROMPT MAESTRO ESTILO ANDRÉS (formato 1–12) =======
+_BASE_PROMPT_ANDRES = r"""
+# (Instrucciones internas: NO imprimir este encabezado ni estas reglas en la salida)
+
+Objetivo
+- Generar un informe de análisis de licitación, exhaustivo y “cero invenciones”, con la estructura EXACTA de abajo.
+- Si algo NO figura en los archivos, escribir “NO ESPECIFICADO” y explicarlo brevemente (sin inferir).
+- Cada línea con dato crítico debe terminar con una cita de fuente, según “Reglas de Citas”.
+
+{REGLAS_CITAS}
+
+Estilo
+- Encabezados y listas claras; sin meta-texto (“parte X de Y”, “revise el resto”, etc.).
+- Deduplicar, fusionar y no repetir información.
+- Mantener terminología del pliego. Usar 2 decimales si el pliego lo exige para precios.
+
+Estructura de salida EXACTA (usar estos títulos tal cual)
+1) Resumen ejecutivo (≤200 palabras)
+2) Datos clave del llamado
+3) Alcance contractual y vigencias
+4) Entregas y logística
+5) Presentación y contenido de la oferta
+6) Evaluación, empate y mejora de oferta
+7) Garantías
+8) Muestras, envases, etiquetado y caducidad (si aplica)
+9) Renglones y planilla de cotización
+10) Checklist operativo
+11) Fechas y plazos críticos
+12) Observaciones finales
+
+Cobertura obligatoria por sección (según aplique)
+- 2) Datos clave: Organismo, Expediente, Tipo/Modalidad/Etapa, Objeto, Rubro, Lugar/área; contactos/portales (mails/URLs) si figuran.
+- 3) Alcance/vigencias: mantenimiento de oferta y prórroga; perfeccionamiento; ampliaciones/topes.
+- 4) Entregas: lugar/horarios; forma (única/parcelada); plazos por monto; flete/descarga.
+- 5) Presentación: sobre/caja, duplicado, firma, rotulado; documentación fiscal/registral (AFIP/ARBA/CM, A-404, Deudores Morosos, CBU BAPRO, Registro de Proveedores, poderes/DDJJ, etc.); costo/valor de pliego si existe.
+- 6) Evaluación: cuadro comparativo; tipo de cambio BNA; criterios cuali/cuantitativos; empate ≤2% (prioridad nacional, mejora, sustentable/calidad, sorteo).
+- 7) Garantías: umbrales por UC; % mantenimiento y % cumplimiento con plazos/condiciones; contragarantías.
+- 8) Muestras/envases/etiquetado/caducidad: ANMAT/BPM; cadena de frío; rotulados; vigencia mínima.
+- 9) Renglones/planilla: enumerar TODOS los renglones con Cantidad, Código (si hay), Descripción y **especificaciones técnicas** relevantes (una línea por renglón).
+- 10) Checklist: acciones para el oferente.
+- 11) Fechas críticas: presentación, apertura, mantenimiento, entregas, consultas, etc.
+- 12) Observaciones finales: alertas, condiciones condicionadas, compatibilidades, etc.
+
+Guía de sinónimos:
+{SINONIMOS}
+"""
+
+def _prompt_andres(varios_anexos: bool) -> str:
+    if varios_anexos:
+        reglas = (
+            "Reglas de Citas:\n"
+            "- Documento MULTI-ANEXO: al final de cada línea con dato, usar (Anexo X, p. N).\n"
+            "- Deducir N tomando la etiqueta [PÁGINA N] más cercana dentro del texto del ANEXO correspondiente.\n"
+            "- Si no hay paginación: (Fuente: documento provisto)."
+        )
+    else:
+        reglas = (
+            "Reglas de Citas:\n"
+            "- Documento ÚNICO: al final de cada línea con dato, usar (p. N) a partir de la etiqueta [PÁGINA N] más cercana.\n"
+            "- Si no hay paginación: (Fuente: documento provisto)."
+        )
+    return _BASE_PROMPT_ANDRES.format(
+        REGLAS_CITAS=reglas,
+        SINONIMOS=SINONIMOS_CANONICOS
+    )
+
+# (Se conserva el prompt anterior por compatibilidad interna)
 _BASE_PROMPT_MAESTRO = r"""
 # (Instrucciones internas: NO imprimir este encabezado ni estas reglas en la salida)
 Reglas clave:
@@ -864,8 +931,9 @@ def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexo
     if not evidencia and not FORCE_DETERMINISTIC_213_216:
         return informe
 
-    # 1) Intento con LLM (si hay evidencia) para expandir respetando estilo original
     out = informe
+
+    # 1) Intento LLM opcional (sin cambios de lógica general)
     if evidencia and not FORCE_DETERMINISTIC_213_216:
         en_informe_ren, en_informe_art = _conteo_en_informe(informe)
         debe_ampliar = (
@@ -877,16 +945,14 @@ def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexo
         if debe_ampliar:
             prompt = f"""
 (Reforzador de cobertura) Sustituye y/o expande SOLO las secciones:
-- 2.13 Planilla de cotización y renglones
-- 2.16 Catálogo de artículos citados
+- 9) Renglones y planilla de cotización  (o, si no existe, 2.13 Planilla de cotización y renglones)
+- ANEXO — Catálogo de artículos citados  (o, si no existe, 2.16 Catálogo de artículos citados)
 
-Requisitos:
-- 2.13: enumera TODOS los renglones detectados (una línea por renglón) con cantidades/UM/descripcion y **especificaciones técnicas** relevantes si aparecen; sin agrupar ni recortar.
-- 2.16: lista TODOS los artículos citados como "Art. N — síntesis literal 1–2 líneas".
-- Cita al final de cada línea: usa (Anexo X, p. N) o (p. N) según corresponda.
-- NO alteres ninguna otra sección del informe. Mantén exactamente el resto del texto tal cual.
-- NO imprimas encabezados tipo “Informe Original”.
-
+Reglas:
+- En renglones: lista TODOS los renglones (una línea por renglón) con cantidades/códigos y **especificaciones técnicas** relevantes.
+- En artículos: lista TODOS los artículos (“Art. N — síntesis literal 1–2 líneas”).
+- Cita al final de cada línea: (Anexo X, p. N) o (p. N).
+- NO alteres ninguna otra sección del informe.
 === INFORME ACTUAL ===
 {informe}
 
@@ -896,7 +962,7 @@ Requisitos:
             try:
                 resp = _llamada_openai(
                     [
-                        {"role": "system", "content": "Redactor técnico-jurídico. Expande solo 2.13 y 2.16 con listados exhaustivos y citas."},
+                        {"role": "system", "content": "Redactor técnico-jurídico. Expande renglones y artículos con listados exhaustivos y citas."},
                         {"role": "user", "content": prompt},
                     ],
                     model=_pick_model("sintesis"),
@@ -910,11 +976,19 @@ Requisitos:
     # 2) Sustitución determinística (garantía de cobertura)
     sec213 = _build_section_213(texto_fuente, varios_anexos)
     if sec213:
+        # Compatibilidad nueva: 9) Renglones...
+        alt213 = sec213.replace("2.13 Planilla de cotización y renglones:", "9) Renglones y planilla de cotización:")
+        out = _replace_section(out, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla", alt213)
+        # Compatibilidad previa
         out = _replace_section(out, r"(?im)^\s*2\.13\s+Planilla", sec213)
 
     sec216 = _build_section_216(texto_fuente, varios_anexos)
     if sec216:
-        out = _replace_section(out, r"(?im)^\s*2\.16\s+Cat[aá]logo de art", sec216)
+        # Compatibilidad nueva: ANEXO — Catálogo de artículos citados
+        alt216 = sec216.replace("2.16 Catálogo de artículos citados:", "ANEXO — Catálogo de artículos citados:")
+        out = _replace_section(out, r"(?im)^\s*(ANEXO|Anexo)s?\s*[-–—]?\s*Cat[aá]logo\s+de\s+art", alt216)
+        # Compatibilidad previa
+        out = _replace_section(out, r"(?im)^\s*2\.16\s+Cat[aá]logo\s+de\s+art", sec216)
 
     # NUEVO: 2.3 Contactos/portales (determinístico)
     sec23 = _build_section_23(texto_fuente, varios_anexos)
@@ -1074,7 +1148,8 @@ def analizar_con_openai(texto: str) -> str:
     texto_len = len(texto)
     n_anexos = _contar_anexos(texto)
     varios_anexos = n_anexos >= 2
-    prompt_maestro = _prompt_maestro(varios_anexos)
+    # Usar el nuevo prompt estilo Andrés
+    prompt_maestro = _prompt_andres(varios_anexos)
 
     # Hints regex (opcionales, capados por tamaño)
     hints = _build_regex_hints(texto) if ENABLE_REGEX_HINTS else ""
@@ -1137,7 +1212,7 @@ def analizar_con_openai(texto: str) -> str:
     max_out = _max_out_for_text(texto)
     messages_final = [
         {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
-        {"role": "user", "content": f"""{_prompt_maestro(varios_anexos)}
+        {"role": "user", "content": f"""{_prompt_andres(varios_anexos)}
 
 === NOTAS INTERMEDIAS INTEGRADAS (DEDUPE Y TRAZABILIDAD) ===
 {notas_integradas}
