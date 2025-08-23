@@ -3,53 +3,59 @@
 
 {% block extra_head %}
 <style>
-  /* ====== Mapeo de variables a tu tema global ====== */
+  /* ====== Tokens locales (fallbacks seguros) ====== */
   :root{
-    --bg-soft: #f6f7fe;
-    --text: var(--ink);
-    --text-1: var(--ink);
-    --text-2: var(--muted);
-    --brand: var(--accent-a);
+    --bg-soft:#f6f7fe;
+    --ink:#101828;            /* texto principal */
+    --ink-2:#344054;          /* texto secundario fuerte */
+    --ink-3:#475467;          /* meta/ayuda */
+    --brand: var(--accent-a, #3b82f6);
   }
   [data-theme="dark"]{
-    --bg-soft: #0f172a;
-    --brand: #a78bfa;
+    --bg-soft:#0f172a;
+    --ink:#e5e7eb;
+    --ink-2:#e2e8f0;
+    --ink-3:#cbd5e1;
+    --brand:#a78bfa;
   }
 
-  /* ====== Accesibilidad/contraste de esta vista ====== */
-  /* Tipos secundarios con contraste alto (fallback + color-mix) */
+  /* ====== Contraste alto (forzamos colores) ====== */
+  .hero-title, .notif-title { color: var(--ink) !important; }
+  .notif-body { color: var(--ink-2) !important; }
   .notif-meta,
+  .muted,
   .empty,
-  .muted{
-    color: #475467;
-    color: color-mix(in srgb, var(--text, #1f2937) 82%, white 18%);
-  }
-  .notif-body{
-    color: #344054;
-    color: color-mix(in srgb, var(--text, #1f2937) 92%, white 8%);
-  }
-  .soft-pill{ color: var(--text); }
+  #footHint { color: var(--ink-3) !important; opacity: 1 !important; }
 
-  /* Placeholders más legibles */
-  .form-control::placeholder{
-    color:#667085;
-    color: color-mix(in srgb, var(--text, #1f2937) 65%, white 35%);
-    opacity:1;
+  /* Input y selects: texto/placeholder legibles */
+  .form-control { color: var(--ink) !important; }
+  .form-control::placeholder { color: var(--ink-3) !important; opacity: 1; }
+  .input-group-text { color: var(--ink-3) !important; }
+  .form-select, .form-select option { color: var(--ink) !important; }
+
+  /* Labels de checks (Seleccionar todo, Auto-refresh) bien visibles */
+  .form-check-label { color: var(--ink-2) !important; }
+
+  /* Pill contador */
+  .soft-pill{
+    border-radius:999px; border:1px solid var(--border);
+    background: var(--bg-soft); color: var(--ink) !important;
+    padding:.2rem .5rem; font-size:.8rem;
   }
 
-  /* ====== Estilos específicos de la vista ====== */
+  /* Vacío “No hay notificaciones…” más legible */
+  .empty{ padding:18px; text-align:center; font-weight:600; }
+
+  /* ====== Tarjetas quietas (sin lift) ====== */
   .card-clean{ border:1px solid var(--border); border-radius:16px; box-shadow:var(--shadow); }
-
-  /* Desactivar “lift”/sombra al hover (quieto como todo lo demás) */
   .no-hover-lift,
   .no-hover-lift:hover,
   .no-hover-lift:focus-within{
-    transform: none !important;
-    translate: 0 !important;
-    scale: 1 !important;
-    box-shadow: var(--shadow) !important;
+    transform:none !important; translate:0 !important; scale:1 !important;
+    box-shadow:var(--shadow) !important;
   }
 
+  /* ====== Vista ====== */
   .toolbar{ gap:.5rem; }
   .toolbar .form-control, .toolbar .form-select{ border-radius:10px; }
 
@@ -62,11 +68,8 @@
   }
   .notif-item:last-child{ border-bottom:none; }
   .notif-item.unread{ background:var(--bg-soft); }
-  .notif-title{ font-weight:600; color:var(--text); }
   .notif-meta{ font-size:.88rem; }
   .actions .btn{ border-radius:8px!important; }
-
-  .empty{ padding:18px; text-align:center; }
 
   .skeleton{
     position:relative; overflow:hidden; border-bottom:1px solid var(--border);
@@ -90,7 +93,7 @@
 {% block content %}
 <div class="py-3">
   <div class="d-flex justify-content-between align-items-center mb-3">
-    <!-- 👇 sin campana -->
+    <!-- Sin campana -->
     <h1 class="hero-title mb-0">Notificaciones</h1>
     <a href="/" class="btn btn-outline-secondary btn-sm">← Volver</a>
   </div>
@@ -165,304 +168,163 @@
 
 {% block extra_scripts %}
 <script>
-  // ===== Helpers mínimos =====
+  /* (JS sin cambios) */
   const escapeHtml = (s)=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const $ = (sel)=> document.querySelector(sel);
   function debounce(fn, wait){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), wait); }; }
-  const fmtRel = (()=>{ // relative time helper
-    try{
-      const rtf = new Intl.RelativeTimeFormat('es', { numeric:'auto' });
-      return (iso)=>{
-        if(!iso) return '';
-        const d = new Date(iso); const diff = (d - new Date())/1000; // seconds
-        const abs = Math.abs(diff);
-        const units = [
-          ['year',  31536000],
-          ['month', 2592000],
-          ['week',  604800],
-          ['day',   86400],
-          ['hour',  3600],
-          ['minute',60],
-          ['second',1]
-        ];
-        for(const [u, s] of units){
-          if(abs >= s || u==='second'){
-            return rtf.format(Math.round(diff/s), u);
-          }
-        }
-        return '';
-      };
-    }catch(_){ return ()=>''; }
-  })();
+  const fmtRel = (()=>{ try{ const rtf = new Intl.RelativeTimeFormat('es',{numeric:'auto'}); return (iso)=>{ if(!iso) return ''; const d=new Date(iso); const diff=(d-new Date())/1000; const abs=Math.abs(diff); const units=[['year',31536000],['month',2592000],['week',604800],['day',86400],['hour',3600],['minute',60],['second',1]]; for(const [u,s] of units){ if(abs>=s||u==='second'){ return rtf.format(Math.round(diff/s),u); } } return ''; }; }catch(_){ return ()=>''; } })();
 
-  // ===== Estado global =====
-  const state = {
-    q: '',
-    onlyUnread: false,
-    limit: 20,
-    offset: 0,
-    loading: false,
-    done: false,
-    selected: new Set(),
-    pageIds: [],     // ids de la página actual (para "seleccionar todo")
-    totalShown: 0,
-    autoTimer: null
-  };
+  const state={ q:'', onlyUnread:false, limit:20, offset:0, loading:false, done:false, selected:new Set(), pageIds:[], totalShown:0, autoTimer:null };
 
-  // Prefill desde la URL
   (function hydrateFromURL(){
-    const usp = new URLSearchParams(location.search);
-    state.q = (usp.get('q')||'').trim();
-    state.onlyUnread = usp.get('only_unread') === '1';
-    if(state.q) $('#search').value = state.q;
-    $('#filterUnread').value = state.onlyUnread ? 'unread' : 'all';
+    const usp=new URLSearchParams(location.search);
+    state.q=(usp.get('q')||'').trim();
+    state.onlyUnread=usp.get('only_unread')==='1';
+    if(state.q) $('#search').value=state.q;
+    $('#filterUnread').value=state.onlyUnread?'unread':'all';
   })();
 
-  function syncURL(){
-    const usp = new URLSearchParams();
-    if(state.q) usp.set('q', state.q);
-    if(state.onlyUnread) usp.set('only_unread', '1');
-    const qs = usp.toString();
-    const newUrl = qs ? (`${location.pathname}?`+qs) : location.pathname;
-    history.replaceState(null, '', newUrl);
-  }
-
-  function renderCounter(){
-    $('#counter').textContent = `${state.totalShown} mostradas${state.onlyUnread ? ' (no leídas)' : ''}`;
-  }
-
-  function checkboxChanged(id, checked){
-    if(checked) state.selected.add(id); else state.selected.delete(id);
-    $('#btnMarkSelected').disabled = state.selected.size === 0;
-  }
+  function syncURL(){ const usp=new URLSearchParams(); if(state.q) usp.set('q',state.q); if(state.onlyUnread) usp.set('only_unread','1'); const qs=usp.toString(); history.replaceState(null,'', qs?(`${location.pathname}?`+qs):location.pathname); }
+  function renderCounter(){ $('#counter').textContent=`${state.totalShown} mostradas${state.onlyUnread?' (no leídas)':''}`; }
+  function checkboxChanged(id,checked){ if(checked) state.selected.add(id); else state.selected.delete(id); $('#btnMarkSelected').disabled=state.selected.size===0; }
 
   function renderSkeleton(n=4){
-    const list = $('#list'); list.innerHTML = '';
-    const frag = document.createDocumentFragment();
-    for(let i=0;i<n;i++){
-      const sk = document.createElement('div');
-      sk.className='skeleton';
-      sk.innerHTML = `
-        <div class="sk-bar" style="width:38%; height:14px"></div>
-        <div class="sk-bar" style="width:82%"></div>
-        <div class="sk-bar" style="width:56%"></div>
-      `;
-      frag.appendChild(sk);
-    }
+    const list=$('#list'); list.innerHTML='';
+    const frag=document.createDocumentFragment();
+    for(let i=0;i<n;i++){ const sk=document.createElement('div'); sk.className='skeleton'; sk.innerHTML=`<div class="sk-bar" style="width:38%; height:14px"></div><div class="sk-bar" style="width:82%"></div><div class="sk-bar" style="width:56%"></div>`; frag.appendChild(sk); }
     list.appendChild(frag);
   }
 
-  function renderList(items, append){
-    const list = $('#list');
-    if(!append){ list.innerHTML = ''; state.pageIds = []; $('#selAllPage').checked = false; }
-    if(!items || !items.length){
-      if(!append) list.innerHTML = '<div class="empty">No hay notificaciones con esos criterios.</div>';
-      return;
-    }
-    const frag = document.createDocumentFragment();
+  function renderList(items,append){
+    const list=$('#list');
+    if(!append){ list.innerHTML=''; state.pageIds=[]; $('#selAllPage').checked=false; }
+    if(!items||!items.length){ if(!append) list.innerHTML='<div class="empty">No hay notificaciones con esos criterios.</div>'; return; }
+    const frag=document.createDocumentFragment();
     items.forEach(n=>{
-      const id = String(n.id ?? n._id ?? crypto.randomUUID());
+      const id=String(n.id ?? n._id ?? crypto.randomUUID());
       state.pageIds.push(id);
-      const div = document.createElement('div');
-      div.className = 'notif-item' + (!n.leida ? ' unread' : '');
+      const div=document.createElement('div');
+      div.className='notif-item'+(!n.leida?' unread':'');
       div.setAttribute('role','listitem');
-      div.dataset.id = id;
-      div.innerHTML = `
+      div.dataset.id=id;
+      div.innerHTML=`
         <div class="form-check mt-1">
           <input class="form-check-input" type="checkbox" id="chk_${id}">
         </div>
         <div>
           <div class="d-flex align-items-center gap-2">
-            <div class="notif-title">${escapeHtml(n.titulo || 'Notificación')}</div>
-            ${n.tipo ? `<span class="badge-kind">${escapeHtml(n.tipo)}</span>` : ''}
+            <div class="notif-title">${escapeHtml(n.titulo||'Notificación')}</div>
+            ${n.tipo?`<span class="soft-pill">${escapeHtml(n.tipo)}</span>`:''}
           </div>
-          <div class="notif-body">${escapeHtml(n.cuerpo || '')}</div>
-          <div class="notif-meta">${escapeHtml(n.fecha_legible || '')} ${n.origen ? `• ${escapeHtml(n.origen)}` : ''} ${n.fecha_iso ? `• ${escapeHtml(fmtRel(n.fecha_iso))}` : ''}</div>
+          <div class="notif-body">${escapeHtml(n.cuerpo||'')}</div>
+          <div class="notif-meta">${escapeHtml(n.fecha_legible||'')} ${n.origen?`• ${escapeHtml(n.origen)}`:''} ${n.fecha_iso?`• ${escapeHtml(fmtRel(n.fecha_iso))}`:''}</div>
         </div>
         <div class="actions d-flex align-items-start gap-1">
-          ${!n.leida ? `<button class="btn btn-sm btn-outline-success" data-action="read">Marcar leída</button>` : ''}
+          ${!n.leida?`<button class="btn btn-sm btn-outline-success" data-action="read">Marcar leída</button>`:''}
           <button class="btn btn-sm btn-outline-danger" data-action="delete" title="Eliminar"><i class="bi bi-trash"></i></button>
-        </div>
-      `;
-
-      // Selección
-      const chk = div.querySelector(`#chk_${CSS.escape(id)}`);
-      chk.addEventListener('change', (e)=> checkboxChanged(id, e.target.checked));
-
-      // Acciones por item
+        </div>`;
+      const chk=div.querySelector(`#chk_${CSS.escape(id)}`);
+      chk.addEventListener('change',(e)=>checkboxChanged(id,e.target.checked));
       div.querySelector('.actions').addEventListener('click', async (e)=>{
-        const btn = e.target.closest('button'); if(!btn) return;
-        if(btn.dataset.action === 'read'){
-          // Optimista
+        const btn=e.target.closest('button'); if(!btn) return;
+        if(btn.dataset.action==='read'){
           div.classList.remove('unread'); btn.disabled=true;
-          try{
-            await markIdsAsRead([id]);
-            btn.remove();
-          }catch(_){
-            btn.disabled=false; div.classList.add('unread');
-            (window.showToast||console.error)({title:'Error', body:'No se pudo marcar.', icon:'exclamation-triangle'});
-          }
-        }else if(btn.dataset.action === 'delete'){
+          try{ await markIdsAsRead([id]); btn.remove(); }
+          catch(_){ btn.disabled=false; div.classList.add('unread'); (window.showToast||console.error)({title:'Error',body:'No se pudo marcar.',icon:'exclamation-triangle'}); }
+        }else if(btn.dataset.action==='delete'){
           if(!confirm('¿Eliminar esta notificación?')) return;
           try{
-            const r = await fetch('/notificaciones/eliminar',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id })});
+            const r=await fetch('/notificaciones/eliminar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
             if(!r.ok) throw new Error();
-            div.remove();
-            state.totalShown = Math.max(0, state.totalShown - 1);
-            state.selected.delete(id);
-            renderCounter();
-            (window.showToast||console.log)({title:'Notificación eliminada', icon:'trash'});
-          }catch(_){
-            (window.showToast||console.error)({title:'Error', body:'No se pudo eliminar.', icon:'exclamation-triangle'});
-          }
+            div.remove(); state.totalShown=Math.max(0,state.totalShown-1); state.selected.delete(id); renderCounter();
+            (window.showToast||console.log)({title:'Notificación eliminada',icon:'trash'});
+          }catch(_){ (window.showToast||console.error)({title:'Error',body:'No se pudo eliminar.',icon:'exclamation-triangle'}); }
         }
       });
-
       frag.appendChild(div);
     });
     list.appendChild(frag);
   }
 
   async function fetchList({append=false}={}){
-    if(state.loading || state.done) return;
-    state.loading = true;
-    $('#loadMore').disabled = true; $('#loadMore').textContent = 'Cargando…';
-    if(!append && state.offset === 0) renderSkeleton(4);
+    if(state.loading||state.done) return;
+    state.loading=true;
+    $('#loadMore').disabled=true; $('#loadMore').textContent='Cargando…';
+    if(!append&&state.offset===0) renderSkeleton(4);
     try{
-      const params = new URLSearchParams({
-        limit: String(state.limit),
-        offset: String(state.offset)
-      });
-      if(state.q) params.set('q', state.q);
+      const params=new URLSearchParams({ limit:String(state.limit), offset:String(state.offset) });
+      if(state.q) params.set('q',state.q);
       if(state.onlyUnread) params.set('only_unread','1');
-
-      const r = await fetch(`/notificaciones?${params.toString()}`, { headers:{'Accept':'application/json'} });
+      const r=await fetch(`/notificaciones?${params.toString()}`,{headers:{'Accept':'application/json'}});
       if(!r.ok) throw new Error('HTTP '+r.status);
-      const data = await r.json();
-      const items = data.items || data.lista || [];
-      renderList(items, append);
-      state.offset += items.length;
-      state.totalShown += items.length;
-      if(items.length < state.limit) state.done = true;
-      $('#loadMore').style.display = state.done ? 'none' : 'inline-block';
-      $('#footHint').textContent = state.done ? 'No hay más resultados' : 'Desplazate para cargar más';
+      const data=await r.json();
+      const items=data.items||data.lista||[];
+      renderList(items,append);
+      state.offset+=items.length; state.totalShown+=items.length;
+      if(items.length<state.limit) state.done=true;
+      $('#loadMore').style.display=state.done?'none':'inline-block';
+      $('#footHint').textContent=state.done?'No hay más resultados':'Desplazate para cargar más';
       renderCounter();
     }catch(e){
-      if(!append) $('#list').innerHTML = '<div class="empty">No se pudieron cargar las notificaciones.</div>';
+      if(!append) $('#list').innerHTML='<div class="empty">No se pudieron cargar las notificaciones.</div>';
     }finally{
-      state.loading = false;
-      $('#loadMore').disabled = false; $('#loadMore').textContent = 'Cargar más';
+      state.loading=false; $('#loadMore').disabled=false; $('#loadMore').textContent='Cargar más';
     }
   }
 
-  async function reloadList(resetOffset){
-    if(resetOffset){
-      state.offset = 0; state.done = false; state.totalShown = 0;
-      state.selected.clear(); $('#btnMarkSelected').disabled = true;
-    }
+  async function reloadList(reset){
+    if(reset){ state.offset=0; state.done=false; state.totalShown=0; state.selected.clear(); $('#btnMarkSelected').disabled=true; }
     await fetchList({append:false});
   }
 
   async function markIdsAsRead(ids){
-    if(!ids || !ids.length) return;
+    if(!ids||!ids.length) return;
     try{
-      const r = await fetch('/notificaciones/marcar-leidas',{
-        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ids })
-      });
+      const r=await fetch('/notificaciones/marcar-leidas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
       if(!r.ok) throw new Error();
-      (window.showToast||console.log)({title:'Listo', body:(ids.length>1? 'Notificaciones marcadas' : 'Notificación marcada'), icon:'check2-circle'});
-      state.selected.clear(); $('#btnMarkSelected').disabled = true;
-      // Actualizar campanita global (base.html)
-      if(typeof window.refreshNotif === 'function') await window.refreshNotif();
-      else if(typeof window.fetchNotifs === 'function') await window.fetchNotifs();
-    }catch(_){
-      (window.showToast||console.error)({title:'Error', body:'No se pudieron marcar como leídas.', icon:'exclamation-triangle'});
-      throw _;
-    }
+      (window.showToast||console.log)({title:'Listo',body:(ids.length>1?'Notificaciones marcadas':'Notificación marcada'),icon:'check2-circle'});
+      state.selected.clear(); $('#btnMarkSelected').disabled=true;
+      if(typeof window.refreshNotif==='function') await window.refreshNotif();
+      else if(typeof window.fetchNotifs==='function') await window.fetchNotifs();
+    }catch(_){ (window.showToast||console.error)({title:'Error',body:'No se pudieron marcar como leídas.',icon:'exclamation-triangle'}); throw _; }
   }
 
   async function markAllAsRead(){
     try{
       await fetch('/notificaciones/marcar-leidas',{method:'POST'});
-      (window.showToast||console.log)({title:'Notificaciones', body:'Marcadas como leídas', icon:'check2-circle'});
-      if(typeof window.refreshNotif === 'function') await window.refreshNotif();
-      else if(typeof window.fetchNotifs === 'function') await window.fetchNotifs();
+      (window.showToast||console.log)({title:'Notificaciones',body:'Marcadas como leídas',icon:'check2-circle'});
+      if(typeof window.refreshNotif==='function') await window.refreshNotif();
+      else if(typeof window.fetchNotifs==='function') await window.fetchNotifs();
       await reloadList(true);
-    }catch(_){
-      (window.showToast||console.error)({title:'Error', body:'No se pudieron marcar todas.', icon:'exclamation-triangle'});
-    }
+    }catch(_){ (window.showToast||console.error)({title:'Error',body:'No se pudieron marcar todas.',icon:'exclamation-triangle'}); }
   }
 
-  // ===== Seleccionar todo (página) =====
-  $('#selAllPage').addEventListener('change', (e)=>{
-    const check = e.target.checked;
+  $('#selAllPage').addEventListener('change',(e)=>{
+    const check=e.target.checked;
     state.pageIds.forEach(id=>{
-      const box = document.getElementById(`chk_${CSS.escape(id)}`);
-      if(box){ box.checked = check; checkboxChanged(id, check); }
+      const box=document.getElementById(`chk_${CSS.escape(id)}`);
+      if(box){ box.checked=check; checkboxChanged(id,check); }
     });
   });
 
-  // ===== Eventos UI =====
   document.addEventListener('DOMContentLoaded', ()=>{
-    const onSearch = debounce(()=>{ state.q = $('#search').value.trim(); syncURL(); state.offset=0; state.done=false; state.totalShown=0; reloadList(true); }, 300);
+    const onSearch=debounce(()=>{ state.q=$('#search').value.trim(); syncURL(); state.offset=0; state.done=false; state.totalShown=0; reloadList(true); },300);
     $('#search').addEventListener('input', onSearch);
-
-    $('#filterUnread').addEventListener('change', ()=>{
-      state.onlyUnread = $('#filterUnread').value === 'unread';
-      syncURL();
-      state.offset=0; state.done=false; state.totalShown=0;
-      reloadList(true);
-    });
-
-    $('#pageSize').addEventListener('change', ()=>{
-      const v = parseInt($('#pageSize').value,10)||20;
-      state.limit = v;
-      state.offset=0; state.done=false; state.totalShown=0;
-      reloadList(true);
-    });
-
-    $('#loadMore').addEventListener('click', ()=> fetchList({append:true}));
+    $('#filterUnread').addEventListener('change', ()=>{ state.onlyUnread=$('#filterUnread').value==='unread'; syncURL(); state.offset=0; state.done=false; state.totalShown=0; reloadList(true); });
+    $('#pageSize').addEventListener('change', ()=>{ const v=parseInt($('#pageSize').value,10)||20; state.limit=v; state.offset=0; state.done=false; state.totalShown=0; reloadList(true); });
+    $('#loadMore').addEventListener('click', ()=>fetchList({append:true}));
     $('#btnMarkAll').addEventListener('click', async ()=>{ if(confirm('¿Marcar todas las notificaciones actuales como leídas?')) await markAllAsRead(); });
-    $('#btnMarkSelected').addEventListener('click', async ()=>{
-      if(state.selected.size){
-        await markIdsAsRead([...state.selected]);
-        await reloadList(true);
-      }
-    });
+    $('#btnMarkSelected').addEventListener('click', async ()=>{ if(state.selected.size){ await markIdsAsRead([...state.selected]); await reloadList(true); } });
     $('#btnRefresh').addEventListener('click', ()=> reloadList(true));
-
-    // Auto-refresh
-    $('#autoRefresh').addEventListener('change', ()=>{
-      if($('#autoRefresh').checked) startAuto(); else stopAuto();
-    });
+    $('#autoRefresh').addEventListener('change', ()=>{ if($('#autoRefresh').checked) startAuto(); else stopAuto(); });
   });
 
-  // ===== Auto-load al hacer scroll (IntersectionObserver) =====
-  const io = new IntersectionObserver((entries)=>{
-    for(const ent of entries){
-      if(ent.isIntersecting && !state.loading && !state.done){
-        fetchList({append:true});
-      }
-    }
-  }, {rootMargin: '256px 0px'});
+  const io=new IntersectionObserver((entries)=>{ for(const ent of entries){ if(ent.isIntersecting && !state.loading && !state.done){ fetchList({append:true}); } } }, {rootMargin:'256px 0px'});
   io.observe(document.getElementById('sentinel'));
 
-  // ===== Auto-refresh (20s) =====
-  function startAuto(){
-    stopAuto();
-    state.autoTimer = setInterval(()=>{
-      // Mantiene filtros, resetea paginación para traer novedades arriba
-      state.offset = 0; state.done = false; state.totalShown = 0; reloadList(true);
-    }, 20000);
-  }
+  function startAuto(){ stopAuto(); state.autoTimer=setInterval(()=>{ state.offset=0; state.done=false; state.totalShown=0; reloadList(true); },20000); }
   function stopAuto(){ if(state.autoTimer){ clearInterval(state.autoTimer); state.autoTimer=null; } }
 
-  // ===== Init =====
-  (async ()=>{
-    // Tamaño por defecto desde select
-    state.limit = parseInt($('#pageSize').value,10)||20;
-    await reloadList(true);
-    if($('#autoRefresh').checked) startAuto();
-  })();
+  (async ()=>{ state.limit=parseInt($('#pageSize').value,10)||20; await reloadList(true); if($('#autoRefresh').checked) startAuto(); })();
 </script>
 {% endblock %}
