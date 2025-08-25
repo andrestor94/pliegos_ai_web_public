@@ -11,7 +11,7 @@ import sqlite3
 import re
 import time
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta  # ⬅️ import timedelta (nuevo)
 from typing import Optional, List, Dict, Any, Tuple
 
 # zoneinfo para manejar zona horaria local (Python 3.9+)
@@ -594,9 +594,22 @@ def borrar_usuario(
 # Historial de análisis
 # =============================================================================
 
+def _now_local() -> datetime:
+    """
+    Devuelve datetime 'aware' en la zona APP_TIMEZONE.
+    Fallback: UTC-3 si ZoneInfo no está disponible.
+    """
+    if ZoneInfo:
+        try:
+            return datetime.now(ZoneInfo(APP_TIMEZONE))
+        except Exception:
+            pass
+    # Fallback simple: UTC-3
+    return datetime.utcnow() - timedelta(hours=3)
+
 def _ahora_stamp() -> str:
     """Devuelve timestamp local como 'YYYYMMDDHHMMSS' (compatible con historial.timestamp)."""
-    return datetime.now().strftime("%Y%m%d%H%M%S")
+    return _now_local().strftime("%Y%m%d%H%M%S")
 
 def guardar_en_historial(
     timestamp: str,
