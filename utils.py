@@ -496,7 +496,7 @@ def _prompt_maestro(varios_anexos: bool) -> str:
         "- En 'Normativa aplicable': listar todas las normas mencionadas (Ley/Decreto/Resolucion/Disposicion, numero y ano).\n"
         "- En 'Catalogo de articulos citados': incluir cada articulo que figure, con sintesis literal 1–2 lineas.\n"
     )
-    return f\"{_BASE_PROMPT_MAESTRO}\n{regla_citas}{extras}\nGuia de sinonimos:\n{SINONIMOS_CANONICOS}\"
+    return f"{_BASE_PROMPT_MAESTRO}\n{regla_citas}{extras}\nGuia de sinonimos:\n{SINONIMOS_CANONICOS}"
 
 CRAFT_PROMPT_NOTAS = r"""
 Genera NOTAS INTERMEDIAS en bullets, ultra concisas, con cita al final de cada bullet.
