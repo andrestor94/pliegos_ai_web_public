@@ -17,7 +17,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import HexColor
-from zoneinfo import ZoneInfo  # <<< agregado para fallback local AR
+from zoneinfo import ZoneInfo  # <<< fallback horario AR
 
 # ========================= Opcionales (DOCX) =========================
 try:
@@ -47,9 +47,9 @@ MAX_COMPLETION_TOKENS_SALIDA = int(os.getenv("MAX_COMPLETION_TOKENS_SALIDA", "35
 TEMPERATURE_ANALISIS = os.getenv("TEMPERATURE_ANALISIS", "").strip()
 ANALISIS_MODO = os.getenv("ANALISIS_MODO", "").lower().strip()  # "fast" opcional
 
-# Granularidad / anti-copia ligera (sin perder cobertura)
-RENGLON_DESC_MAX_WORDS = int(os.getenv("RENGLON_DESC_MAX_WORDS", "24"))   # palabras máx en descripción del renglón
-ART_SNIPPET_MAX_WORDS  = int(os.getenv("ART_SNIPPET_MAX_WORDS", "18"))    # palabras máx en snippet de artículo
+# Granularidad / anti-copia ligera
+RENGLON_DESC_MAX_WORDS = int(os.getenv("RENGLON_DESC_MAX_WORDS", "24"))
+ART_SNIPPET_MAX_WORDS  = int(os.getenv("ART_SNIPPET_MAX_WORDS", "18"))
 
 # Concurrencia
 ANALISIS_CONCURRENCY = int(os.getenv("ANALISIS_CONCURRENCY", "3"))
@@ -73,10 +73,10 @@ ENABLE_SECOND_PASS_COMPLETION = int(os.getenv("ENABLE_SECOND_PASS_COMPLETION", "
 
 # --- Limitar enumeraciones y desactivar expansiones automáticas (nuevo) ---
 EXPAND_SECTIONS_213_216 = int(os.getenv("EXPAND_SECTIONS_213_216", "0"))   # 0 = NO expandir ni sustituir 2.13/2.16
-MAX_RENGLONES_OUT       = int(os.getenv("MAX_RENGLONES_OUT", "12"))        # tope de renglones si se arma 2.13
-MAX_ARTICULOS_OUT       = int(os.getenv("MAX_ARTICULOS_OUT", "12"))        # tope de artículos si se arma 2.16
+MAX_RENGLONES_OUT       = int(os.getenv("MAX_RENGLONES_OUT", "12"))
+MAX_ARTICULOS_OUT       = int(os.getenv("MAX_ARTICULOS_OUT", "12"))
 
-# Forzar reemplazo determinístico de 2.13 y 2.16 (cobertura total) -> default ahora 0
+# Forzar reemplazo determinístico de 2.13 y 2.16 -> default 0
 FORCE_DETERMINISTIC_213_216 = int(os.getenv("FORCE_DETERMINISTIC_213_216", "0"))
 
 # ========================= Timers PERF =========================
@@ -115,7 +115,7 @@ def _ocr_openai_imagen_b64(b64_png: str) -> str:
     except Exception as e:
         return f"[OCR-ERROR] {e}"
 
-# ---- OCR selectivo en paralelo ----
+# ---- OCR selectivo en paralelo (MUESTREO UNIFORME EN TODO EL DOC) ----
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def _ocr_pagina_png_bytes(png_bytes: bytes, idx: int) -> str:
@@ -133,11 +133,10 @@ def _ocr_selectivo_por_pagina(doc: fitz.Document, max_pages: int) -> str:
         return ""
     to_process = min(n, max_pages)
 
-    # Índices muestreados de forma uniforme sobre [0, n-1]
+    # Índices muestreados uniformemente en [0, n-1]
     if to_process >= n:
         page_idxs = list(range(n))
     else:
-        # set para evitar duplicados por redondeo
         page_idxs = sorted({int(round(i * (n - 1) / max(1, to_process - 1))) for i in range(to_process)})
 
     resultados_map: Dict[int, str] = {}
@@ -303,6 +302,7 @@ def extraer_texto_universal(file) -> str:
     out = (text or "").strip()
     _log_tiempo("extraer_texto_universal_texto_plano", t0)
     return out
+
 # ==================== Pre-limpieza ====================
 def _limpieza_basica_preanalisis(s: str) -> str:
     s = re.sub(r"\n?P[aá]gina\s+\d+\s+de\s+\d+\s*\n", "\n", s, flags=re.I)
@@ -310,7 +310,6 @@ def _limpieza_basica_preanalisis(s: str) -> str:
     s = re.sub(r"[ \t]+\n", "\n", s)
     s = re.sub(r"\n{3,}", "\n\n", s)
     return s.strip()
-
 # ==================== Prompts y limpieza ====================
 SINONIMOS_CANONICOS = r"""
 [Guía de mapeo semántico – Argentina (nacional, provincial, municipal)]
@@ -343,35 +342,20 @@ Usá esta guía: si un campo aparece con sinónimos/variantes, NO lo marques com
 No menciones nombres de portales/sistemas salvo que estén explícitamente en los documentos analizados.
 """
 
-# ======= PROMPT MAESTRO ESTILO ANDRÉS (con Ficha estandarizada + 1–12) =======
+# ======= PROMPT MAESTRO ESTILO ANDRÉS (ajustado anti-eco) =======
 _BASE_PROMPT_ANDRES = r"""
 # (Instrucciones internas: NO imprimir este encabezado ni estas reglas en la salida)
 
 Objetivo
 - Generar un **informe de análisis de licitación en Argentina** (ámbitos nacional, provincial o municipal), exhaustivo y **sin invenciones**.
-- La salida debe comenzar con una **Ficha estandarizada del procedimiento (campos estandarizados)** siguiendo **estos rótulos exactos**:
-  • N° de proceso
-  • Nombre de proceso
-  • Objeto de la contratación
-  • Procedimiento de selección
-  • Tipo de cotización
-  • Tipo de adjudicación
-  • Cantidad de ofertas permitidas
-  • Estado
-  • Plazo de mantenimiento de la oferta
-  • Número de renglón (indicar “Total de renglones: N; ver Sección 9 para el detalle completo”)
-  • Objeto del gasto
-  • Código del ítem (si corresponde a nivel renglón, dejar referencia a Sección 9)
-  • Descripción   (si corresponde a nivel renglón, dejar referencia a Sección 9)
-  • Cantidad      (si corresponde a nivel renglón, dejar referencia a Sección 9)
-  • Inicio y final de consultas
-  • Fecha y hora del acto de apertura
-  • Monto
-  • Moneda
-  • Duración del contrato
-- Si algo NO figura en los archivos, escribir **“NO ESPECIFICADO”** y **no inventar ni inferir**.
-- Cada línea con dato crítico debe terminar con **cita de fuente**, según “Reglas de Citas”.
-- **Además de la Ficha**, se deben incluir las secciones 1–12 (debajo) para **no perder nada** de valor del informe ampliado.
+- La salida debe comenzar con el encabezado literal: **0) Ficha estandarizada del procedimiento (campos estandarizados)**,
+  seguido EXCLUSIVAMENTE por las 19 líneas con rótulo exacto y valor en el formato **"Rótulo: valor (cita)"**.
+  **No copies ninguna frase de estas instrucciones dentro de la Ficha.**
+- Para **"Número de renglón"**: NO escribas texto libre. Escribe exactamente **"Total de renglones: N; ver Sección 9 para el detalle completo"** (con N real).
+- Para **"Código del ítem"**, **"Descripción"** y **"Cantidad"**: si existen a nivel renglón/planilla, escribe **"Ver Sección 9 (detalle por renglón)"**.
+- Si algo NO figura en los archivos, escribir **"NO ESPECIFICADO"** y **no inventar ni inferir**.
+- Cada línea con dato crítico debe terminar con **cita de fuente** según “Reglas de Citas”.
+- **Además de la Ficha**, incluir las secciones 1–12 (debajo) para no perder nada del informe ampliado.
 
 {REGLAS_CITAS}
 
@@ -382,7 +366,7 @@ Estilo
 - No mencionar nombres de portales/sistemas salvo que figuren explícitamente en los documentos.
 
 Estructura de salida EXACTA (usar estos títulos tal cual)
-0) Ficha estandarizada del procedimiento (campos estandarizados)    <-- PRIMERO (con la lista de 19 ítems)
+0) Ficha estandarizada del procedimiento (campos estandarizados)
 1) Resumen ejecutivo (≤200 palabras)
 2) Datos clave del llamado
 3) Alcance contractual y vigencias
@@ -404,7 +388,7 @@ Cobertura obligatoria por sección (según aplique)
 - 6) Evaluación: cuadro comparativo; tipo de cambio; criterios cuali/cuantitativos; empates; mejora de precio.
 - 7) Garantías: umbrales por UC si aplica; % mantenimiento y % cumplimiento con plazos/condiciones; contragarantías.
 - 8) Muestras/envases/etiquetado/caducidad: ANMAT/BPM; cadena de frío; rotulados; vigencia mínima.
-- 9) Renglones/planilla: **incluir TODOS los renglones** (si existe planilla). Por renglón: Cantidad, Código (si hay), Descripción y **especificaciones técnicas** relevantes en 1 línea. Si hay demasiados, mantener listado completo aunque la descripción se acote.
+- 9) Renglones/planilla: incluir TODOS los renglones (si existe planilla). Por renglón: Cantidad, Código (si hay), Descripción y especificaciones técnicas relevantes en 1 línea.
 - 10) Checklist: acciones para el oferente.
 - 11) Fechas críticas: presentación, apertura, mantenimiento, entregas, consultas, etc.
 - 12) Observaciones finales: alertas y condicionantes.
@@ -432,128 +416,24 @@ def _prompt_andres(varios_anexos: bool) -> str:
         SINONIMOS=SINONIMOS_CANONICOS
     )
 
-# (Se conserva el prompt anterior por compatibilidad interna)
-_BASE_PROMPT_MAESTRO = r"""
-# (Instrucciones internas: NO imprimir este encabezado ni estas reglas en la salida)
-Reglas clave:
-- Cero invenciones; si falta o es ambiguo: escribir "NO ESPECIFICADO" y explicarlo en la misma sección.
-- Cada dato crítico debe terminar con su fuente entre paréntesis, según las Reglas de Citas.
-- Cobertura completa (oferta → ejecución), con normativa citada.
-- Deduplicar, fusionar, no repetir; un único informe integrado.
-- Prohibido meta texto tipo "parte X de Y" o "revise el resto".
-- No imprimir etiquetas internas como [PÁGINA N].
-- No usar los títulos literales "Informe Completo" ni "Informe Original".
-
-Formato de salida:
-1) RESUMEN DE PLIEGO (≤200 palabras)
-2) INFORME DETALLADO CON TRAZABILIDAD
-   2.1 Identificación del llamado
-   2.2 Calendario y lugares
-   2.3 Contactos y portales (listar TODOS los e-mails y URLs detectados)
-   2.4 Alcance y plazo contractual
-   2.5 Tipología / modalidad (citar norma/artículos)
-   2.6 Mantenimiento de oferta y prórroga
-   2.7 Garantías (umbral UC, %, plazos, formas)
-   2.8 Presentación de ofertas (soporte, firmas, docs obligatorias) e incluir costo/valor del pliego y mecanismo de adquisición/pago
-   2.9 Apertura, evaluación y adjudicación (tipo de cambio BNA, comisión, criterios, preferencias)
-   2.10 Subsanación (qué sí/no)
-   2.11 Perfeccionamiento y modificaciones
-   2.12 Entrega, lugares y plazos
-   2.13 Planilla de cotización y renglones (enumerar TODOS los renglones; por renglón incluir cantidades, UM, descripción y **especificaciones técnicas** relevantes)
-   2.14 Muestras
-   2.15 Normativa aplicable (todas las leyes/decretos/resoluciones/disposiciones citadas, con número/año y fuente)
-   2.16 Catálogo de artículos citados (Art. N — **síntesis literal 1–2 líneas del contenido**; una línea por artículo; con cita)
-
-Estilo:
-- Títulos con mayúsculas iniciales, listas claras, tablas simples. Sin "#".
-- Aplicar la Guía de sinónimos.
-"""
-
-def _prompt_maestro(varios_anexos: bool) -> str:
-    if varios_anexos:
-        regla_citas = (
-            "Reglas de Citas:\n"
-            "- Al final de cada línea con dato, usar (Anexo X, p. N).\n"
-            "- Para deducir p. N, utiliza la etiqueta [PÁGINA N] más cercana al dato dentro del texto provisto de ese ANEXO.\n"
-            "- Si NO consta paginación pero sí el anexo, usar (Anexo X).\n"
-            "- Si el campo es NO ESPECIFICADO, usar (Fuente: documento provisto) (no inventar página/anexo).\n"
-        )
-    else:
-        regla_citas = (
-            "Reglas de Citas:\n"
-            "- Documento único: al final de cada línea con dato, usar (p. N).\n"
-            "- Para deducir p. N, utiliza la etiqueta [PÁGINA N] más cercana al dato dentro del texto provisto.\n"
-            "- Prohibido escribir 'Anexo I' u otros anexos en las citas.\n"
-            "- Si el campo es NO ESPECIFICADO, usar (Fuente: documento provisto) (no inventar página).\n"
-        )
-    extras = (
-        "\nCriterios anti-omisión:\n"
-        "- En 'Contactos y portales': incluir absolutamente todos los e-mails/dominos/URLs detectados.\n"
-        "- En 'Planilla de cotización y renglones': enumerar todos los renglones y sumar especificaciones técnicas por renglón.\n"
-        "- En 'Normativa aplicable': listar todas las normas mencionadas (Ley/Decreto/Resolución/Disposición, número y año).\n"
-        "- En 'Catálogo de artículos citados': incluir cada artículo que figure, con síntesis literal 1–2 líneas.\n"
-    )
-    return f"{_BASE_PROMPT_MAESTRO}\n{regla_citas}{extras}\nGuía de sinónimos:\n{SINONIMOS_CANONICOS}"
-
-CRAFT_PROMPT_NOTAS = r"""
-Genera NOTAS INTERMEDIAS en bullets, ultra concisas, con cita al final de cada bullet.
-- SOLO bullets (sin encabezados, sin "parte x/y", sin conclusiones).
-- Etiqueta tema + cita en paréntesis.
-- Si NO hay paginación: (Fuente: documento provisto).
-- Usa la Guía de sinónimos y conserva la terminología encontrada.
-Ejemplos:
-- [IDENTIFICACION] Organismo: ... (p. 1)
-- [CALENDARIO] Presentación: DD/MM/AAAA HH:MM — Lugar: ... (p. 2)
-- [GARANTIAS] Mant. 5%; Cumpl. ≥10% ≤7 días hábiles (p. 4)
-- [CONTACTO] Email ... / Portal ... (p. 2)
-- [COSTO PLIEGO] Valor $... — medio de pago: ... (p. N)
-- [PRESUPUESTO] Monto: $... (p. N)
-- [PLANILLA/RENGLONES] Renglón X: ... (p. N)
-- [ESPEC TECNICAS] Renglón X: requisito ... (p. N)
-- [NORMATIVA] Ley/Decreto/Resolución ... (p. N)
-- [ARTICULO] Art. 17 — síntesis ... (p. N)
-- [FALTA] campo X — NO ESPECIFICADO. (Fuente: documento provisto)
-"""
-
-# Filtrado de metafrases y títulos no deseados
-_META_PATTERNS = [
-    re.compile(r"(?i)\bparte\s+\d+\s+de\s+\d+"),
-    re.compile(r"(?i)informe\s+basado\s+en\s+la\s+parte"),
-    re.compile(r"(?i)revise\s+las\s+partes\s+restantes"),
-    re.compile(r"(?i)información\s+puede\s+estar\s+incompleta"),
-    re.compile(r"(?i)^\s*informe\s+completo\s*$"),
-    re.compile(r"(?i)^\s*informe\s+original\s*$"),
-]
-
-def _limpiar_meta(texto: str) -> str:
-    lineas = []
-    for ln in texto.splitlines():
-        if any(p.search(ln) for p in _META_PATTERNS):
-            continue
-        lineas.append(ln)
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(lineas)).strip()
-def _particionar(texto: str, max_chars: int) -> list[str]:
-    return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
-
+# ---------------------- Índices y citas ----------------------
 _ANEXO_RE = re.compile(r"(?im)^===\s*ANEXO\s+(\d+)")
-def _contar_anexos(s: str) -> int:
-    return len(_ANEXO_RE.findall(s or ""))
-
-# =============== Índices de páginas y anexos ===============
 _PAG_TAG_RE = re.compile(r"\[PÁGINA\s+(\d+)\]")
 
 def _index_paginas(s: str) -> List[Tuple[int,int]]:
-    return [(m.start(), int(m.group(1))) for m in _PAG_TAG_RE.finditer(s)]
+    return [(m.start(), int(m.group(1))) for m in _PAG_TAG_RE.finditer(s or "")]
+
+def _index_anexos(s: str) -> List[Tuple[int,int]]:
+    return [(m.start(), int(m.group(1))) for m in _ANEXO_RE.finditer(s or "")]
 
 def _pagina_de_indice(indices: List[Tuple[int,int]], pos: int) -> int:
     last = 1
     for i, p in indices:
-        if i <= pos: last = p
-        else: break
+        if i <= pos:
+            last = p
+        else:
+            break
     return last
-
-def _index_anexos(s: str) -> List[Tuple[int,int]]:
-    return [(m.start(), int(m.group(1))) for m in _ANEXO_RE.finditer(s)]
 
 def _anexo_en_pos(indices: List[Tuple[int,int]], pos: int) -> Optional[int]:
     last = None
@@ -564,126 +444,202 @@ def _anexo_en_pos(indices: List[Tuple[int,int]], pos: int) -> Optional[int]:
             break
     return last
 
-# =============== Post-procesamiento de citas para documento único ===============
-_CITA_ANEXO_RE = re.compile(r"\(Anexo\s+([IVXLCDM\d]+)(?:,\s*p\.\s*(\d+))?\)", re.I)
-def _normalize_citas_salida(texto: str, varios_anexos: bool) -> str:
-    if varios_anexos:
-        return texto
-    def repl(m):
-        pag = m.group(2)
-        if pag:
-            return f"(p. {pag})"
+def _cita_por_pos(texto: str, pos: Optional[int], varios_anexos: bool) -> str:
+    if pos is None or pos < 0:
         return "(Fuente: documento provisto)"
-    return _CITA_ANEXO_RE.sub(repl, texto)
+    ip = _index_paginas(texto)
+    ia = _index_anexos(texto)
+    p = _pagina_de_indice(ip, pos) if ip else None
+    ax = _anexo_en_pos(ia, pos) if ia else None
+    if varios_anexos and ax:
+        return f"(Anexo {ax}, p. {p or '?'} )"
+    return f"(p. {p})" if p else "(Fuente: documento provisto)"
 
-# ==================== Normalización para PDF (sin '#') ====================
-_HDR_RE = re.compile(r"^\s{0,3}(#{1,6})\s*(.+)$")
-_BULLET_RE = re.compile(r"^\s*[-*•]\s+")
-_TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
-_CODE_FENCE_RE = re.compile(r"^\s*```.*$")
-_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
-_BOLD_ITALIC_RE = re.compile(r"(\*\*|\*|__|_)(.*?)\1")
+# ---------------------- Extractores simples por regex ----------------------
+def _pick_group(m: re.Match) -> str:
+    # devuelve el grupo no vacío más largo; si no hay, el group(0)
+    if not m:
+        return ""
+    groups = [g for g in m.groups(default="") if g]
+    if not groups:
+        return m.group(0)
+    return max(groups, key=len)
 
-def _title_case(s: str) -> str:
-    return " ".join(w.capitalize() if w else w for w in re.split(r"(\s+)", s))
-
-def preparar_texto_para_pdf(markdown_text: str) -> str:
-    out_lines: List[str] = []
-    for raw_ln in (markdown_text or "").splitlines():
-        ln = raw_ln.rstrip()
-        if _CODE_FENCE_RE.match(ln):
-            continue
-        # filtra títulos indeseados
-        if re.match(r"(?i)^\s*informe\s+completo\s*$", ln):
-            continue
-        if re.match(r"(?i)^\s*informe\s+original\s*$", ln):
-            continue
-        m = _HDR_RE.match(ln)
+def _search_first(texto: str, patrones: List[re.Pattern]) -> Tuple[str, Optional[int]]:
+    for cre in patrones:
+        m = cre.search(texto)
         if m:
-            titulo = _title_case(m.group(2).strip(": ").strip())
-            out_lines.append(titulo)
-            out_lines.append("")  # espacio tras título
-            continue
-        if _TABLE_SEP_RE.match(ln):
-            continue
-        if _BULLET_RE.match(ln):
-            ln = _BULLET_RE.sub("• ", ln)
-        ln = _LINK_RE.sub(lambda mm: f"{mm.group(1)} ({mm.group(2)})", ln)
-        ln = _BOLD_ITALIC_RE.sub(lambda mm: mm.group(2), ln)
-        out_lines.append(ln)
-        if ln.strip().endswith(":"):
-            out_lines.append("")  # espacio extra tras línea-título
-    texto = "\n".join(out_lines)
-    texto = re.sub(r"\n{3,}", "\n\n", texto).strip()
-    return texto
+            val = _pick_group(m)
+            val = re.sub(r"\s+", " ", (val or "")).strip()
+            return val, m.start()
+    return "", None
 
-# ==================== Hints regex (recall) ====================
-def _buscar_candidatos(texto: str, pats: List[str], idx_pag: List[Tuple[int,int]], limit: int) -> List[str]:
-    hits = []
-    for pat in pats:
-        for m in re.finditer(pat, texto, flags=re.I):
-            pos = m.start()
-            p = _pagina_de_indice(idx_pag, pos)
-            start = max(0, pos - 160)
-            end = min(len(texto), pos + 240)
-            snippet = texto[start:end].replace("\n", " ").strip()
-            hits.append(f"- p. {p}: {snippet}")
-            if len(hits) >= limit:
-                return hits
-    return hits[:limit]
+# Patrones por campo
+_CRE_EXPEDIENTE = [
+    re.compile(r"\b(EX-\d{4}-[A-Z0-9-]+)"),
+    re.compile(r"(?im)^\s*Expediente\s*(?:N[°º.]?\s*)?[:\-]\s*([A-Z0-9./\-\s]+)$"),
+]
+_CRE_NOMBRE_PROC = [
+    re.compile(r"(?im)^\s*(?:Denominaci[oó]n del procedimiento|Nombre del proceso|T[íi]tulo del llamado)\s*[:\-]\s*(.+)$"),
+]
+_CRE_OBJETO = [
+    re.compile(r"(?ims)^\s*Objeto(?:\s+de la contrataci[oó]n)?\s*[:\-]\s*(.+?)(?=\n\s*\w|\Z)"),
+]
+_CRE_MODALIDAD = [
+    re.compile(r"(?i)\bLicitaci[oó]n\s+(P[úu]blica|Privada)\b"),
+    re.compile(r"(?i)\bContrataci[oó]n\s+Directa\b"),
+    re.compile(r"(?i)\bCompra\s+Menor\b"),
+    re.compile(r"(?i)\bSubasta\b"),
+    re.compile(r"(?i)\bModalidad\s*[:\-]\s*([^\n]+)"),
+]
+_CRE_TIPO_COTIZ = [
+    re.compile(r"(?i)(?:Forma|Tipo)\s+de\s+cotizaci[oó]n\s*[:\-]\s*([^\n]+)"),
+    re.compile(r"(?i)\bcotizaci[oó]n\s+por\s+(rengl[oó]n|[ií]tem|lote|global|total)"),
+]
+_CRE_TIPO_ADJ = [
+    re.compile(r"(?i)adjudicaci[oó]n\s+por\s+(rengl[oó]n|lote|total)"),
+]
+_CRE_OFERTAS = [
+    re.compile(r"(?i)\bofertas?\s+alternativas\b"),
+    re.compile(r"(?i)\buna\s+sola\s+oferta\b"),
+]
+_CRE_ESTADO = [
+    re.compile(r"(?i)\b(vigente|abierto|cerrado|adjudicado|desierto|fracasado)\b"),
+]
+_CRE_MANT_OFERTA = [
+    re.compile(r"(?i)(?:mantenim[ií]ento|validez)\s+de\s+la\s+oferta\s*[:\-]?\s*([\d]{1,3}\s*d[ií]as(?:\s*h[aá]biles)?)"),
+]
+_CRE_CONSULTAS = [
+    re.compile(r"(?i)consultas?.{0,40}?(\d{2}/\d{2}/\d{4}).{0,40}?(?:al|hasta)\s*(\d{2}/\d{2}/\d{4})"),
+]
+_CRE_APERTURA = [
+    re.compile(r"(?i)(?:acto\s+de\s+)?apertura.{0,60}?(\d{2}/\d{2}/\d{4}).{0,20}?(\d{1,2}:\d{2})"),
+]
+_CRE_PRESUP = [
+    re.compile(r"(?i)(?:presupuesto\s+(?:oficial|referencial|estimado)|monto\s+estimado|cr[eé]dito\s+disponible)\s*[:\-]?\s*(?:\$|ARS|USD)?\s*([\d\.\,]+)"),
+]
+_CRE_MONEDA = [
+    re.compile(r"(?i)\b(ARS|USD|PESOS?|D[ÓO]LARES?)\b"),
+]
+_CRE_DURACION = [
+    re.compile(r"(?i)(?:duraci[oó]n|vigencia|por\s+el\s+t[eé]rmino\s+de)\s*[:\-]?\s*(\d{1,4}\s*(?:d[ií]as|meses|a[nñ]os))"),
+]
+_CRE_OBJ_GASTO = [
+    re.compile(r"(?im)^\s*(?:Objeto\s+del\s+gasto|Partida\s+presupuestaria|Clasificador.*)\s*[:\-]\s*(.+)$"),
+]
 
-def _build_regex_hints(texto: str, limit_per_field: int = None, max_chars: int = None) -> str:
-    if not texto: return ""
-    if limit_per_field is None: limit_per_field = HINTS_PER_FIELD
-    if max_chars is None: max_chars = HINTS_MAX_CHARS
-    idx_pag = _index_paginas(texto)
-    secciones = []
-    for key, meta in DETECTABLE_FIELDS.items():
-        hits = _buscar_candidatos(texto, meta["pats"], idx_pag, limit_per_field)
-        if hits:
-            secciones.append(f"[{meta['label']}]\n" + "\n".join(hits))
-        if sum(len(s) for s in secciones) > max_chars:
-            break
-    return "\n\n".join(secciones[:])
+def _extract_expediente(texto):     return _search_first(texto, _CRE_EXPEDIENTE)
+def _extract_nombre(texto):         return _search_first(texto, _CRE_NOMBRE_PROC)
+def _extract_objeto(texto):         return _search_first(texto, _CRE_OBJETO)
+def _extract_modalidad(texto):      return _search_first(texto, _CRE_MODALIDAD)
+def _extract_tipo_cotiz(texto):     return _search_first(texto, _CRE_TIPO_COTIZ)
+def _extract_tipo_adj(texto):       return _search_first(texto, _CRE_TIPO_ADJ)
+def _extract_ofertas(texto):        return _search_first(texto, _CRE_OFERTAS)
+def _extract_estado(texto):         return _search_first(texto, _CRE_ESTADO)
+def _extract_mant_oferta(texto):    return _search_first(texto, _CRE_MANT_OFERTA)
+def _extract_consultas(texto):      return _search_first(texto, _CRE_CONSULTAS)
+def _extract_apertura(texto):       return _search_first(texto, _CRE_APERTURA)
+def _extract_presupuesto(texto):    return _search_first(texto, _CRE_PRESUP)
+def _extract_moneda(texto):         return _search_first(texto, _CRE_MONEDA)
+def _extract_duracion(texto):       return _search_first(texto, _CRE_DURACION)
+def _extract_objeto_gasto(texto):   return _search_first(texto, _CRE_OBJ_GASTO)
 
-# Campos detectables (ampliados y adaptados a AR)
-DETECTABLE_FIELDS: Dict[str, Dict] = {
-    "mant_oferta": {"label":"Mantenimiento de oferta", "pats":[r"mantenim[ií]ento de la oferta", r"validez de la oferta"]},
-    "gar_mant":    {"label":"Garantía de mantenimiento", "pats":[r"garant[ií]a.*manten", r"\b5 ?%"]},
-    "gar_cumpl":   {"label":"Garantía de cumplimiento", "pats":[r"garant[ií]a.*cumpl", r"\b10 ?%"]},
-    "plazo_ent":   {"label":"Plazo de entrega", "pats":[r"plazo de entrega", r"\b\d{1,3}\s*d[ií]as"]},
-    "tipo_cambio": {"label":"Tipo de cambio", "pats":[r"Banco\s+Naci[oó]n", r"tipo de cambio", r"BNA"]},
-    "comision":    {"label":"Comisión de (Pre)?Adjudicación", "pats":[r"Comisi[oó]n.*(pre)?adjudicaci[oó]n"]},
-    "muestras":    {"label":"Muestras", "pats":[r"\bmuestras?\b"]},
-    "planilla":    {"label":"Planilla de cotización y renglones", "pats":[r"planilla.*cotizaci[oó]n", r"renglones?"]},
-    "modalidad":   {"label":"Procedimiento/Modalidad", "pats":[r"licitaci[oó]n\s+(p[úu]blica|privada)", r"contrataci[oó]n\s+directa", r"compra\s+menor", r"subasta", r"modalidad"]},
-    "plazo_contr": {"label":"Duración del contrato", "pats":[r"duraci[oó]n del contrato", r"plazo contractual", r"por el t[eé]rmino\s+de\s+\d+", r"\b\d{1,4}\s*d[ií]as"]},
-    "prorroga":    {"label":"Prórroga/Ampliación", "pats":[r"pr[oó]rroga", r"ampliaci[oó]n", r"hasta\s+el\s+100%"]},
-    "presupuesto": {"label":"Monto / Presupuesto", "pats":[r"presupuesto (estimado|oficial|referencial)", r"monto\s+estimado", r"cr[eé]dito\s+disponible", r"\$\s?\d{1,3}(\.\d{3})*(,\d{2})?"]},
-    "expediente":  {"label":"Expediente / N° proceso", "pats":[r"\bEX-\d{4}-[A-Z0-9-]+", r"\bN[°º]\s*de\s*(proceso|procedimiento|expediente)"]},
-    "fechas":      {"label":"Fechas y horas", "pats":[r"\b\d{2}/\d{2}/\d{4}\b", r"\b\d{1,2}:\d{2}\s*(hs|h)"]},
-    "contacto":    {"label":"Contactos y portales", "pats":[r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", r"https?://[^\s)]+|www\.[^\s)]+"]},
-    "costo_pliego":{"label":"Costo/valor del pliego", "pats":[r"(costo|valor)\s+del\s+pliego", r"adquisici[oó]n\s+del\s+pliego", r"\$\s?\d{1,3}(\.\d{3})*(,\d{2})?"]},
-    "subsanacion": {"label":"Subsanación", "pats":[r"subsanaci[oó]n"]},
-    "perf_modif":  {"label":"Perfeccionamiento/Modificaciones", "pats":[r"perfeccionamiento", r"modificaci[oó]n"]},
-    "preferencias":{"label":"Preferencias", "pats":[r"preferencias"]},
-    "criterios":   {"label":"Criterios de evaluación", "pats":[r"criterios?\s+de\s+evaluaci[oó]n"]},
-    "renglones":   {"label":"Renglones y especificaciones", "pats":[r"Rengl[oó]n\s*\d+", r"Especificaciones?\s+t[ée]cnicas?"]},
-    "articulos":   {"label":"Artículos citados", "pats":[r"\bArt(?:[íi]culo|\.)\s*\d+[A-Za-z]?\b"]},
-    "estado":      {"label":"Estado del trámite", "pats":[r"\bestado\b", r"\bvigente\b", r"\b(adjudicado|desierto|fracasado|cerrado)\b"]},
-    "consultas":   {"label":"Inicio y final de consultas", "pats":[r"\bconsultas\b", r"aclaraciones", r"preguntas"]},
-    "apertura":    {"label":"Acto de apertura", "pats":[r"acto\s+de\s+apertura", r"\bapertura\b"]},
-    "tipo_cotiz":  {"label":"Tipo de cotización", "pats":[r"forma\s+de\s+cotizaci[oó]n", r"tipo\s+de\s+cotizaci[oó]n", r"cotizaci[oó]n\s+por"]},
-    "tipo_adj":    {"label":"Tipo de adjudicación", "pats":[r"adjudicaci[oó]n\s+por\s+(rengl[oó]n|lote|total)"]},
-    "moneda":      {"label":"Moneda", "pats":[r"\bmoneda\b", r"\bARS\b", r"\bUSD\b"]},
-    "obj_gasto":   {"label":"Objeto del gasto", "pats":[r"objeto\s+del\s+gasto", r"partida\s+presupuestaria", r"clasificador"]},
-    "ofertas_perm":{"label":"Ofertas permitidas", "pats":[r"m[aá]s\s+de\s+una\s+oferta", r"ofertas?\s+alternativas", r"una\s+sola\s+oferta"]},
-}
+# ---------------------- Ficha estandarizada determinística ----------------------
+def _valor_o_noesp(valor: str) -> str:
+    v = (valor or "").strip()
+    return v if v else "NO ESPECIFICADO"
 
-# ====== NUEVO: utilidades para conteo y evidencia exhaustiva ======
-def _count(pattern: str, text: str) -> int:
-    return len(re.findall(pattern, text, flags=re.I))
+def _build_ficha_deterministica(texto: str, varios_anexos: bool) -> str:
+    # Campos base
+    v_exp, p_exp = _extract_expediente(texto)
+    v_nom, p_nom = _extract_nombre(texto)
+    v_obj, p_obj = _extract_objeto(texto)
+    v_mod, p_mod = _extract_modalidad(texto)
+    v_tc,  p_tc  = _extract_tipo_cotiz(texto)
+    v_ta,  p_ta  = _extract_tipo_adj(texto)
+    v_of,  p_of  = _extract_ofertas(texto)
+    v_est, p_est = _extract_estado(texto)
+    v_mant,p_mant= _extract_mant_oferta(texto)
+    v_cons,p_cons= _extract_consultas(texto)
+    v_ap,  p_ap  = _extract_apertura(texto)
+    v_mont,p_mont= _extract_presupuesto(texto)
+    v_mon, p_mon = _extract_moneda(texto)
+    v_dur, p_dur = _extract_duracion(texto)
+    v_objg,p_objg= _extract_objeto_gasto(texto)
 
+    # Conteo renglones (usa extractor avanzado que se define más abajo en el archivo)
+    try:
+        rows = _extraer_renglones_y_especificaciones(texto)
+    except Exception:
+        rows = []
+    total_renglones = len(rows)
+    # página/anexo del primer renglón (para citar "ver Sección 9")
+    p_first = rows[0][4] if rows else None
+    ax_first = rows[0][5] if rows else None
+    if p_first is not None:
+        # si tenemos página/anexo embebidos en rows, construir cita explícita
+        cita_renglones = f"(Anexo {ax_first}, p. {p_first})" if (varios_anexos and ax_first) else (f"(p. {p_first})" if p_first else "(Fuente: documento provisto)")
+    else:
+        cita_renglones = "(Fuente: documento provisto)"
+
+    # Armar ficha
+    out = []
+    out.append("0) Ficha estandarizada del procedimiento (campos estandarizados):")
+    out.append(f"- N° de proceso: {_valor_o_noesp(v_exp)} {_cita_por_pos(texto, p_exp, varios_anexos)}")
+    out.append(f"- Nombre de proceso: {_valor_o_noesp(v_nom)} {_cita_por_pos(texto, p_nom, varios_anexos)}")
+    out.append(f"- Objeto de la contratación: {_valor_o_noesp(v_obj)} {_cita_por_pos(texto, p_obj, varios_anexos)}")
+    out.append(f"- Procedimiento de selección: {_valor_o_noesp(v_mod)} {_cita_por_pos(texto, p_mod, varios_anexos)}")
+    out.append(f"- Tipo de cotización: {_valor_o_noesp(v_tc)} {_cita_por_pos(texto, p_tc, varios_anexos)}")
+    out.append(f"- Tipo de adjudicación: {_valor_o_noesp(v_ta)} {_cita_por_pos(texto, p_ta, varios_anexos)}")
+    out.append(f"- Cantidad de ofertas permitidas: {_valor_o_noesp(v_of)} {_cita_por_pos(texto, p_of, varios_anexos)}")
+    out.append(f"- Estado: {_valor_o_noesp(v_est)} {_cita_por_pos(texto, p_est, varios_anexos)}")
+    out.append(f"- Plazo de mantenimiento de la oferta: {_valor_o_noesp(v_mant)} {_cita_por_pos(texto, p_mant, varios_anexos)}")
+
+    if total_renglones > 0:
+        out.append(f"- Número de renglón: Total de renglones: {total_renglones}; ver Sección 9 para el detalle completo {cita_renglones}")
+    else:
+        out.append(f"- Número de renglón: NO ESPECIFICADO (Fuente: documento provisto)")
+
+    out.append(f"- Objeto del gasto: {_valor_o_noesp(v_objg)} {_cita_por_pos(texto, p_objg, varios_anexos)}")
+
+    # Estos 3 se informan a nivel renglón → remitir a Sección 9
+    rem9 = f"Ver Sección 9 (detalle por renglón) {cita_renglones}"
+    out.append(f"- Código del ítem: {rem9}")
+    out.append(f"- Descripción: {rem9}")
+    out.append(f"- Cantidad: {rem9}")
+
+    out.append(f"- Inicio y final de consultas: {_valor_o_noesp(' al '.join([x for x in [v_cons] if x]))} {_cita_por_pos(texto, p_cons, varios_anexos)}")
+    out.append(f"- Fecha y hora del acto de apertura: {_valor_o_noesp(' '.join([x for x in [v_ap] if x]))} {_cita_por_pos(texto, p_ap, varios_anexos)}")
+    out.append(f"- Monto: {_valor_o_noesp(v_mont)} {_cita_por_pos(texto, p_mont, varios_anexos)}")
+    out.append(f"- Moneda: {_valor_o_noesp(v_mon)} {_cita_por_pos(texto, p_mon, varios_anexos)}")
+    out.append(f"- Duración del contrato: {_valor_o_noesp(v_dur)} {_cita_por_pos(texto, p_dur, varios_anexos)}")
+
+    return "\n".join(out).strip()
+
+def _reemplazar_ficha_en_informe(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
+    """
+    Reemplaza lo que el modelo haya puesto en "0) Ficha..." por una FICHA determinística,
+    corrigiendo así:
+     - que no copie frases de las instrucciones;
+     - que 'Número de renglón' muestre 'Total de renglones: N; ...';
+     - que Código/Descripción/Cantidad remitan a Sección 9 si aplica.
+    """
+    ficha = _build_ficha_deterministica(texto_fuente, varios_anexos)
+    # buscar el inicio de 0) Ficha...
+    m0 = re.search(r"(?im)^\s*0\)\s*Ficha\s+estandarizada[^\n]*\n?", informe)
+    if not m0:
+        # si no está, la anteponemos
+        return ficha + "\n\n" + informe
+    start = m0.start()
+    # el fin de la ficha es el comienzo de "1) " (o el fin del texto)
+    m1 = re.search(r"(?im)^\s*1\)\s", informe[m0.end():])
+    end = m0.end() + (m1.start() if m1 else 0)
+    if end <= m0.end():
+        # no encontró 1) — insertamos al inicio del documento
+        return informe[:start] + ficha + "\n\n" + informe[m0.end():]
+    return informe[:start] + ficha + "\n" + informe[end:]
+# ==================== Renglones y Artículos (extractores robustos) ====================
+# Artículos: detecta encabezados y bloques hasta el siguiente artículo
 _ART_HEAD_RE = re.compile(r"(?im)^\s*(art(?:[íi]culo|\.?)\s*\d+[a-zº°]?)\s*[-–—:]?\s*(.*)$")
 _ART_BLOCK_RE = re.compile(
     r"(?ims)^\s*(art(?:[íi]culo|\.?)\s*\d+[a-zº°]?)\s*[-–—:]?\s*(.+?)(?=^\s*art(?:[íi]culo|\.?)\s*\d+[a-zº°]?|\Z)"
@@ -691,73 +647,81 @@ _ART_BLOCK_RE = re.compile(
 
 def _extraer_articulos_con_snippets(texto: str) -> List[Tuple[str, str, int, Optional[int]]]:
     """
-    Devuelve lista de (rótulo_articulo, snippet_200c, pagina_aprox, anexo_num)
+    Devuelve lista de (rotulo_articulo, snippet_200c, pagina_aprox, anexo_num).
+    Usa etiquetas [PÁGINA N] y '=== ANEXO' para ubicar citas.
     """
     idx = _index_paginas(texto)
     idx_ax = _index_anexos(texto)
-    res = []
-    for m in _ART_BLOCK_RE.finditer(texto):
+    res: List[Tuple[str, str, int, Optional[int]]] = []
+
+    # Bloques completos (preferido)
+    for m in _ART_BLOCK_RE.finditer(texto or ""):
         start = m.start()
         p = _pagina_de_indice(idx, start)
         ax = _anexo_en_pos(idx_ax, start)
-        rotulo = m.group(1).strip()
+        rotulo = (m.group(1) or "").strip()
         contenido = (m.group(2) or "").strip()
         snippet = contenido[:200].replace("\n", " ").strip()
         res.append((rotulo, snippet, p, ax))
+
+    # Si no hubo bloques, al menos tomar encabezados sueltos
     if not res:
-        for m in _ART_HEAD_RE.finditer(texto):
+        for m in _ART_HEAD_RE.finditer(texto or ""):
             start = m.start()
             p = _pagina_de_indice(idx, start)
             ax = _anexo_en_pos(idx_ax, start)
-            rotulo = m.group(1).strip()
-            snippet = (m.group(2) or "").strip()[:200].replace("\n", " ")
+            rotulo = (m.group(1) or "").strip()
+            snippet = ((m.group(2) or "").strip()[:200]).replace("\n", " ")
             res.append((rotulo, snippet, p, ax))
     return res
 
-# --- Renglones robustos (exigir literalmente "Renglón") ---
+
+# Renglones: exige que la fila comience con "Renglón" / "Reng." y agrupa texto hasta el siguiente
 _ROW_START_RE = re.compile(r"(?im)^(?:reng(?:l[oó]n)?\.?\s*)(\d{1,4})\b")
-_CODE_RE = re.compile(r"\b[A-Z]{1,3}\d{5,8}\b")  # p.ej. D0330113, GB079001, E5001253
-_QTY_RE = re.compile(r"\b\d{1,6}\b")
+_CODE_RE      = re.compile(r"\b[A-Z]{1,3}\d{5,8}\b")  # p.ej. D0330113, GB079001, E5001253
+_QTY_RE       = re.compile(r"\b\d{1,6}\b")
 
 def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[int, Optional[int], Optional[str], str, int, Optional[int]]]:
     """
-    Devuelve lista de (num_renglon, cantidad, codigo, descripcion_full, pagina_aprox, anexo_num)
-    - Reconoce filas numeradas QUE EMPIEZAN CON "Renglón".
-    - Agrega líneas subsiguientes hasta el próximo comienzo de fila.
-    """
-    idx = _index_paginas(texto)
-    idx_ax = _index_anexos(texto)
-    res: List[Tuple[int, Optional[int], Optional[str], str, int, Optional[int]]] = []
+    Devuelve lista de tuplas:
+      (num_renglon, cantidad, codigo, descripcion_full, pagina_aprox, anexo_num)
 
-    lines = texto.splitlines()
-    pos = 0
-    starts: List[Tuple[int,int]] = []  # (line_index, abs_pos)
+    - Reconoce filas numeradas que EMPIEZAN con 'Renglón'/'Reng.' (robusto a acentos y punto).
+    - Acumula líneas hasta el próximo comienzo de fila.
+    - Extrae cantidad (primer entero tras el número), código catálogo si aparece (CODE_RE),
+      y deja en 'descripcion_full' la descripción con especificaciones.
+    """
+    idx_pag = _index_paginas(texto)
+    idx_ax  = _index_anexos(texto)
+
+    lines = (texto or "").splitlines()
+    pos_abs = 0
+    starts: List[Tuple[int, int]] = []  # (line_index, absolute_pos)
+
     for i, ln in enumerate(lines):
-        m = _ROW_START_RE.match(ln)
-        if m:
-            starts.append((i, pos))
-        pos += len(ln) + 1
+        if _ROW_START_RE.match(ln):
+            starts.append((i, pos_abs))
+        pos_abs += len(ln) + 1
 
     if not starts:
-        return res
+        return []
 
-    # sentinel
+    # Sentinela (fin del texto)
     starts.append((len(lines), len(texto)))
 
+    out: List[Tuple[int, Optional[int], Optional[str], str, int, Optional[int]]] = []
     for k in range(len(starts) - 1):
         i_line, abs_pos = starts[k]
-        j_line, _abs_pos_next = starts[k+1]
+        j_line, _ = starts[k + 1]
+
         block_lines = lines[i_line:j_line]
         block_text = " ".join([re.sub(r"\s+", " ", x).strip() for x in block_lines if x.strip()])
 
         # número de renglón
         mnum = _ROW_START_RE.match(lines[i_line])
-        try:
-            num_r = int(mnum.group(1)) if mnum else None
-        except Exception:
-            num_r = None
+        num_r = int(mnum.group(1)) if (mnum and mnum.group(1).isdigit()) else None
 
-        # cantidad (primer entero de la línea tras el número)
+        # cantidad (primer entero tras el número)
         qty = None
         if mnum:
             tail = lines[i_line][mnum.end():]
@@ -772,7 +736,7 @@ def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[int, Optiona
         mcode = _CODE_RE.search(block_text)
         code = mcode.group(0) if mcode else None
 
-        # descripción y especificaciones
+        # descripción y especificaciones (limpia código/cantidad/número)
         desc = block_text
         if code:
             desc = re.sub(re.escape(code), "", desc)
@@ -780,145 +744,52 @@ def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[int, Optiona
             desc = re.sub(rf"\b{qty}\b", "", desc)
         if num_r is not None:
             desc = re.sub(rf"^\s*{num_r}\b", "", desc)
-        desc = re.sub(r"\s+", " ", desc).strip()
+        desc = re.sub(r"\s+", " ", (desc or "")).strip()
 
-        p = _pagina_de_indice(idx, abs_pos)
-        ax = _anexo_en_pos(idx_ax, abs_pos)
+        # citas
+        p  = _pagina_de_indice(idx_pag, abs_pos) if idx_pag else None
+        ax = _anexo_en_pos(idx_ax, abs_pos) if idx_ax else None
 
         if num_r is not None:
-            res.append((num_r, qty, code, desc, p, ax))
+            out.append((num_r, qty, code, desc, p, ax))
 
-    res.sort(key=lambda t: t[0])
-    return res
+    out.sort(key=lambda t: t[0])
+    return out
 
-def _construir_evidencia_ampliacion(texto: str) -> Tuple[str, int, int]:
-    """
-    Arma bloques de evidencia literal (con páginas y anexos) para renglones/planilla y artículos.
-    Devuelve (bloque_evidencia, cant_renglones, cant_articulos).
-    """
-    renglones = _extraer_renglones_y_especificaciones(texto)
-    articulos = _extraer_articulos_con_snippets(texto)
 
-    ev_parts = []
-    if renglones:
-        ev = []
-        for (num, qty, code, desc, p, ax) in renglones:
-            cit = f"(Anexo {ax}, p. {p})" if ax else f"(p. {p})"
-            det = []
-            if qty is not None: det.append(f"cant {qty}")
-            if code: det.append(f"cód {code}")
-            det_txt = " — ".join(det) if det else ""
-            linea = f"- Renglón {num}{(' — ' + det_txt) if det_txt else ''}: {desc} {cit}"
-            ev.append(linea)
-        ev_parts.append("### EVIDENCIA Renglones / Planilla (literal)\n" + "\n".join(ev))
-    if articulos:
-        ev = []
-        for (rot, sn, p, ax) in articulos:
-            cit = f"(Anexo {ax}, p. {p})" if ax else f"(p. {p})"
-            ev.append(f"- {rot} — {sn} {cit}")
-        ev_parts.append("### EVIDENCIA Artículos (literal)\n" + "\n".join(ev))
-
-    return ("\n\n".join(ev_parts) if ev_parts else ""), len(renglones), len(articulos)
-
-def _conteo_en_informe(informe: str) -> Tuple[int, int]:
-    return _count(r"(?im)\brengl[oó]n\s*\d+", informe), _count(r"(?im)\bart(?:[íi]culo|\.?)\s*\d+", informe)
-
-def _max_out_for_text(texto: str) -> int:
-    base_chars = len(texto or "")
-    r_count = _count(r"(?im)^\s*(?:reng(?:l[oó]n)?\.?\s*)?\d{1,4}\b", texto)
-    a_count = _count(r"(?im)^\s*art(?:[íi]culo|\.?)\s*\d+", texto)
-    base = MAX_COMPLETION_TOKENS_SALIDA
-    if r_count >= 20 or a_count >= 20:
-        base = max(base, 6500)
-    elif r_count >= 8 or a_count >= 8:
-        base = max(base, 5000)
-    if ANALISIS_MODO == "fast":
-        if base_chars < 15000:
-            base = max(base, 2800)
-        elif base_chars < 40000:
-            base = max(base, 3500)
-    return int(base)
-
-# ====== Utilidades de compresión no literal ======
-def _truncate_words(s: str, max_words: int) -> str:
-    try:
-        words = re.findall(r"\S+", s or "")
-        if len(words) <= max_words:
-            return (s or "").strip()
-        return " ".join(words[:max_words]).rstrip(",.;:") + "…"
-    except Exception:
-        return (s or "").strip()
-
-# Palabras-clave para filtrar artículos realmente útiles al oferente (nuevo)
-_ART_KEYS = re.compile(
-    r"(objeto|tipolog|modalidad|mantenim|pr[oó]rroga|oferta|apertura|evaluaci[oó]n|empate|mejora|adjudicaci[oó]n|"
-    r"garant[ií]a|entrega|plazo|pago|factura|sancion|penalidad|rescis[ií]n|perfeccionamiento|subsanaci[oó]n)",
-    re.I
-)
-
-# ====== Generadores determinísticos (capados) de 2.13 y 2.16 ======
-def _build_section_213(texto: str, varios_anexos: bool) -> str:
-    rows = _extraer_renglones_y_especificaciones(texto)
-    if not rows:
-        return ""
-    rows = rows[:max(1, MAX_RENGLONES_OUT)]  # tope
-    lines = ["2.13 Planilla de cotización y renglones:"]
-    for (num, qty, code, desc, p, ax) in rows:
-        desc_corta = _truncate_words(desc, RENGLON_DESC_MAX_WORDS)
-        partes = [f"Renglón {num}"]
-        if qty is not None: partes.append(f"Cantidad: {qty}")
-        if code: partes.append(f"Código: {code}")
-        partes.append(f"Descripción/Especificaciones: {desc_corta}")
-        cita = f"(Anexo {ax}, p. {p})" if varios_anexos and ax else (f"(p. {p})" if p else "(Fuente: documento provisto)")
-        lines.append(" - " + " — ".join(partes) + f" {cita}")
-    return "\n".join(lines)
-
-def _build_section_216(texto: str, varios_anexos: bool) -> str:
-    arts = _extraer_articulos_con_snippets(texto)
-    if not arts:
-        return ""
-    # filtrar por relevancia práctica
-    arts = [(rot, sn, p, ax) for (rot, sn, p, ax) in arts if _ART_KEYS.search(sn or "") or _ART_KEYS.search(rot or "")]
-    if not arts:
-        return ""
-    arts = arts[:max(1, MAX_ARTICULOS_OUT)]  # tope
-    lines = ["2.16 Catálogo de artículos citados:"]
-    for (rot, sn, p, ax) in arts:
-        rot_norm = re.sub(r"(?i)art(?:[íi]culo|\.)\s*", "Art. ", rot).strip()
-        sn = _truncate_words(sn, ART_SNIPPET_MAX_WORDS)
-        cita = f"(Anexo {ax}, p. {p})" if varios_anexos and ax else (f"(p. {p})" if p else "(Fuente: documento provisto)")
-        lines.append(f" - {rot_norm} — {sn} {cita}")
-    return "\n".join(lines)
-
-# ====== Contactos (emails/URLs) con página/anexo ======
+# ==================== Contactos (2.3) y Normativa (2.15) ====================
 CONTACT_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 CONTACT_URL_RE   = re.compile(r"(https?://[^\s)]+|www\.[^\s)]+)")
 
 def _extraer_contactos_con_paginas(texto: str) -> List[Tuple[str, str, int, Optional[int]]]:
     """
-    Devuelve lista de (tipo, valor, p, anexo) con tipo in {"email","url"}
+    Devuelve lista de (tipo, valor, p, anexo) con tipo in {"email","url"}.
+    Dedupe preservando orden.
     """
     idx_pag = _index_paginas(texto)
     idx_ax  = _index_anexos(texto)
-    res: List[Tuple[str,str,int,Optional[int]]] = []
-    for m in CONTACT_EMAIL_RE.finditer(texto):
+
+    res: List[Tuple[str, str, int, Optional[int]]] = []
+    for m in CONTACT_EMAIL_RE.finditer(texto or ""):
         pos = m.start()
-        p = _pagina_de_indice(idx_pag, pos)
-        ax = _anexo_en_pos(idx_ax, pos)
+        p = _pagina_de_indice(idx_pag, pos) if idx_pag else None
+        ax = _anexo_en_pos(idx_ax, pos) if idx_ax else None
         res.append(("email", m.group(0), p, ax))
-    for m in CONTACT_URL_RE.finditer(texto):
+    for m in CONTACT_URL_RE.finditer(texto or ""):
         pos = m.start()
-        p = _pagina_de_indice(idx_pag, pos)
-        ax = _anexo_en_pos(idx_ax, pos)
-        v = m.group(0).rstrip(").,;")
+        p = _pagina_de_indice(idx_pag, pos) if idx_pag else None
+        ax = _anexo_en_pos(idx_ax, pos) if idx_ax else None
+        v = (m.group(0) or "").rstrip(").,;")
         res.append(("url", v, p, ax))
-    # dedupe preservando orden
+
     seen = set()
-    dedup = []
-    for t,v,p,ax in res:
+    dedup: List[Tuple[str, str, int, Optional[int]]] = []
+    for t, v, p, ax in res:
         key = (t, v.lower())
-        if key in seen: continue
-        seen.add(key); dedup.append((t,v,p,ax))
+        if key in seen:
+            continue
+        seen.add(key)
+        dedup.append((t, v, p, ax))
     return dedup
 
 def _build_section_23(texto: str, varios_anexos: bool) -> str:
@@ -926,13 +797,14 @@ def _build_section_23(texto: str, varios_anexos: bool) -> str:
     if not items:
         return ""
     out = ["2.3 Contactos y portales:"]
-    for (t,v,p,ax) in items:
-        etiqueta = "Email" if t=="email" else "URL"
-        cita = f"(Anexo {ax}, p. {p})" if varios_anexos and ax else (f"(p. {p})" if p else "(Fuente: documento provisto)")
+    for (t, v, p, ax) in items:
+        etiqueta = "Email" if t == "email" else "URL"
+        cita = f"(Anexo {ax}, p. {p})" if (varios_anexos and ax) else (f"(p. {p})" if p else "(Fuente: documento provisto)")
         out.append(f" - {etiqueta}: {v} {cita}")
     return "\n".join(out)
 
-# ====== Normativa aplicable (Ley/Decreto/Resolución/Disposición) ======
+
+# Normativa (Ley/Decreto/Resolución/Disposición)
 NORM_TIPOS = [
     (r"Ley", r"\bLey(?:\s*N[°º])?\s*([\d\.]{1,7}(?:/\d{2,4})?)\b"),
     (r"Decreto", r"\bDecreto(?:\s*N[°º])?\s*([\d\.]{1,7}(?:/\d{2,4})?)\b"),
@@ -941,26 +813,30 @@ NORM_TIPOS = [
 ]
 NORM_PATTS = [(tipo, re.compile(patt, re.I)) for (tipo, patt) in NORM_TIPOS]
 
-def _extraer_normativa(texto: str) -> List[Tuple[str,str,int,Optional[int]]]:
+def _extraer_normativa(texto: str) -> List[Tuple[str, str, int, Optional[int]]]:
     """
-    Devuelve lista de (tipo, numero, p, anexo)
+    Devuelve lista de (tipo, numero, p, anexo). Dedupe preservando orden.
     """
     idx_pag = _index_paginas(texto)
     idx_ax  = _index_anexos(texto)
-    res = []
+
+    res: List[Tuple[str, str, int, Optional[int]]] = []
     for (tipo, cre) in NORM_PATTS:
-        for m in cre.finditer(texto):
+        for m in cre.finditer(texto or ""):
             pos = m.start()
-            p = _pagina_de_indice(idx_pag, pos)
-            ax = _anexo_en_pos(idx_ax, pos)
-            numero = m.group(1).strip()
+            p = _pagina_de_indice(idx_pag, pos) if idx_pag else None
+            ax = _anexo_en_pos(idx_ax, pos) if idx_ax else None
+            numero = (m.group(1) or "").strip()
             res.append((tipo, numero, p, ax))
-    # dedupe preservando orden
-    seen = set(); dedup = []
-    for t,n,p,ax in res:
+
+    seen = set()
+    dedup: List[Tuple[str, str, int, Optional[int]]] = []
+    for t, n, p, ax in res:
         key = (t.lower(), n)
-        if key in seen: continue
-        seen.add(key); dedup.append((t,n,p,ax))
+        if key in seen:
+            continue
+        seen.add(key)
+        dedup.append((t, n, p, ax))
     return dedup
 
 def _build_section_215(texto: str, varios_anexos: bool) -> str:
@@ -968,38 +844,58 @@ def _build_section_215(texto: str, varios_anexos: bool) -> str:
     if not normas:
         return ""
     out = ["2.15 Normativa aplicable:"]
-    for (t,n,p,ax) in normas:
-        cita = f"(Anexo {ax}, p. {p})" if varios_anexos and ax else (f"(p. {p})" if p else "(Fuente: documento provisto)")
+    for (t, n, p, ax) in normas:
+        cita = f"(Anexo {ax}, p. {p})" if (varios_anexos and ax) else (f"(p. {p})" if p else "(Fuente: documento provisto)")
         out.append(f" - {t} {n} {cita}")
     return "\n".join(out)
 
-# ====== Reemplazo de secciones en el informe ======
-def _find_section_bounds(text: str, header_regex: str) -> Tuple[int,int]:
-    """Devuelve (start, end) del bloque que inicia en header_regex hasta el próximo '2.' encabezado o fin."""
-    m = re.search(header_regex, text, flags=re.I)
-    if not m:
-        return (-1, -1)
-    start = m.start()
-    nxt = re.search(r"(?im)^\s*2\.(1[0-9]|[1-9])\s", text[m.end():])
-    if not nxt:
-        return (start, len(text))
-    return (start, m.end() + nxt.start())
 
-def _replace_section(text: str, header_regex: str, replacement: str) -> str:
-    s, e = _find_section_bounds(text, header_regex)
-    if s == -1:
-        # si no existe, lo anexamos al final con un salto
-        return text.rstrip() + "\n\n" + replacement.strip() + "\n"
-    return text[:s] + replacement.strip() + "\n" + text[e:]
-# ==================== Ampliación / sustitución de 2.13 y 2.16 (capadas) ====================
-def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
+# ==================== Normalización de citas (documento único vs. multi-anexo) ====================
+_CITA_ANEXO_RE = re.compile(r"\(Anexo\s+([IVXLCDM\d]+)(?:,\s*p\.\s*(\d+))?\)", re.I)
+
+def _normalize_citas_salida(texto: str, varios_anexos: bool) -> str:
     """
-    Por defecto (EXPAND_SECTIONS_213_216=0) NO toca 2.13 ni 2.16.
-    Mantiene la salida concisa (estilo Andrés) y sólo normaliza Contactos (2.3) y Normativa (2.15).
+    Si es documento único, convierte "(Anexo X, p. N)" en "(p. N)" o "(Fuente: documento provisto)".
+    En multi-anexo, deja las citas tal cual.
+    """
+    if varios_anexos:
+        return texto
+
+    def repl(m):
+        pag = m.group(2)
+        if pag:
+            return f"(p. {pag})"
+        return "(Fuente: documento provisto)"
+
+    return _CITA_ANEXO_RE.sub(repl, texto)
+
+
+# ==================== Reemplazo determinístico de secciones 2.3 y 2.15 ====================
+def _replace_section(text: str, header_regex: str, replacement: str) -> str:
+    """
+    Reemplaza el bloque que inicia en header_regex hasta el próximo encabezado '2.' o fin.
+    Si no existe, lo agrega al final.
+    """
+    m = re.search(header_regex, text or "", flags=re.I)
+    if not m:
+        return (text or "").rstrip() + "\n\n" + replacement.strip() + "\n"
+
+    start = m.start()
+    nxt = re.search(r"(?im)^\s*2\.(1[0-9]|[1-9])\s", (text or "")[m.end():])
+    end = m.end() + (nxt.start() if nxt else 0)
+    if end <= m.end():
+        return (text or "")[:start] + replacement.strip() + "\n" + (text or "")[m.end():]
+    return (text or "")[:start] + replacement.strip() + "\n" + (text or "")[end:]
+
+
+def _ampliar_contactos_y_normativa(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
+    """
+    Sustituye SIEMPRE:
+      - 2.3 Contactos y portales
+      - 2.15 Normativa aplicable
+    usando extractores determinísticos (sin depender del modelo).
     """
     out = informe
-
-    # Siempre: actualizar determinísticamente Contactos (2.3) y Normativa (2.15)
     sec23 = _build_section_23(texto_fuente, varios_anexos)
     if sec23:
         out = _replace_section(out, r"(?im)^\s*2\.3\s+Contactos", sec23)
@@ -1008,163 +904,219 @@ def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexo
     if sec215:
         out = _replace_section(out, r"(?im)^\s*2\.15\s+Normativa", sec215)
 
-    # Si no se solicita expansión de renglones/artículos, retornar
-    if not EXPAND_SECTIONS_213_216:
-        return out
+    return out
+# ==================== Helpers de cita y capturas con página/anexo ====================
+def _cita(p: Optional[int], ax: Optional[int], varios_anexos: bool) -> str:
+    if p and varios_anexos and ax:
+        return f"(Anexo {ax}, p. {p})"
+    if p:
+        return f"(p. {p})"
+    return "(Fuente: documento provisto)"
 
-    # Construir 2.13 y 2.16 con topes/cap y reemplazar sin duplicar variantes
+def _buscar_primera_captura(texto: str, patrones: List[str]) -> Tuple[Optional[str], Optional[int], Optional[int]]:
+    """
+    Busca el primer patrón con 1 grupo de captura y devuelve (valor, pagina, anexo).
+    """
+    if not texto:
+        return None, None, None
+    idx_pag = _index_paginas(texto)
+    idx_ax  = _index_anexos(texto)
+    for patt in patrones:
+        for m in re.finditer(patt, texto, flags=re.I):
+            val = (m.group(1) or "").strip()
+            pos = m.start(1)
+            p = _pagina_de_indice(idx_pag, pos) if idx_pag else None
+            ax = _anexo_en_pos(idx_ax, pos) if idx_ax else None
+            if val:
+                return val, p, ax
+    return None, None, None
+
+# ==================== Extractor (determinístico) para "Objeto del gasto" ====================
+_OBJ_GASTO_PATTERNS = [
+    r"objeto\s+del\s+gasto\s*[:\-]\s*([^\n;]+)",
+    r"partida\s+presupuestaria\s*[:\-]\s*([^\n;]+)",
+    r"clasificador(?:\s*/?\s*objeto\s*del\s*gasto|\s*del\s*gasto)?\s*[:\-]\s*([^\n;]+)",
+]
+
+def _extraer_objeto_gasto_con_cita(texto: str) -> Tuple[Optional[str], Optional[int], Optional[int]]:
+    val, p, ax = _buscar_primera_captura(texto, _OBJ_GASTO_PATTERNS)
+    if val:
+        # Mantenerlo corto y útil
+        val = _truncate_words(val, 20)
+    return val, p, ax
+
+# ==================== Reconstrucción determinística de la FICHA (0) ====================
+FICHA_LABELS = [
+    "N° de proceso",
+    "Nombre de proceso",
+    "Objeto de la contratación",
+    "Procedimiento de selección",
+    "Tipo de cotización",
+    "Tipo de adjudicación",
+    "Cantidad de ofertas permitidas",
+    "Estado",
+    "Plazo de mantenimiento de la oferta",
+    "Número de renglón",
+    "Objeto del gasto",
+    "Código del ítem",
+    "Descripción",
+    "Cantidad",
+    "Inicio y final de consultas",
+    "Fecha y hora del acto de apertura",
+    "Monto",
+    "Moneda",
+    "Duración del contrato",
+]
+
+def _bounds_ficha(texto: str) -> Tuple[int, int]:
+    """
+    Devuelve (start, end) del bloque '0) Ficha ...' hasta el próximo encabezado top-level (1) o (2) o fin.
+    """
+    if not texto:
+        return -1, -1
+    m = re.search(r"(?im)^\s*0\)\s*Ficha\s+estandarizada[^\n]*$", texto)
+    if not m:
+        return -1, -1
+    start = m.start()
+    nxt = re.search(r"(?im)^\s*[12]\)\s", texto[m.end():])
+    end = m.end() + (nxt.start() if nxt else 0)
+    return start, end if end > start else (start, len(texto))
+
+def _parse_ficha_existente(bloque: str) -> Dict[str, str]:
+    """
+    Lee valores existentes en la ficha (si el modelo los trajo) para no perderlos.
+    """
+    out: Dict[str, str] = {}
+    if not bloque:
+        return out
+    for label in FICHA_LABELS:
+        # • Label: valor  |  - Label: valor  |  Label: valor
+        patt = rf"(?im)^\s*(?:[-*•]\s*)?{re.escape(label)}\s*:\s*(.+?)\s*$"
+        m = re.search(patt, bloque)
+        if m:
+            val = (m.group(1) or "").strip()
+            if val:
+                out[label] = val
+    return out
+
+def _reconstruir_ficha_en_informe(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
+    """
+    Construye SIEMPRE la ficha (0) de forma determinística.
+    - Completa 'Número de renglón' con 'Total de renglones: N; ver Sección 9 ...'.
+    - Si hay renglones: setea 'Código del ítem' / 'Descripción' / 'Cantidad' a 'Ver Sección 9 ...' (no "NO ESPECIFICADO").
+    - Intenta extraer 'Objeto del gasto' con regex. El resto conserva lo que haya aportado el modelo o 'NO ESPECIFICADO'.
+    """
+    s, e = _bounds_ficha(informe)
+    bloque_existente = informe[s:e] if (s != -1 and e != -1) else ""
+
+    # Valores de la ficha que haya traído el modelo
+    existentes = _parse_ficha_existente(bloque_existente)
+
+    # Renglones desde el texto fuente
+    rows = _extraer_renglones_y_especificaciones(texto_fuente)
+    n_rows = len(rows)
+    p0 = rows[0][4] if n_rows else None
+    ax0 = rows[0][5] if n_rows else None
+
+    # Objeto del gasto
+    obj_gasto, p_g, ax_g = _extraer_objeto_gasto_con_cita(texto_fuente)
+
+    # Armar dict final
+    vals: Dict[str, str] = {}
+    for lab in FICHA_LABELS:
+        vals[lab] = existentes.get(lab, "NO ESPECIFICADO")
+
+    # Número de renglón (punto 2)
+    if n_rows:
+        vals["Número de renglón"] = f"Total de renglones: {n_rows}; ver Sección 9 para el detalle completo {_cita(p0, ax0, varios_anexos)}"
+        for lab in ("Código del ítem", "Descripción", "Cantidad"):
+            # punto 3: no marcar NO ESPECIFICADO si está a nivel renglón
+            vals[lab] = f"Ver Sección 9 para el detalle por renglón {_cita(p0, ax0, varios_anexos)}"
+    else:
+        vals["Número de renglón"] = f"Total de renglones: 0; ver Sección 9 para el detalle completo {_cita(None, None, varios_anexos)}"
+
+    # Objeto del gasto (punto 3)
+    if obj_gasto:
+        vals["Objeto del gasto"] = f"{obj_gasto} {_cita(p_g, ax_g, varios_anexos)}"
+
+    # Render de la ficha
+    lines = ["0) Ficha estandarizada del procedimiento (campos estandarizados)"]
+    for lab in FICHA_LABELS:
+        val = vals.get(lab, "NO ESPECIFICADO").strip()
+        # Evitar que queden instrucciones literales
+        val = re.sub(r"“|”", '"', val)  # normaliza comillas
+        if re.search(r"indicar\s*\"?Total de renglones", val, flags=re.I):
+            # por si el modelo dejó el texto literal
+            if "renglones" in lab.lower():
+                # ya lo sobrescribimos arriba; por seguridad:
+                val = vals["Número de renglón"]
+            else:
+                val = "NO ESPECIFICADO"
+        lines.append(f"- {lab}: {val}")
+
+    nuevo_bloque = "\n".join(lines) + "\n"
+
+    if s == -1:
+        # No había ficha; la preprendemos al documento
+        return (nuevo_bloque + "\n" + (informe or "")).strip()
+
+    return (informe[:s] + nuevo_bloque + informe[e:]).strip()
+
+
+# ==================== Reemplazo opcional de 2.13 y 2.16 ====================
+def _reemplazar_213_216(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
+    out = informe
+
+    # 2.13 Planilla / renglones
     sec213 = _build_section_213(texto_fuente, varios_anexos)
     if sec213:
+        # También sincroniza la sección 9 en wording si existiera
         alt213 = sec213.replace("2.13 Planilla de cotización y renglones:", "9) Renglones y planilla de cotización:")
-        out = _replace_section(out, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla", alt213)
         out = _replace_section(out, r"(?im)^\s*2\.13\s+Planilla", sec213)
+        out = _replace_section(out, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla", alt213)
 
+    # 2.16 Catálogo de artículos
     sec216 = _build_section_216(texto_fuente, varios_anexos)
     if sec216:
         out = _replace_section(out, r"(?im)^\s*2\.16\s+Cat[aá]logo\s+de\s+art", sec216)
-        # eliminar posibles títulos alternativos "ANEXO — Catálogo ..."
         out = re.sub(r"(?im)^\s*(ANEXO|Anexo)\s*[-–—]?\s*Cat[aá]logo\s+de\s+art[^\n]*\n?", "", out)
 
-    out = re.sub(r"(?im)^\s*informe\s+original\s*$", "", out)
     return out
 
-# ==================== Llamada a OpenAI robusta ====================
-def _max_tokens_salida_adaptivo(longitud_chars: int) -> int:
-    base = MAX_COMPLETION_TOKENS_SALIDA
-    if ANALISIS_MODO != "fast":
-        return base
-    if longitud_chars < 15000:
-        return min(base, 2200)
-    if longitud_chars < 40000:
-        return min(base, 2800)
-    return base
+# ==================== Post-procesado final del informe ====================
+def _posprocesar_informe_final(informe_raw: str, texto_fuente: str, varios_anexos: bool) -> str:
+    """
+    Cadena final de pasos que:
+    - Limpia meta-texto y normaliza citas.
+    - Corrección focalizada de 'NO ESPECIFICADO'.
+    - Sustituye 2.3 y 2.15 de forma determinística.
+    - (Opcional) Reemplaza 2.13 / 2.16 si está habilitado.
+    - Reconstruye la FICHA (0) de forma determinística para evitar textos literales.
+    - Prepara para PDF.
+    """
+    if not informe_raw:
+        return "No se recibió contenido para analizar."
 
-def _pick_model(stage_default: str) -> str:
-    if ANALISIS_MODO == "fast" and FAST_FORCE_MODEL:
-        return FAST_FORCE_MODEL
-    if stage_default == "notas":
-        return MODEL_NOTAS
-    if stage_default == "sintesis":
-        return MODEL_SINTESIS
-    return MODEL_ANALISIS
+    out = _limpiar_meta(informe_raw)
+    out = _normalize_citas_salida(out, varios_anexos)
+    out = _segundo_pase_si_falta(out, texto_fuente, varios_anexos)
 
-def _llamada_openai(messages, model=None, temperature_str=TEMPERATURE_ANALISIS,
-                    max_completion_tokens=None, retries=2, fallback_model="gpt-4o-mini"):
-    mdl = model or _pick_model("analisis")
+    # Siempre contactos y normativa determinísticos
+    out = _ampliar_contactos_y_normativa(out, texto_fuente, varios_anexos)
 
-    def _build_kwargs(m):
-        kw = dict(model=m, messages=messages, max_completion_tokens=max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA)
-        if ANALISIS_MODO == "fast":
-            kw["temperature"] = 0
-        elif temperature_str != "":
-            try:
-                kw["temperature"] = float(temperature_str)
-            except:
-                pass
-        return kw
+    # Opcional: 2.13 / 2.16 determinísticos
+    if FORCE_DETERMINISTIC_213_216 or EXPAND_SECTIONS_213_216:
+        out = _reemplazar_213_216(out, texto_fuente, varios_anexos)
 
-    models_to_try = [mdl]
-    if fallback_model and fallback_model != mdl:
-        models_to_try.append(fallback_model)
+    # Ficha (0) reconstruida
+    out = _reconstruir_ficha_en_informe(out, texto_fuente, varios_anexos)
 
-    last_error = None
-    for m in models_to_try:
-        for attempt in range(retries + 1):
-            try:
-                resp = client.chat.completions.create(**_build_kwargs(m))
-                if not getattr(resp, "choices", None):
-                    raise RuntimeError("El modelo no devolvió 'choices'.")
-                content = (resp.choices[0].message.content or "").strip()
-                if not content:
-                    raise RuntimeError("La respuesta del modelo llegó vacía.")
-                return resp
-            except Exception as e:
-                last_error = e
-                if attempt < retries:
-                    time.sleep(1.2 * (attempt + 1))
-                else:
-                    break
-    raise RuntimeError(str(last_error) if last_error else "Fallo desconocido en _llamada_openai")
+    # Limpieza menor y formato PDF
+    out = re.sub(r"(?im)^\s*informe\s+original\s*$", "", out)
+    out = preparar_texto_para_pdf(out)
+    return out
 
-# ==================== Concurrencia para NOTAS ====================
-def _compute_chunk_size(total_chars: int) -> int:
-    if TARGET_PARTS <= 0:
-        return CHUNK_SIZE_BASE
-    ideal = (total_chars + TARGET_PARTS - 1) // TARGET_PARTS
-    return max(CHUNK_SIZE_BASE, ideal)
-
-def _generar_notas_concurrente(partes: List[str]) -> List[str]:
-    resultados = [None] * len(partes)
-    t0 = _t()
-
-    def worker(idx: int, parte: str):
-        msg = [
-            {"role": "system", "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
-            {"role": "user", "content": f"{CRAFT_PROMPT_NOTAS}\n\n## Guía de sinónimos/normalización\n{SINONIMOS_CANONICOS}\n\n=== FRAGMENTO {idx+1}/{len(partes)} ===\n{parte}"}
-        ]
-        r = _llamada_openai(msg, max_completion_tokens=NOTAS_MAX_TOKENS, model=_pick_model("notas"))
-        return idx, (r.choices[0].message.content or "").strip()
-
-    with ThreadPoolExecutor(max_workers=max(1, ANALISIS_CONCURRENCY)) as ex:
-        futs = [ex.submit(worker, i, p) for i, p in enumerate(partes)]
-        for fut in as_completed(futs):
-            try:
-                i, content = fut.result()
-                resultados[i] = content
-            except Exception as e:
-                resultados[i] = f"[ERROR] No se pudieron generar notas de la parte {i+1}: {e}"
-
-    _log_tiempo(f"notas_intermedias_{len(partes)}_partes_concurrente", t0)
-    return resultados
-
-# ==================== Segundo pase (opcional y focalizado) ====================
-_NOESP_RE = re.compile(r"(?i)\bNO ESPECIFICADO\b")
-
-def _segundo_pase_si_falta(original_report: str, texto_fuente: str, varios_anexos: bool) -> str:
-    if not ENABLE_SECOND_PASS_COMPLETION:
-        return original_report
-    if not _NOESP_RE.search(original_report):
-        return original_report
-
-    evidencia = []
-    for clave, meta in DETECTABLE_FIELDS.items():
-        label = meta["label"]
-        if re.search(rf"{re.escape(label)}.*NO ESPECIFICADO", original_report, flags=re.I) or \
-           re.search(rf"{re.escape(label)}\s*:\s*NO ESPECIFICADO", original_report, flags=re.I):
-            hits = _buscar_candidatos(texto_fuente, meta["pats"], _index_paginas(texto_fuente), 10)
-            if hits:
-                evidencia.append(f"### {label}\n" + "\n".join(hits))
-    if not evidencia:
-        return original_report
-
-    prompt_corr = f"""
-(Revisión focalizada) Completa ÚNICAMENTE los campos marcados como "NO ESPECIFICADO" en el informe,
-usando SOLO la evidencia literal que te paso abajo. Mantén exactamente la estructura y secciones del
-informe original, sin agregar nuevas secciones. Donde la evidencia sea ambigua, deja "NO ESPECIFICADO".
-Respeta las reglas de citas del informe original (usa (Anexo X, p. N) o (p. N) según corresponda).
-NO imprimas los rótulos de bloques como 'Informe Original' o similares.
-
-=== CONTENIDO A CORREGIR (NO IMPRIMIR ESTE TÍTULO) ===
-{original_report}
-
-=== EVIDENCIA LITERAL (snippets con páginas) ===
-{'\n\n'.join(evidencia)}
-"""
-    try:
-        resp = _llamada_openai(
-            [{"role": "system", "content": "Actúa como redactor técnico-jurídico, cero invenciones; corrige campos faltantes con citas."},
-             {"role": "user", "content": prompt_corr}],
-            model=_pick_model("sintesis"),
-            max_completion_tokens=MAX_COMPLETION_TOKENS_SALIDA
-        )
-        corregido = (resp.choices[0].message.content or "").strip()
-        corregido = _normalize_citas_salida(_limpiar_meta(corregido), varios_anexos)
-        corregido = re.sub(r"(?im)^\s*informe\s+original\s*$", "", corregido)
-        return corregido
-    except Exception:
-        return original_report
-
-# ==================== Analizador principal ====================
+# ==================== (REEMPLAZA) Analizador principal con post-procesado robusto ====================
 def analizar_con_openai(texto: str) -> str:
     if not texto or not texto.strip():
         return "No se recibió contenido para analizar."
@@ -1172,14 +1124,12 @@ def analizar_con_openai(texto: str) -> str:
     texto_len = len(texto)
     n_anexos = _contar_anexos(texto)
     varios_anexos = n_anexos >= 2
-    # Usar el nuevo prompt estilo Andrés (con Ficha estandarizada + 1–12)
     prompt_maestro = _prompt_andres(varios_anexos)
 
-    # Hints regex (opcionales, capados por tamaño)
     hints = _build_regex_hints(texto) if ENABLE_REGEX_HINTS else ""
     hints_block = f"\n\n=== HALLAZGOS AUTOMÁTICOS (snippets literales para verificación) ===\n{hints}\n" if hints else ""
 
-    # ¿forzar dos etapas en multi-anexo grande?
+    # Heurística two-stage en multi-anexo largo
     force_two_stage = (varios_anexos and texto_len >= MULTI_FORCE_TWO_STAGE_MIN_CHARS)
 
     # === Single-pass cuando aplica ===
@@ -1193,11 +1143,8 @@ def analizar_con_openai(texto: str) -> str:
         ]
         try:
             resp = _llamada_openai(messages, max_completion_tokens=max_out, model=_pick_model("analisis"))
-            bruto = resp.choices[0].message.content.strip()
-            bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
-            bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
-            bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
-            out = preparar_texto_para_pdf(bruto)
+            bruto = (resp.choices[0].message.content or "").strip()
+            out = _posprocesar_informe_final(bruto, texto, varios_anexos)
             _log_tiempo("analizar_single_pass" + ("_multi" if varios_anexos else ""), t0)
             return out
         except Exception as e:
@@ -1207,7 +1154,7 @@ def analizar_con_openai(texto: str) -> str:
     chunk_size = _compute_chunk_size(texto_len)
     partes = _particionar(texto, chunk_size)
 
-    # Seguridad: si por tamaño quedó 1 parte, reintenta single-pass
+    # Seguridad: si quedó 1 parte por tamaño, reintenta single-pass
     if len(partes) == 1:
         t0 = _t()
         max_out = _max_out_for_text(texto)
@@ -1217,17 +1164,12 @@ def analizar_con_openai(texto: str) -> str:
         ]
         try:
             resp = _llamada_openai(messages, max_completion_tokens=max_out, model=_pick_model("analisis"))
-            bruto = resp.choices[0].message.content.strip()
-            bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
-            bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
-            bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
-            out = preparar_texto_para_pdf(bruto)
-            _log_tiempo("analizar_single_pass_len1", t0)
-            return out
+            bruto = (resp.choices[0].message.content or "").strip()
+            return _posprocesar_informe_final(bruto, texto, varios_anexos)
         except Exception as e:
             return f"⚠️ Error al generar el análisis: {e}"
 
-    # A) Notas intermedias (CONCURRENTE)
+    # A) Notas intermedias (concurrente)
     notas_list = _generar_notas_concurrente(partes)
     notas_integradas = "\n".join(notas_list)
 
@@ -1251,14 +1193,23 @@ def analizar_con_openai(texto: str) -> str:
     try:
         resp_final = _llamada_openai(messages_final, max_completion_tokens=max_out, model=_pick_model("sintesis"))
         bruto = (resp_final.choices[0].message.content or "").strip()
-        bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
-        bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
-        bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
-        out = preparar_texto_para_pdf(bruto)
+        out = _posprocesar_informe_final(bruto, texto, varios_anexos)
         _log_tiempo("sintesis_final", t0_sint)
         return out
     except Exception as e:
+        # Aún en error, devolvemos notas limpias para depurar
         return f"⚠️ Error en la síntesis final: {e}\n\nNotas intermedias (limpias):\n{_limpiar_meta(notas_integradas)}"
+# ==================== Contactos + Normativa (determinístico, usado en posproceso) ====================
+def _ampliar_contactos_y_normativa(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
+    out = informe
+    sec23 = _build_section_23(texto_fuente, varios_anexos)
+    if sec23:
+        out = _replace_section(out, r"(?im)^\s*2\.3\s+Contactos", sec23)
+    sec215 = _build_section_215(texto_fuente, varios_anexos)
+    if sec215:
+        out = _replace_section(out, r"(?im)^\s*2\.15\s+Normativa", sec215)
+    return out
+
 
 # ==================== Multi-anexo ====================
 def analizar_anexos(files: list) -> str:
@@ -1302,6 +1253,7 @@ def analizar_anexos(files: list) -> str:
 
     return analizar_con_openai(contenido_unico)
 
+
 # ==================== Chat ====================
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
     descripcion_interfaz = f"""
@@ -1335,6 +1287,7 @@ Respondé natural y directo. Evitá repetir las funciones de la plataforma.
         return (resp.choices[0].message.content or "").strip()
     except Exception as e:
         return f"⚠️ Error al generar respuesta: {e}"
+
 
 # ==================== PDF ====================
 def _render_pdf_bytes(resumen: str, fecha_display: Optional[str] = None) -> bytes:
@@ -1405,6 +1358,7 @@ def _render_pdf_bytes(resumen: str, fecha_display: Optional[str] = None) -> byte
     c.save()
     return buffer.getvalue()
 
+
 def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str, fecha_display: Optional[str] = None):
     """
     Genera el PDF en generated_pdfs/{nombre_archivo}
@@ -1431,6 +1385,7 @@ def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str, fecha_display: 
             pass
 
     return output_path
+
 
 def dividir_texto(texto, canvas_obj, max_width):
     palabras = texto.split(" ")
