@@ -240,39 +240,6 @@
     archivosSeleccionados=[]; document.getElementById("lista-archivos").innerHTML="";
     document.getElementById("result").innerHTML=""; resumenGlobal=""; ultimoPDF="";
   }
-<script>
-  function fmtFechaLocalAR(entry){
-    const fLeg = (entry.fecha_legible || '').trim();
-    // Si ya viene en formato dd/mm/yyyy HH:MM la dejamos
-    if (/\d{2}\/\d{2}\/\d{4}/.test(fLeg)) return fLeg;
-
-    const raw = (entry.fecha || '').trim();
-    if (!raw) return '—';
-
-    // ISO con zona u offset -> convertir con timeZone AR
-    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(Z|[+\-]\d{2}:\d{2})?$/.test(raw)) {
-      const d = new Date(raw.replace(' ', 'T'));
-      if (!isNaN(d)) {
-        return new Intl.DateTimeFormat('es-AR', {
-          timeZone: 'America/Argentina/Buenos_Aires',
-          day: '2-digit', month: '2-digit', year: 'numeric',
-          hour: '2-digit', minute: '2-digit', hour12: false
-        }).format(d);
-      }
-    }
-
-    // Naive "YYYY-MM-DD HH:MM(:SS)?" -> asumimos ya está en hora AR
-    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/.test(raw)) {
-      const [datePart, timePart] = raw.split(/[ T]/);
-      const [Y, M, D] = datePart.split('-').map(Number);
-      const [h, m] = timePart.split(':').map(Number);
-      const pad = n => String(n).padStart(2,'0');
-      return `${pad(D)}/${pad(M)}/${Y} ${pad(h)}:${pad(m)}`;
-    }
-
-    return fLeg || raw;
-  }
-</script>
 
   // ===== Historial (server-side pagination) =====
   const Historial = (function(){
@@ -303,7 +270,7 @@
     function renderItems(items){
       els.list.innerHTML = "";
       items.forEach(entry=>{
-        const fecha = fmtFechaLocalAR(entry);
+        const fecha=entry.fecha_legible || entry.fecha || "—";
         const pdfName = (entry.ruta_pdf||'').split('/').pop() || entry.nombre_archivo || '';
         const div=document.createElement("div");
         div.className="mb-3 p-3 border rounded-3 hist-item";
