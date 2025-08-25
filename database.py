@@ -492,6 +492,55 @@ def agregar_usuario(
         print(f"⚠️ El usuario con email {email} ya existe.")
         return None
 
+# --------- NUEVO: wrapper seguro para endpoints (crear o restaurar) ----------
+
+def crear_o_restaurar_usuario(
+    nombre: str,
+    email: str,
+    password: str,
+    rol: str = "usuario",
+    actor_user_id: Optional[int] = None,
+    ip: Optional[str] = None,
+) -> Tuple[bool, bool, Optional[int], str]:
+    """
+    Retorna (ok, restored, user_id, msg).
+
+    - ok=True si se creó o restauró.
+    - restored=True si se reactivó un usuario existente (activo=1, rol/password/nombre actualizados).
+    - ok=False sólo si el email ya existe y está ACTIVO (se debe informar 409 en el endpoint).
+    """
+    email_n = _norm_email(email)
+    previo = obtener_usuario_por_email(email_n)
+
+    # existe y ACTIVO -> bloquear
+    if previo and bool(previo[5]):
+        return (False, False, None, "El email ya existe y está activo")
+
+    # existe e INACTIVO -> restaurar
+    if previo and not bool(previo[5]):
+        user_id = previo[0]
+        with _get_conn() as conn:
+            conn.execute(
+                "UPDATE usuarios SET nombre = ?, password = ?, rol = ?, activo = 1 WHERE id = ?",
+                (nombre, password, (rol or "usuario").strip().lower(), user_id),
+            )
+        registrar_auditoria(
+            actor_user_id, "RESTORE_USER", "usuarios", user_id,
+            before={"email": previo[2], "rol": previo[4], "activo": bool(previo[5])},
+            after={"email": email_n, "rol": (rol or 'usuario').strip().lower(), "activo": True},
+            ip=ip,
+        )
+        return (True, True, user_id, "Usuario restaurado")
+
+    # no existe -> crear
+    new_id = agregar_usuario(nombre, email_n, password, rol, actor_user_id=actor_user_id, ip=ip)
+    if new_id is None:
+        return (False, False, None, "El email ya existe y está activo")
+    return (True, False, new_id, "Usuario creado")
+
+# -----------------------------------------------------------------------------
+
+
 def actualizar_password(
     email: str,
     nueva_password: str,

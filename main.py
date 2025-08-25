@@ -66,7 +66,9 @@ from database import (
     es_admin,
     iniciar_analisis_historial,
     marcar_valoracion_historial,
-    tiene_valoracion_pendiente
+    tiene_valoracion_pendiente,
+    # 👇 importamos para usarlo en la sección Admin (PARTE 4)
+    crear_o_restaurar_usuario
 )
 
 # ORM (audit_logs)
@@ -1050,7 +1052,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     # Si hay una valoración pendiente, bloquear nuevo análisis
     try:
         pr = _pr_get(usuario)
-        if pr or tiene_valoracion_pendiente(usuario):
+        if pr o tiene_valoracion_pendiente(usuario):
             payload = {"error": "Tienes una valoración pendiente. Califica el análisis anterior para continuar."}
             if pr:
                 payload["pending"] = True
@@ -1065,7 +1067,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         return JSONResponse({"error": "Subí al menos un archivo"}, status_code=400)
 
     for a in archivos:
-        if not a or not a.filename:
+        if not a o not a.filename:
             continue
         _validate_ext(a.filename)
 
