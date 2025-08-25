@@ -164,6 +164,8 @@ def _ocr_selectivo_por_pagina(doc: fitz.Document, max_pages: int) -> str:
     if n > to_process:
         res.append(f"\n[AVISO] OCR muestreó {to_process}/{n} páginas distribuidas.")
     return "\n\n".join([r for r in res if r]).strip()
+
+# utils.py — Parte 2/5
 # utils.py — Parte 2/5
 
 # ==================== Extracción por tipo de archivo ====================
@@ -343,13 +345,14 @@ Usa esta guia: si un campo aparece con sinonimos/variantes, NO lo marques como "
 No menciones nombres de portales/sistemas salvo que esten explicitamente en los documentos analizados.
 """
 
-# ======= PROMPT MAESTRO ESTILO ANDRES (con Ficha estandarizada + 1–12) =======
+# ======= PROMPT MAESTRO ESTILO ANDRES (Ficha SIN numeración '0)') =======
 _BASE_PROMPT_ANDRES = r"""
 # (Instrucciones internas: NO imprimir este encabezado ni estas reglas en la salida)
 
 Objetivo
 - Generar un informe de analisis de licitacion en Argentina (ambitos nacional, provincial o municipal), exhaustivo y sin invenciones.
-- La salida debe comenzar con una Ficha estandarizada del procedimiento (campos estandarizados) con los siguientes rotulos exactos (cada uno debe ir con su valor):
+- La salida debe comenzar con el titulo EXACTO: "Ficha estandarizada del procedimiento" (sin numeracion, NO escribir "0)").
+- Dentro de esa Ficha, incluir los campos con estos rotulos exactos (cada uno debe ir con su valor):
   • N° de proceso
   • Nombre de proceso
   • Objeto de la contratacion
@@ -359,7 +362,7 @@ Objetivo
   • Cantidad de ofertas permitidas
   • Estado
   • Plazo de mantenimiento de la oferta
-  • Numero de renglon (escribir: "Total de renglones: N; ver Seccion 9 para el detalle completo")
+  • Numero de renglon (escribir: "Total de renglones: <cantidad>; ver Seccion 9 para el detalle completo"; JAMAS usar el placeholder "N")
   • Objeto del gasto
   • Codigo del item (si corresponde a nivel renglon, dejar referencia a Seccion 9)
   • Descripcion   (si corresponde a nivel renglon, dejar referencia a Seccion 9)
@@ -369,7 +372,7 @@ Objetivo
   • Monto
   • Moneda
   • Duracion del contrato
-- Si algo NO figura en los archivos, escribir "NO ESPECIFICADO" y no inventar ni inferir.
+- Si algo NO figura en los archivos, escribir "NO ESPECIFICADO" y no inventar ni inferir. Nunca usar marcadores como "N".
 - Cada linea con dato critico debe terminar con cita de fuente, segun Reglas de Citas.
 - Ademas de la Ficha, incluir las secciones 1–12 para no perder nada del informe ampliado.
 
@@ -382,7 +385,7 @@ Estilo
 - No mencionar nombres de portales/sistemas salvo que figuren explicitamente en los documentos.
 
 Estructura de salida EXACTA (usar estos titulos tal cual)
-0) Ficha estandarizada del procedimiento (campos estandarizados)
+Ficha estandarizada del procedimiento (campos estandarizados)
 1) Resumen ejecutivo (<=200 palabras)
 2) Datos clave del llamado
 3) Alcance contractual y vigencias
@@ -493,7 +496,7 @@ def _prompt_maestro(varios_anexos: bool) -> str:
         "- En 'Normativa aplicable': listar todas las normas mencionadas (Ley/Decreto/Resolucion/Disposicion, numero y ano).\n"
         "- En 'Catalogo de articulos citados': incluir cada articulo que figure, con sintesis literal 1–2 lineas.\n"
     )
-    return f"{_BASE_PROMPT_MAESTRO}\n{regla_citas}{extras}\nGuia de sinonimos:\n{SINONIMOS_CANONICOS}"
+    return f\"{_BASE_PROMPT_MAESTRO}\n{regla_citas}{extras}\nGuia de sinonimos:\n{SINONIMOS_CANONICOS}\"
 
 CRAFT_PROMPT_NOTAS = r"""
 Genera NOTAS INTERMEDIAS en bullets, ultra concisas, con cita al final de cada bullet.
@@ -597,6 +600,10 @@ def preparar_texto_para_pdf(markdown_text: str) -> str:
     out_lines: List[str] = []
     for raw_ln in (markdown_text or "").splitlines():
         ln = raw_ln.rstrip()
+
+        # Normaliza encabezado de Ficha si el modelo lo numeró como "0)"
+        if re.match(r"^\s*0\)\s*Ficha\s+estandarizada\s+del\s+procedimiento\b", ln, flags=re.I):
+            ln = "Ficha estandarizada del procedimiento (campos estandarizados)"
 
         if _CODE_FENCE_RE.match(ln):
             continue
@@ -927,7 +934,7 @@ def _extraer_contactos_con_paginas(texto: str) -> List[Tuple[str, str, int, Opti
     """
     Devuelve lista de (tipo, valor, p, anexo) con tipo in {"email","url"}.
     """
-    texto = texto or ""
+    texto = texto o ""
     idx_pag = _index_paginas(texto)
     idx_ax  = _index_anexos(texto)
     res: List[Tuple[str, str, int, Optional[int]]] = []
@@ -1247,6 +1254,58 @@ NO imprimas rotulos como 'Informe Original'.
     except Exception:
         return original_report
 
+# ==================== Normalizaciones finales de salida ====================
+def _normalizar_encabezados_salida(informe: str) -> str:
+    """
+    - Elimina el prefijo '0) ' en la Ficha estandarizada.
+    - Limpia duplicados o espacios errantes.
+    """
+    s = informe or ""
+    s = re.sub(
+        r"(?im)^\s*0\)\s*Ficha\s+estandarizada\s+del\s+procedimiento\s*\(campos\s+estandarizados\)\s*$",
+        "Ficha estandarizada del procedimiento (campos estandarizados)", s
+    )
+    s = re.sub(
+        r"(?im)^\s*0\)\s*Ficha\s+estandarizada\s+del\s+procedimiento\s*$",
+        "Ficha estandarizada del procedimiento", s
+    )
+    return s.strip()
+
+def _corregir_seccion_9_si_vacia(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
+    """
+    Si la sección 9) quedó vacía, genérica o sin renglones, la reemplaza
+    por una versión determinística construida desde el texto fuente.
+    """
+    s = informe or ""
+    # Buscar límites de la sección 9)
+    start, end = _find_section_bounds(s, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla")
+    needs_fix = False
+
+    if start == -1:
+        needs_fix = True
+    else:
+        bloque = s[start:end]
+        # Señales de sección incompleta
+        if (_count(r"(?im)\bRengl[oó]n\s+\d+", bloque) == 0) or \
+           (_NOESP_RE.search(bloque) is not None) or \
+           (len(bloque.strip()) < 80):
+            needs_fix = True
+
+    if not needs_fix:
+        return s
+
+    sec213 = _build_section_213(texto_fuente or "", varios_anexos)
+    if not sec213:
+        return s  # no hay renglones detectados; no se toca
+
+    sec9 = sec213.replace("2.13 Planilla de cotizacion y renglones:", "9) Renglones y planilla de cotizacion:")
+    if start == -1:
+        # No existía la sección, la agregamos al final
+        return (s.rstrip() + "\n\n" + sec9.strip() + "\n")
+    else:
+        # La sustituimos
+        return _replace_section(s, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla", sec9)
+
 # ==================== Analizador principal ====================
 def analizar_con_openai(texto: str) -> str:
     if not texto or not texto.strip():
@@ -1281,7 +1340,9 @@ def analizar_con_openai(texto: str) -> str:
             bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
             bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
             bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
-            bruto = _reparar_ficha(bruto, texto)  # <<< NUEVO: fija 'N' y '$...' con el texto completo
+            bruto = _reparar_ficha(bruto, texto)
+            bruto = _corregir_seccion_9_si_vacia(bruto, texto, varios_anexos)
+            bruto = _normalizar_encabezados_salida(bruto)
             out = preparar_texto_para_pdf(bruto)
             _log_tiempo("analizar_single_pass" + ("_multi" if varios_anexos else ""), t0)
             return out
@@ -1308,7 +1369,9 @@ def analizar_con_openai(texto: str) -> str:
             bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
             bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
             bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
-            bruto = _reparar_ficha(bruto, texto)  # <<< NUEVO
+            bruto = _reparar_ficha(bruto, texto)
+            bruto = _corregir_seccion_9_si_vacia(bruto, texto, varios_anexos)
+            bruto = _normalizar_encabezados_salida(bruto)
             out = preparar_texto_para_pdf(bruto)
             _log_tiempo("analizar_single_pass_len1", t0)
             return out
@@ -1343,7 +1406,9 @@ Devuelve SOLO el informe final en texto.
         bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
         bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
         bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
-        bruto = _reparar_ficha(bruto, texto)  # <<< NUEVO
+        bruto = _reparar_ficha(bruto, texto)
+        bruto = _corregir_seccion_9_si_vacia(bruto, texto, varios_anexos)
+        bruto = _normalizar_encabezados_salida(bruto)
         out = preparar_texto_para_pdf(bruto)
         _log_tiempo("sintesis_final", t0_sint)
         return out
