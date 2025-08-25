@@ -21,7 +21,7 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, futu
 class Base(DeclarativeBase):
     pass
 
-# --- Modelo ligero de usuarios para JOIN
+# --- Modelo ligero de usuarios para JOIN (solo lo necesario para auditoría)
 class Usuario(Base):
     __tablename__ = "usuarios"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -36,7 +36,7 @@ class AuditLog(Base):
     actor_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     action: Mapped[str] = mapped_column(String(50), nullable=False)
     entity: Mapped[str] = mapped_column(String(50), nullable=False)
-    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 👈 FALTABA
+    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 👈 agregado
     before_json: Mapped[str | None] = mapped_column(String, nullable=True)
     after_json: Mapped[str | None] = mapped_column(String, nullable=True)
     ip: Mapped[str | None] = mapped_column(String(64), nullable=True)

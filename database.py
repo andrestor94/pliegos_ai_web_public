@@ -32,6 +32,7 @@ APP_TIMEZONE = os.getenv("APP_TIMEZONE", "America/Argentina/Buenos_Aires")
 
 ACCION_ES = {
     "CREATE_USER": "Crear usuario",
+    "RESTORE_USER": "Restaurar usuario",  # 👈 agregado
     "SOFT_DELETE_USER": "Eliminar usuario (suave)",
     "HARD_DELETE_USER": "Eliminar usuario (definitivo)",
     "TOGGLE_USER_ACTIVE": "Cambiar estado de usuario",
@@ -351,6 +352,7 @@ def crear_tabla_adjuntos() -> None:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_adj_mensaje ON mensajes_adjuntos (mensaje_id)")
+
 # =========================
 # database.py — PARTE 2 / 4
 # (Usuarios: CRUD + helpers)
@@ -359,39 +361,6 @@ def crear_tabla_adjuntos() -> None:
 # =============================================================================
 # Usuarios
 # =============================================================================
-
-def agregar_usuario(
-    nombre: str,
-    email: str,
-    password: str,
-    rol: str = "usuario",
-    actor_user_id: Optional[int] = None,
-    ip: Optional[str] = None,
-) -> Optional[int]:
-    email = _norm_email(email)
-    rol = (rol or "usuario").strip().lower()
-    if rol not in ("admin", "usuario", "borrado"):
-        rol = "usuario"
-
-    try:
-        with _get_conn() as conn:
-            cur = conn.execute(
-                "INSERT INTO usuarios (nombre, email, password, rol) VALUES (?, ?, ?, ?)",
-                (nombre, email, password, rol),
-            )
-            new_id = cur.lastrowid
-        registrar_auditoria(
-            actor_user_id,
-            "CREATE_USER",
-            "usuarios",
-            new_id,
-            after={"nombre": nombre, "email": email, "rol": rol, "activo": True},
-            ip=ip,
-        )
-        return new_id
-    except sqlite3.IntegrityError:
-        print(f"⚠️ El usuario con email {email} ya existe.")
-        return None
 
 def obtener_usuario_por_email(email: str):
     """Devuelve la fila completa del usuario (tupla): (id, nombre, email, password, rol, activo)"""
@@ -456,6 +425,72 @@ def buscar_usuarios(term: str, limit: int = 8):
             (like, like, like, like, limit),
         )
         return [dict(r) for r in cur.fetchall()]
+
+def agregar_usuario(
+    nombre: str,
+    email: str,
+    password: str,
+    rol: str = "usuario",
+    actor_user_id: Optional[int] = None,
+    ip: Optional[str] = None,
+) -> Optional[int]:
+    """
+    Crea un usuario nuevo.
+    Si existe uno con el mismo email pero está inactivo (soft-delete),
+    lo REACTIVA (actualiza nombre, password, rol y activo=1) en lugar de insertar.
+    """
+    email = _norm_email(email)
+    rol = (rol or "usuario").strip().lower()
+    if rol not in ("admin", "usuario", "borrado"):
+        rol = "usuario"
+
+    existente = obtener_usuario_por_email(email)  # (id, nombre, email, password, rol, activo) o None
+
+    # A) Existe y está ACTIVO -> no crear
+    if existente and bool(existente[5]):
+        print(f"⚠️ El usuario con email {email} ya existe y está activo.")
+        return None
+
+    # B) Existe pero está INACTIVO -> REACTIVAR
+    if existente and not bool(existente[5]):
+        user_id = existente[0]
+        with _get_conn() as conn:
+            conn.execute(
+                "UPDATE usuarios SET nombre = ?, password = ?, rol = ?, activo = 1 WHERE id = ?",
+                (nombre, password, rol, user_id),
+            )
+        registrar_auditoria(
+            actor_user_id,
+            "RESTORE_USER",
+            "usuarios",
+            user_id,
+            before={"email": existente[2], "rol": existente[4], "activo": bool(existente[5])},
+            after={"email": email, "rol": rol, "activo": True},
+            ip=ip,
+        )
+        return user_id
+
+    # C) No existe -> crear normalmente
+    try:
+        with _get_conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO usuarios (nombre, email, password, rol) VALUES (?, ?, ?, ?)",
+                (nombre, email, password, rol),
+            )
+            new_id = cur.lastrowid
+        registrar_auditoria(
+            actor_user_id,
+            "CREATE_USER",
+            "usuarios",
+            new_id,
+            after={"nombre": nombre, "email": email, "rol": rol, "activo": True},
+            ip=ip,
+        )
+        return new_id
+    except sqlite3.IntegrityError:
+        # Por si hay un residual activo inesperado que dispare el UNIQUE
+        print(f"⚠️ El usuario con email {email} ya existe.")
+        return None
 
 def actualizar_password(
     email: str,
@@ -546,7 +581,6 @@ def borrar_usuario(
     Soft delete (activo=0, rol='borrado') o hard delete si soft=False.
     IMPORTANTE: usamos _with_retry para evitar 'database is locked' cuando coinciden escrituras.
     """
-
     email = _norm_email(email)
 
     def _op():
@@ -585,6 +619,7 @@ def borrar_usuario(
         return True
 
     return _with_retry(_op)
+
 # =========================
 # database.py — PARTE 3 / 4
 # (Historial de análisis)
@@ -837,6 +872,7 @@ def limpiar_historial_invalido() -> int:
         return len(bad_ids)
 
     return _with_retry(_op)
+
 # =========================
 # database.py — PARTE 4 / 4
 # (Tickets + Chat + Adjuntos + Hilos ocultos + Auditoría)
