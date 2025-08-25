@@ -1070,6 +1070,41 @@ def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexo
 
     out = re.sub(r"(?im)^\s*informe\s+original\s*$", "", out)
     return out
+
+# === Post-proceso de Ficha (reparaciones determinísticas) ===
+def _reparar_ficha(informe: str, texto_fuente: str) -> str:
+    """
+    Corrige campos de la Ficha que a veces quedan como placeholders:
+    - 'Total de renglones: N' -> cuenta real de renglones detectados
+    - 'Monto: $...'          -> 'NO ESPECIFICADO' (si el modelo dejó puntos/suspensivos)
+    """
+    try:
+        total_renglones = len(_extraer_renglones_y_especificaciones(texto_fuente or ""))
+    except Exception:
+        total_renglones = 0
+
+    if total_renglones:
+        # Reemplaza cualquier línea de 'Número de renglón' por el total real
+        informe = re.sub(
+            r"(?im)^(\s*•\s*(?:N[uú]mero\s+de\s+rengl[oó]n|Numero\s+de\s+renglon)\s*:\s*)[^\n]*$",
+            lambda m: f"{m.group(1)}Total de renglones: {total_renglones}; ver Seccion 9 para el detalle completo",
+            informe or ""
+        )
+        # Si en otro lado quedó 'Total de renglones: N', reemplaza la N
+        informe = re.sub(
+            r"(?im)\bTotal de renglones:\s*N\b",
+            f"Total de renglones: {total_renglones}",
+            informe or ""
+        )
+
+    # Normaliza placeholder de monto tipo '$...' a 'NO ESPECIFICADO' (preservando cita si existe)
+    informe = re.sub(
+        r"(?im)^(\s*•\s*Monto:\s*)(?:\$+\s*\.{0,3}|[$…]+)\s*(\(.*?\))?\s*$",
+        lambda m: f"{m.group(1)}NO ESPECIFICADO{(' ' + m.group(2)) if m.group(2) else ''}",
+        informe or ""
+    )
+
+    return (informe or "")
 # utils.py — Parte 5/5
 
 # ==================== Llamada a OpenAI robusta ====================
@@ -1246,6 +1281,7 @@ def analizar_con_openai(texto: str) -> str:
             bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
             bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
             bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
+            bruto = _reparar_ficha(bruto, texto)  # <<< NUEVO: fija 'N' y '$...' con el texto completo
             out = preparar_texto_para_pdf(bruto)
             _log_tiempo("analizar_single_pass" + ("_multi" if varios_anexos else ""), t0)
             return out
@@ -1272,6 +1308,7 @@ def analizar_con_openai(texto: str) -> str:
             bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
             bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
             bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
+            bruto = _reparar_ficha(bruto, texto)  # <<< NUEVO
             out = preparar_texto_para_pdf(bruto)
             _log_tiempo("analizar_single_pass_len1", t0)
             return out
@@ -1306,6 +1343,7 @@ Devuelve SOLO el informe final en texto.
         bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
         bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
         bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
+        bruto = _reparar_ficha(bruto, texto)  # <<< NUEVO
         out = preparar_texto_para_pdf(bruto)
         _log_tiempo("sintesis_final", t0_sint)
         return out
