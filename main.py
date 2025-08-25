@@ -1787,10 +1787,15 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
     require_admin(request)
     actor_user_id, ip = _actor_info(request)
     email = payload.email.lower()
-    if obtener_usuario_por_email(email):
+
+    # ⚠️ Antes devolvía 409 con sólo existir.
+    # Ahora sólo bloquea si EXISTE y está ACTIVO.
+    row = obtener_usuario_por_email(email)  # (id, nombre, email, password, rol, activo)
+    if row and bool(row[5]):  # activo = 1
         return JSONResponse({"error": "El email ya existe"}, status_code=409)
+
     try:
-        agregar_usuario(
+        user_id = agregar_usuario(
             nombre=payload.nombre.strip(),
             email=email,
             password=DEFAULT_NEW_USER_PASSWORD,
@@ -1798,10 +1803,15 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
             actor_user_id=actor_user_id,
             ip=ip
         )
-        return {"ok": True}
+        if user_id:
+            # Si había fila previa inactiva, se reactivó
+            restored = bool(row and not bool(row[5]))
+            return {"ok": True, "restaurado": restored}
+        # Fallback: si no devolvió id, algo raro pasó
+        return JSONResponse({"error": "No se pudo crear/restaurar el usuario"}, status_code=500)
     except Exception as e:
         print("❌ admin_users_create:", repr(e))
-        return JSONResponse({"error": "No se pudo crear el usuario"}, status_code=500)
+        return JSONResponse({"error": "No se pudo crear/restaurar el usuario"}, status_code=500)
 
 # alias de compatibilidad
 @app.post("/api/usuarios/crear")
