@@ -124,35 +124,48 @@ def _ocr_pagina_png_bytes(png_bytes: bytes, idx: int) -> str:
     return f"[PÁGINA {idx+1}]\n{txt}" if txt else f"[PÁGINA {idx+1}] (sin texto OCR)"
 
 def _ocr_selectivo_por_pagina(doc: fitz.Document, max_pages: int) -> str:
+    """
+    NUEVO: muestreo distribuido de páginas a lo largo de todo el documento.
+    Así, aunque la planilla esté al final, entra en el muestreo (p.ej. 8 páginas: inicio/medio/fin).
+    """
     n = len(doc)
+    if n == 0:
+        return ""
     to_process = min(n, max_pages)
-    resultados = [""] * to_process
-    tareas = []
+
+    # Índices muestreados de forma uniforme sobre [0, n-1]
+    if to_process >= n:
+        page_idxs = list(range(n))
+    else:
+        # set para evitar duplicados por redondeo
+        page_idxs = sorted({int(round(i * (n - 1) / max(1, to_process - 1))) for i in range(to_process)})
+
+    resultados_map: Dict[int, str] = {}
+
+    def _proc_page(i: int) -> Tuple[int, str]:
+        p = doc.load_page(i)
+        txt_nat = (p.get_text() or "").strip()
+        if len(txt_nat) >= OCR_TEXT_MIN_CHARS:
+            return i, f"[PÁGINA {i+1}]\n{txt_nat}"
+        png_bytes = _rasterizar_pagina(p)
+        b64 = base64.b64encode(png_bytes).decode("utf-8")
+        txt = _ocr_openai_imagen_b64(b64)
+        return i, (f"[PÁGINA {i+1}]\n{txt}" if txt else f"[PÁGINA {i+1}] (sin texto OCR)")
 
     with ThreadPoolExecutor(max_workers=OCR_CONCURRENCY) as ex:
-        for i in range(to_process):
-            p = doc.load_page(i)
-            txt_nat = (p.get_text() or "").strip()
-            if len(txt_nat) >= OCR_TEXT_MIN_CHARS:
-                resultados[i] = f"[PÁGINA {i+1}]\n{txt_nat}"
-            else:
-                png_bytes = _rasterizar_pagina(p)
-                tareas.append(ex.submit(_ocr_pagina_png_bytes, png_bytes, i))
-
-        for fut in as_completed(tareas):
+        futs = [ex.submit(_proc_page, i) for i in page_idxs]
+        for fut in as_completed(futs):
             try:
-                s = fut.result()
-                m = re.search(r"\[PÁGINA\s+(\d+)\]", s)
-                if m:
-                    idx = int(m.group(1)) - 1
-                    if 0 <= idx < to_process:
-                        resultados[idx] = s
+                i, s = fut.result()
+                resultados_map[i] = s
             except Exception:
                 pass
 
+    orden = sorted(resultados_map.keys())
+    res = [resultados_map[i] for i in orden]
     if n > to_process:
-        resultados.append(f"\n[AVISO] Se procesaron {to_process}/{n} páginas por OCR selectivo.")
-    return "\n\n".join([r for r in resultados if r]).strip()
+        res.append(f"\n[AVISO] OCR muestreó {to_process}/{n} páginas distribuidas.")
+    return "\n\n".join([r for r in res if r]).strip()
 
 # ==================== Extracción por tipo de archivo ====================
 def _leer_todo(file) -> bytes:
@@ -290,7 +303,6 @@ def extraer_texto_universal(file) -> str:
     out = (text or "").strip()
     _log_tiempo("extraer_texto_universal_texto_plano", t0)
     return out
-
 # ==================== Pre-limpieza ====================
 def _limpieza_basica_preanalisis(s: str) -> str:
     s = re.sub(r"\n?P[aá]gina\s+\d+\s+de\s+\d+\s*\n", "\n", s, flags=re.I)
@@ -388,7 +400,7 @@ Cobertura obligatoria por sección (según aplique)
 - 2) Datos clave: Organismo, Expediente/N° proceso, Tipo/Modalidad/Etapa, Objeto, Rubro, Lugar/área; contactos/portales (mails/URLs) si figuran.
 - 3) Alcance/vigencias: mantenimiento de oferta y prórroga; perfeccionamiento; ampliaciones/topes; duración/termino del contrato.
 - 4) Entregas: lugar/horarios; forma (única/parcelada); plazos; flete/descarga.
-- 5) Presentación: sobre/caja, duplicado, firma, rotulado; documentación fiscal/registral; costo/valor de pliego si existe.
+- 5) Presentación: sobre/caja, duplicado, firma, rotulado; documentación fiscal/registral; costo/valor del pliego si existe.
 - 6) Evaluación: cuadro comparativo; tipo de cambio; criterios cuali/cuantitativos; empates; mejora de precio.
 - 7) Garantías: umbrales por UC si aplica; % mantenimiento y % cumplimiento con plazos/condiciones; contragarantías.
 - 8) Muestras/envases/etiquetado/caducidad: ANMAT/BPM; cadena de frío; rotulados; vigencia mínima.
@@ -520,7 +532,6 @@ def _limpiar_meta(texto: str) -> str:
             continue
         lineas.append(ln)
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lineas)).strip()
-
 def _particionar(texto: str, max_chars: int) -> list[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto), max_chars)]
 
@@ -635,7 +646,7 @@ def _build_regex_hints(texto: str, limit_per_field: int = None, max_chars: int =
             break
     return "\n\n".join(secciones[:])
 
-# Campos detectables (ampliados)
+# Campos detectables (ampliados y adaptados a AR)
 DETECTABLE_FIELDS: Dict[str, Dict] = {
     "mant_oferta": {"label":"Mantenimiento de oferta", "pats":[r"mantenim[ií]ento de la oferta", r"validez de la oferta"]},
     "gar_mant":    {"label":"Garantía de mantenimiento", "pats":[r"garant[ií]a.*manten", r"\b5 ?%"]},
@@ -980,7 +991,6 @@ def _replace_section(text: str, header_regex: str, replacement: str) -> str:
         # si no existe, lo anexamos al final con un salto
         return text.rstrip() + "\n\n" + replacement.strip() + "\n"
     return text[:s] + replacement.strip() + "\n" + text[e:]
-
 # ==================== Ampliación / sustitución de 2.13 y 2.16 (capadas) ====================
 def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
     """
