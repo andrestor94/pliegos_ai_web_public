@@ -301,27 +301,65 @@ def _limpieza_basica_preanalisis(s: str) -> str:
 
 # ==================== Prompts y limpieza ====================
 SINONIMOS_CANONICOS = r"""
-[Guía de mapeo semántico]
-- "Fecha de publicación" ≈ "fecha del llamado", "fecha de difusión del llamado", "fecha de convocatoria".
-- "Número de proceso" ≈ "Expediente", "N° de procedimiento", "EX-...", "IF-...".
-- "Presupuesto referencial" ≈ "presupuesto oficial", "monto estimado", "crédito disponible".
-- "Presentación de ofertas" ≈ "acto de presentación", "límite de recepción".
-- "Apertura" ≈ "acto de apertura de ofertas".
-- "Mantenimiento de oferta" ≈ "validez de la oferta".
-- "Garantía de cumplimiento" ≈ "garantía contractual".
-- "Planilla de cotización" ≈ "formulario de oferta", "cuadro comparativo", "planilla de precios".
+[Guía de mapeo semántico – Argentina (nacional, provincial, municipal)]
+- "Número de proceso" ≈ "Expediente", "N° de procedimiento", "N° de trámite", "EX-...", "IF-...".
+- "Nombre de proceso" ≈ "Denominación del procedimiento", "Título del llamado".
+- "Objeto de la contratación" ≈ "Objeto", "Adquisición/Contratación de", "Finalidad".
+- "Procedimiento de selección" ≈ "Tipo de procedimiento", "Modalidad", "Clase del llamado" (Licitación Pública/Privada, Contratación Directa, Compra Menor, Subasta, etc.).
+- "Tipo de cotización" ≈ "Forma de cotización", "Modo de cotizar", "Planilla de precios", "Ítem por ítem", "Global/Total", "Por renglón/lote".
+- "Tipo de adjudicación" ≈ "Criterio de adjudicación", "Adjudicación por renglón/lote/total".
+- "Cantidad de ofertas permitidas" ≈ "Número de propuestas por oferente", "Ofertas alternativas/adicionales".
+- "Estado" ≈ "Situación del trámite" (vigente, abierto, cerrado, desierto, fracasado, adjudicado), si el documento lo consigna.
+- "Plazo de mantenimiento de la oferta" ≈ "Validez de la oferta".
+- "Número de renglón" ≈ "Renglón", "Ítem (número)".
+- "Objeto del gasto" ≈ "Partida presupuestaria", "Clasificador/Objeto del gasto", "Estructura programática".
+- "Código del ítem" ≈ "Código interno", "Código catálogo", "SKU".
+- "Descripción" ≈ "Descripción del ítem", "Especificaciones técnicas".
+- "Cantidad" ≈ "Cantidad solicitada/Requerida".
+- "Inicio y final de consultas" ≈ "Plazo de consultas/aclaraciones", "Recepción de consultas", "Preguntas y respuestas".
+- "Fecha y hora del acto de apertura" ≈ "Apertura", "Acto de apertura de ofertas".
+- "Monto" ≈ "Presupuesto oficial/referencial", "Monto estimado", "Crédito disponible".
+- "Moneda" ≈ "Moneda de cotización" (ARS, USD, etc.), "Tipo de cambio".
+- "Duración del contrato" ≈ "Plazo contractual", "Vigencia", "Por el término de".
+- "Presentación de ofertas" ≈ "Acto de presentación", "Límite de recepción".
+- "Garantía de mantenimiento" ≈ "Garantía de oferta".
+- "Garantía de cumplimiento" ≈ "Garantía contractual".
+- "Planilla de cotización" ≈ "Formulario de oferta", "Cuadro comparativo", "Planilla de precios".
 - "Tipo de cambio BNA" ≈ "Banco Nación vendedor del día anterior".
-Usa esta guía: si un campo aparece con sinónimos/variantes, NO lo marques como "no especificado".
+
+Usá esta guía: si un campo aparece con sinónimos/variantes, NO lo marques como "NO ESPECIFICADO".
+No menciones nombres de portales/sistemas salvo que estén explícitamente en los documentos analizados.
 """
 
-# ======= PROMPT MAESTRO ESTILO ANDRÉS (formato 1–12) =======
+# ======= PROMPT MAESTRO ESTILO ANDRÉS (con Ficha estandarizada + 1–12) =======
 _BASE_PROMPT_ANDRES = r"""
 # (Instrucciones internas: NO imprimir este encabezado ni estas reglas en la salida)
 
 Objetivo
-- Generar un informe de análisis de licitación, exhaustivo y “cero invenciones”, con la estructura EXACTA de abajo.
-- Si algo NO figura en los archivos, escribir “NO ESPECIFICADO” y explicarlo brevemente (sin inferir).
-- Cada línea con dato crítico debe terminar con una cita de fuente, según “Reglas de Citas”.
+- Generar un **informe de análisis de licitación en Argentina** (ámbitos nacional, provincial o municipal), exhaustivo y **sin invenciones**.
+- La salida debe comenzar con una **Ficha estandarizada del procedimiento (campos estandarizados)** siguiendo **estos rótulos exactos**:
+  • N° de proceso
+  • Nombre de proceso
+  • Objeto de la contratación
+  • Procedimiento de selección
+  • Tipo de cotización
+  • Tipo de adjudicación
+  • Cantidad de ofertas permitidas
+  • Estado
+  • Plazo de mantenimiento de la oferta
+  • Número de renglón (indicar “Total de renglones: N; ver Sección 9 para el detalle completo”)
+  • Objeto del gasto
+  • Código del ítem (si corresponde a nivel renglón, dejar referencia a Sección 9)
+  • Descripción   (si corresponde a nivel renglón, dejar referencia a Sección 9)
+  • Cantidad      (si corresponde a nivel renglón, dejar referencia a Sección 9)
+  • Inicio y final de consultas
+  • Fecha y hora del acto de apertura
+  • Monto
+  • Moneda
+  • Duración del contrato
+- Si algo NO figura en los archivos, escribir **“NO ESPECIFICADO”** y **no inventar ni inferir**.
+- Cada línea con dato crítico debe terminar con **cita de fuente**, según “Reglas de Citas”.
+- **Además de la Ficha**, se deben incluir las secciones 1–12 (debajo) para **no perder nada** de valor del informe ampliado.
 
 {REGLAS_CITAS}
 
@@ -329,8 +367,10 @@ Estilo
 - Encabezados y listas claras; sin meta-texto (“parte X de Y”, “revise el resto”, etc.).
 - Deduplicar, fusionar y no repetir información.
 - Mantener terminología del pliego. Usar 2 decimales si el pliego lo exige para precios.
+- No mencionar nombres de portales/sistemas salvo que figuren explícitamente en los documentos.
 
 Estructura de salida EXACTA (usar estos títulos tal cual)
+0) Ficha estandarizada del procedimiento (campos estandarizados)    <-- PRIMERO (con la lista de 19 ítems)
 1) Resumen ejecutivo (≤200 palabras)
 2) Datos clave del llamado
 3) Alcance contractual y vigencias
@@ -345,14 +385,14 @@ Estructura de salida EXACTA (usar estos títulos tal cual)
 12) Observaciones finales
 
 Cobertura obligatoria por sección (según aplique)
-- 2) Datos clave: Organismo, Expediente, Tipo/Modalidad/Etapa, Objeto, Rubro, Lugar/área; contactos/portales (mails/URLs) si figuran.
-- 3) Alcance/vigencias: mantenimiento de oferta y prórroga; perfeccionamiento; ampliaciones/topes.
-- 4) Entregas: lugar/horarios; forma (única/parcelada); plazos por monto; flete/descarga.
+- 2) Datos clave: Organismo, Expediente/N° proceso, Tipo/Modalidad/Etapa, Objeto, Rubro, Lugar/área; contactos/portales (mails/URLs) si figuran.
+- 3) Alcance/vigencias: mantenimiento de oferta y prórroga; perfeccionamiento; ampliaciones/topes; duración/termino del contrato.
+- 4) Entregas: lugar/horarios; forma (única/parcelada); plazos; flete/descarga.
 - 5) Presentación: sobre/caja, duplicado, firma, rotulado; documentación fiscal/registral; costo/valor de pliego si existe.
-- 6) Evaluación: cuadro comparativo; tipo de cambio BNA; criterios cuali/cuantitativos; empate ≤2%; mejora de oferta.
-- 7) Garantías: umbrales por UC; % mantenimiento y % cumplimiento con plazos/condiciones; contragarantías.
+- 6) Evaluación: cuadro comparativo; tipo de cambio; criterios cuali/cuantitativos; empates; mejora de precio.
+- 7) Garantías: umbrales por UC si aplica; % mantenimiento y % cumplimiento con plazos/condiciones; contragarantías.
 - 8) Muestras/envases/etiquetado/caducidad: ANMAT/BPM; cadena de frío; rotulados; vigencia mínima.
-- 9) Renglones/planilla: **incluir SOLO los renglones del cuadro/planilla de cotización** (si existe). Por renglón: Cantidad, Código (si hay), Descripción y **especificaciones técnicas** relevantes en 1 línea. **No listar bullets generales ni cláusulas**. Si hay demasiados, priorizar los directamente vinculados al objeto y resumir el resto.
+- 9) Renglones/planilla: **incluir TODOS los renglones** (si existe planilla). Por renglón: Cantidad, Código (si hay), Descripción y **especificaciones técnicas** relevantes en 1 línea. Si hay demasiados, mantener listado completo aunque la descripción se acote.
 - 10) Checklist: acciones para el oferente.
 - 11) Fechas críticas: presentación, apertura, mantenimiento, entregas, consultas, etc.
 - 12) Observaciones finales: alertas y condicionantes.
@@ -601,15 +641,15 @@ DETECTABLE_FIELDS: Dict[str, Dict] = {
     "gar_mant":    {"label":"Garantía de mantenimiento", "pats":[r"garant[ií]a.*manten", r"\b5 ?%"]},
     "gar_cumpl":   {"label":"Garantía de cumplimiento", "pats":[r"garant[ií]a.*cumpl", r"\b10 ?%"]},
     "plazo_ent":   {"label":"Plazo de entrega", "pats":[r"plazo de entrega", r"\b\d{1,3}\s*d[ií]as"]},
-    "tipo_cambio": {"label":"Tipo de cambio BNA", "pats":[r"Banco\s+Naci[oó]n", r"tipo de cambio"]},
+    "tipo_cambio": {"label":"Tipo de cambio", "pats":[r"Banco\s+Naci[oó]n", r"tipo de cambio", r"BNA"]},
     "comision":    {"label":"Comisión de (Pre)?Adjudicación", "pats":[r"Comisi[oó]n.*(pre)?adjudicaci[oó]n"]},
     "muestras":    {"label":"Muestras", "pats":[r"\bmuestras?\b"]},
     "planilla":    {"label":"Planilla de cotización y renglones", "pats":[r"planilla.*cotizaci[oó]n", r"renglones?"]},
-    "modalidad":   {"label":"Modalidad / art. 17", "pats":[r"Orden de compra cerrada", r"art[ií]culo\s*17"]},
-    "plazo_contr": {"label":"Plazo contractual", "pats":[r"por el t[eé]rmino\s+de\s+\d+", r"\b185\s*d[ií]as"]},
-    "prorroga":    {"label":"Prórroga", "pats":[r"pr[oó]rroga\s+de\s+hasta\s+el\s+100%"]},
-    "presupuesto": {"label":"Presupuesto estimado", "pats":[r"presupuesto (estimado|oficial|referencial)", r"\$\s?\d{1,3}(\.\d{3})*(,\d{2})?"]},
-    "expediente":  {"label":"Expediente", "pats":[r"\bEX-\d{4}-[A-Z0-9-]+"]},
+    "modalidad":   {"label":"Procedimiento/Modalidad", "pats":[r"licitaci[oó]n\s+(p[úu]blica|privada)", r"contrataci[oó]n\s+directa", r"compra\s+menor", r"subasta", r"modalidad"]},
+    "plazo_contr": {"label":"Duración del contrato", "pats":[r"duraci[oó]n del contrato", r"plazo contractual", r"por el t[eé]rmino\s+de\s+\d+", r"\b\d{1,4}\s*d[ií]as"]},
+    "prorroga":    {"label":"Prórroga/Ampliación", "pats":[r"pr[oó]rroga", r"ampliaci[oó]n", r"hasta\s+el\s+100%"]},
+    "presupuesto": {"label":"Monto / Presupuesto", "pats":[r"presupuesto (estimado|oficial|referencial)", r"monto\s+estimado", r"cr[eé]dito\s+disponible", r"\$\s?\d{1,3}(\.\d{3})*(,\d{2})?"]},
+    "expediente":  {"label":"Expediente / N° proceso", "pats":[r"\bEX-\d{4}-[A-Z0-9-]+", r"\bN[°º]\s*de\s*(proceso|procedimiento|expediente)"]},
     "fechas":      {"label":"Fechas y horas", "pats":[r"\b\d{2}/\d{2}/\d{4}\b", r"\b\d{1,2}:\d{2}\s*(hs|h)"]},
     "contacto":    {"label":"Contactos y portales", "pats":[r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", r"https?://[^\s)]+|www\.[^\s)]+"]},
     "costo_pliego":{"label":"Costo/valor del pliego", "pats":[r"(costo|valor)\s+del\s+pliego", r"adquisici[oó]n\s+del\s+pliego", r"\$\s?\d{1,3}(\.\d{3})*(,\d{2})?"]},
@@ -619,12 +659,14 @@ DETECTABLE_FIELDS: Dict[str, Dict] = {
     "criterios":   {"label":"Criterios de evaluación", "pats":[r"criterios?\s+de\s+evaluaci[oó]n"]},
     "renglones":   {"label":"Renglones y especificaciones", "pats":[r"Rengl[oó]n\s*\d+", r"Especificaciones?\s+t[ée]cnicas?"]},
     "articulos":   {"label":"Artículos citados", "pats":[r"\bArt(?:[íi]culo|\.)\s*\d+[A-Za-z]?\b"]},
-    "normativa":   {"label":"Normativa aplicable", "pats":[
-                        r"\bLey(?:\s*N[°º])?\s*([\d\.]{1,7}(?:/\d{2,4})?)\b",
-                        r"\bDecreto(?:\s*N[°º])?\s*([\d\.]{1,7}(?:/\d{2,4})?)\b",
-                        r"\bResoluci[oó]n(?:\s*(?:Ministerial|Conjunta))?\s*(?:N[°º]\s*)?(\d{1,7}(?:/\d{2,4})?)\b",
-                        r"\bDisposici[oó]n\s*(?:N[°º]\s*)?(\d{1,7}(?:/\d{2,4})?)\b"
-                    ]},
+    "estado":      {"label":"Estado del trámite", "pats":[r"\bestado\b", r"\bvigente\b", r"\b(adjudicado|desierto|fracasado|cerrado)\b"]},
+    "consultas":   {"label":"Inicio y final de consultas", "pats":[r"\bconsultas\b", r"aclaraciones", r"preguntas"]},
+    "apertura":    {"label":"Acto de apertura", "pats":[r"acto\s+de\s+apertura", r"\bapertura\b"]},
+    "tipo_cotiz":  {"label":"Tipo de cotización", "pats":[r"forma\s+de\s+cotizaci[oó]n", r"tipo\s+de\s+cotizaci[oó]n", r"cotizaci[oó]n\s+por"]},
+    "tipo_adj":    {"label":"Tipo de adjudicación", "pats":[r"adjudicaci[oó]n\s+por\s+(rengl[oó]n|lote|total)"]},
+    "moneda":      {"label":"Moneda", "pats":[r"\bmoneda\b", r"\bARS\b", r"\bUSD\b"]},
+    "obj_gasto":   {"label":"Objeto del gasto", "pats":[r"objeto\s+del\s+gasto", r"partida\s+presupuestaria", r"clasificador"]},
+    "ofertas_perm":{"label":"Ofertas permitidas", "pats":[r"m[aá]s\s+de\s+una\s+oferta", r"ofertas?\s+alternativas", r"una\s+sola\s+oferta"]},
 }
 
 # ====== NUEVO: utilidades para conteo y evidencia exhaustiva ======
@@ -1120,7 +1162,7 @@ def analizar_con_openai(texto: str) -> str:
     texto_len = len(texto)
     n_anexos = _contar_anexos(texto)
     varios_anexos = n_anexos >= 2
-    # Usar el nuevo prompt estilo Andrés (1–12)
+    # Usar el nuevo prompt estilo Andrés (con Ficha estandarizada + 1–12)
     prompt_maestro = _prompt_andres(varios_anexos)
 
     # Hints regex (opcionales, capados por tamaño)
@@ -1136,7 +1178,7 @@ def analizar_con_openai(texto: str) -> str:
         t0 = _t()
         max_out = _max_out_for_text(texto)
         messages = [
-            {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
+            {"role": "system", "content": "Actuá como equipo experto en derecho administrativo argentino (ámbitos nacional, provincial y municipal) y compras públicas; redactor técnico-jurídico. Cero invenciones."},
             {"role": "user", "content": f"{prompt_maestro}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
         ]
         try:
@@ -1160,7 +1202,7 @@ def analizar_con_openai(texto: str) -> str:
         t0 = _t()
         max_out = _max_out_for_text(texto)
         messages = [
-            {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
+            {"role": "system", "content": "Actuá como equipo experto en derecho administrativo argentino (ámbitos nacional, provincial y municipal) y compras públicas; redactor técnico-jurídico. Cero invenciones."},
             {"role": "user", "content": f"{prompt_maestro}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\n👉 Devuelve SOLO el informe final (texto), sin preámbulos ni títulos de estas instrucciones."}
         ]
         try:
@@ -1183,7 +1225,7 @@ def analizar_con_openai(texto: str) -> str:
     t0_sint = _t()
     max_out = _max_out_for_text(texto)
     messages_final = [
-        {"role": "system", "content": "Actúa como equipo experto en derecho administrativo y licitaciones sanitarias; redactor técnico-jurídico."},
+        {"role": "system", "content": "Actuá como equipo experto en derecho administrativo argentino (ámbitos nacional, provincial y municipal) y compras públicas; redactor técnico-jurídico. Cero invenciones."},
         {"role": "user", "content": f"""{_prompt_andres(varios_anexos)}
 
 === NOTAS INTERMEDIAS INTEGRADAS (DEDUPE Y TRAZABILIDAD) ===
