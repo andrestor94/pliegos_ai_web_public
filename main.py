@@ -82,41 +82,54 @@ def now_iso_utc() -> str:
 def now_stamp_ar() -> str:
     return datetime.now(TZ_AR).strftime("%Y%m%d%H%M%S")
 
+# --- reemplazar ---
 def iso_utc_to_ar_str(iso_utc: str, fmt: str = "%d/%m/%Y %H:%M") -> str:
     if not iso_utc:
         return ""
-    iso = iso_utc.replace("Z", "+00:00")
+    s = str(iso_utc).strip()
+    s = s.replace("Z", "+00:00")
     try:
-        dt_utc = datetime.fromisoformat(iso)
+        dt = datetime.fromisoformat(s)  # puede ser naive
     except ValueError:
+        # fallback "YYYY-MM-DD HH:MM:SS"
         try:
-            dt_utc = datetime.strptime(iso_utc, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
         except Exception:
             return iso_utc
-    return dt_utc.astimezone(TZ_AR).strftime(fmt)
+
+    # ⬇️ clave: si es naive, asumimos Buenos Aires (NO UTC)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=TZ_AR)
+    # y mostramos en AR
+    return dt.astimezone(TZ_AR).strftime(fmt)
 
 # --- Normalizador robusto de datetimes a UTC aware (para comparaciones seguras) ---
+# --- reemplazar ---
 def _parse_dt_utc(value) -> Optional[datetime]:
     """
     Acepta datetime o str (con o sin 'Z') y devuelve datetime con tz UTC.
-    Evita 'TypeError: can't subtract offset-naive and offset-aware datetimes'.
+    Si es naive, asumimos que estaba en AR local y la convertimos a UTC.
     """
     if not value:
         return None
+
     if isinstance(value, datetime):
         dt = value
     else:
         s = str(value).strip().replace("Z", "+00:00")
         try:
-            dt = datetime.fromisoformat(s)  # Puede devolver naive si no hay offset
+            dt = datetime.fromisoformat(s)
         except Exception:
-            # fallback "YYYY-MM-DD HH:MM:SS"
             try:
                 dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
             except Exception:
                 return None
+
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        # ⬇️ clave: naive → asumimos AR local
+        dt = dt.replace(tzinfo=TZ_AR)
+
+    # devolvemos en UTC para comparaciones/orden
     return dt.astimezone(timezone.utc)
 
 
