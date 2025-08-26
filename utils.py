@@ -6,6 +6,7 @@ import re
 import base64
 import mimetypes
 import time
+import json  # <-- agregar
 from datetime import datetime
 from typing import List, Tuple, Dict, Optional
 from tempfile import NamedTemporaryFile
