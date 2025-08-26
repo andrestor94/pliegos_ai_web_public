@@ -47,7 +47,7 @@ from database import (
     buscar_usuarios,
     guardar_en_historial,
     obtener_historial,
-    #⬇️ reemplazo: borrado validado y operación atómica valorar+eliminar
+    ⬇️ reemplazo: borrado validado y operación atómica valorar+eliminar
     eliminar_del_historial_validado,
     obtener_historial_completo,
     crear_ticket,
@@ -915,7 +915,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
     if not historial_id:
         h = _buscar_historial_usuario(user, timestamp=payload.timestamp, nombre_pdf=payload.nombre_pdf)
         if h:
-            hid = h.get("historial_id") or h.get("id")  # ⭐ fix: or (no bitwise)
+            hid = h.get("historial_id") or h.get("id")
             if isinstance(hid, int):
                 historial_id = hid
 
@@ -1050,7 +1050,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     try:
         _pr_add(usuario, historial_id, timestamp, nombre_archivo_pdf)
     except Exception as e:
-        print("⚠️ No se pudo registrar pending_ratings:", repr(e))
+        print(⚠️ No se pudo registrar pending_ratings:", repr(e))
 
     return {
         "resumen": resumen,
@@ -1063,6 +1063,83 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
 # main.py — PARTE 3 / 5
 # (historial, usuario/avatares, diagnóstico)
 # =========================
+
+# ---------- Helpers de historial/paginación ----------
+def _paginate(data: List[dict], page: int, per_page: int):
+    total_items = len(data)
+    total_pages = max(1, ceil(total_items / per_page))
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * per_page
+    end = start + per_page
+    return data[start:end], page, per_page, total_pages, total_items
+
+def _historial_para_home(email: str, rol: str, q: str = "") -> List[dict]:
+    """Devuelve historial filtrado por permisos y query."""
+    try:
+        items = obtener_historial_completo() or []
+    except Exception:
+        items = []
+
+    # Normalizar estructura esperada
+    norm = []
+    for h in items:
+        try:
+            fecha_raw = h.get("fecha") or ""
+            # convertir a UTC-aware para ordenar
+            dt = _parse_dt_utc(fecha_raw) or datetime.now(timezone.utc)
+            fecha_leg = iso_utc_to_ar_str(fecha_raw)
+        except Exception:
+            dt = datetime.now(timezone.utc)
+            fecha_leg = fecha_raw or ""
+        norm.append({
+            "id": h.get("id"),
+            "historial_id": h.get("id"),
+            "usuario": h.get("usuario") or "",
+            "nombre_archivo": h.get("nombre_archivo") or "",
+            "ruta_pdf": h.get("ruta_pdf") or h.get("nombre_archivo") or "",
+            "resumen": h.get("resumen") or "",
+            "fecha": fecha_raw,
+            "fecha_legible": fecha_leg,
+            "timestamp": h.get("timestamp") or _extraer_ts_de_nombre(h.get("nombre_archivo") or ""),
+            "rating_required": bool(h.get("rating_required")),
+            "dt": dt,
+        })
+
+    # Filtrar por permisos (admin ve todo)
+    is_admin_flag = False
+    try:
+        is_admin_flag = (rol == "admin") or es_admin(email)
+    except Exception:
+        is_admin_flag = (rol == "admin")
+
+    if not is_admin_flag:
+        norm = [x for x in norm if x["usuario"].lower() == (email or "").lower()]
+
+    # Filtro de búsqueda
+    q = (q or "").strip().lower()
+    if q:
+        def _hay(x: dict) -> bool:
+            blob = " ".join([
+                x.get("usuario", ""),
+                x.get("nombre_archivo", ""),
+                x.get("resumen", ""),
+                x.get("fecha", "") or "",
+                x.get("timestamp", "") or ""
+            ]).lower()
+            return q in blob
+        norm = [x for x in norm if _hay(x)]
+
+    # Orden por fecha desc
+    try:
+        norm.sort(key=lambda x: x["dt"], reverse=True)
+    except Exception:
+        pass
+
+    # Quitar 'dt' interno
+    for x in norm:
+        x.pop("dt", None)
+
+    return norm
 
 # ================== Historial ==================
 @app.get("/historial")
@@ -1112,24 +1189,20 @@ async def descargar_pdf(archivo: str):
         return FileResponse(ruta, media_type="application/pdf", filename=archivo)
     return JSONResponse({"error": "Archivo no encontrado"}, status_code=404)
 
-#⬇️ ACTUALIZADO: impedir eliminación si falta valoración
+#⬇️ Eliminación con validación previa de rating
 @app.delete("/eliminar/{timestamp}")
 async def eliminar_archivo(timestamp: str, request: Request):
     """
     Elimina un análisis por timestamp **sólo** si:
       - pertenece al usuario (o el usuario es admin), y
       - NO tiene valoración pendiente (rating_required=0).
-
-    Si hay valoración pendiente, devuelve 409 + X-Require-Rating: 1 y payload con 'last'
-    para que el front pueda abrir el modal de rating.
     """
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
 
     usuario_actual = request.session.get("usuario")
-    es_admin_flag = False
     try:
-        es_admin_flag = es_admin(usuario_actual)
+        es_admin_flag = (request.session.get("rol") == "admin") or es_admin(usuario_actual)
     except Exception:
         es_admin_flag = (request.session.get("rol") == "admin")
 
@@ -1171,11 +1244,11 @@ async def eliminar_archivo(timestamp: str, request: Request):
         resp.headers["X-Require-Rating"] = "1"
         return resp
 
-    # ✅ No hay valoración pendiente: eliminar fila de DB
+    # ✅ No hay valoración pendiente: eliminar fila de DB (función validada)
     try:
-        eliminar_del_historial(ts)
+        eliminar_del_historial_validado(ts)
     except Exception as e:
-        print("❌ eliminar_del_historial:", repr(e))
+        print("❌ eliminar_del_historial_validado:", repr(e))
         return JSONResponse({"error": "No se pudo eliminar el registro"}, status_code=500)
 
     # Eliminar archivo físico si existe
@@ -1562,7 +1635,6 @@ async def chat_enviar_archivos(
         written = await _save_upload_stream(archivo, path)
         total_bytes += written
 
-        # ✅ Límite correcto del chat
         if (total_bytes / (1024 * 1024)) > CHAT_MAX_TOTAL_MB:
             try:
                 os.remove(path)
@@ -1800,7 +1872,7 @@ async def admin_users_list(request: Request, q: str = "", limit: int = 500):
 async def admin_users_list_alias(request: Request, q: str = "", limit: int = 500):
     return await admin_users_list(request, q=q, limit=limit)
 
-#⬇️ Actualizado para usar crear_o_restaurar_usuario (maneja usuarios soft-deleted).
+#⬇️ Usa crear_o_restaurar_usuario (maneja soft-deleted).
 @app.post("/api/admin/users")
 async def admin_users_create(request: Request, payload: AdminUserCreate):
     require_admin(request)
@@ -1817,7 +1889,6 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
         )
         if ok:
             return {"ok": True, "restaurado": restored}
-        # ok=False -> ya existía activo
         return JSONResponse({"error": msg or "El email ya existe"}, status_code=409)
     except Exception as e:
         print("❌ admin_users_create:", repr(e))
@@ -1910,7 +1981,6 @@ async def legacy_admin_create_user(request: Request):
 @app.post("/admin/blanquear-password")
 async def legacy_admin_password(request: Request):
     data = await _json_or_form(request)
-    # Si no llega contraseña, usar DEFAULT_NEW_USER_PASSWORD
     new_pwd = (data.get("password") or data.get("nueva") or data.get("new") or "").strip() or DEFAULT_NEW_USER_PASSWORD
     payload = AdminPasswordIn(
         email=(data.get("email") or "").strip(),
@@ -1945,14 +2015,12 @@ async def legacy_admin_delete(request: Request, email: str, hard: bool = Query(d
 
 @app.post("/admin/eliminar-usuario")
 async def legacy_admin_delete_post(request: Request):
-    # Variante POST por si el front la usa con form-data
     data = await _json_or_form(request)
     email = (data.get("email") or "").strip()
     hard_raw = str(data.get("hard", "")).lower()
     hard = hard_raw in ("1", "true", "t", "yes", "on", "si", "sí")
     return await admin_users_delete(request, email=email, hard=hard)
 
-# 👇 NUEVOS endpoints legacy que tu admin.html ya usa (activar/desactivar/reset sesión)
 @app.post("/admin/desactivar-usuario", dependencies=[Depends(require_admin)])
 async def legacy_admin_disable_user(request: Request):
     data = await _json_or_form(request)
@@ -1995,8 +2063,7 @@ async def legacy_admin_reset_session(request: Request):
 
 
 # ================== Incidencias (vista + API con adjuntos) ==================
-# ⚠️ Importante: REUSAMOS INCID_ATTACH_DIR / INCID_ALLOWED_EXT / INCID_MAX_TOTAL_MB
-# definidos en la PARTE 1 (no los redefinimos acá para evitar inconsistencias).
+# Reusamos INCID_ATTACH_DIR / INCID_ALLOWED_EXT / INCID_MAX_TOTAL_MB de PARTE 1.
 
 def _incid_list_attachments(ticket_id: int):
     """
@@ -2012,9 +2079,7 @@ def _incid_list_attachments(ticket_id: int):
         if not os.path.isfile(path):
             continue
         size = os.path.getsize(path)
-        # Ruta estática real según INCID_ATTACH_DIR
         static_url = "/" + INCID_ATTACH_DIR.replace(os.sep, "/") + "/" + name
-        # Compatibilidad histórica con /static/adjuntos_incidencias/
         compat_url = f"/static/adjuntos_incidencias/{name}"
         out.append({
             "filename": name,
@@ -2063,7 +2128,7 @@ def _infer_ticket_id(usuario: str, titulo: str, descripcion: str, tipo: str, ref
             best = int(r[0])
     return best
 
-# ---- Incidencias: asegurar config por si falta Parte 1 (robustez) ----
+# ---- Fallbacks defensivos por si PARTE 1 no cargó (no deberían ejecutarse aquí) ----
 if 'INCID_ATTACH_DIR' not in globals():
     INCID_ATTACH_DIR = os.path.join("static", "adjuntos_incidencias")
 os.makedirs(INCID_ATTACH_DIR, exist_ok=True)
@@ -2081,7 +2146,7 @@ def _validate_incid_ext(filename: str):
         raise HTTPException(status_code=400, detail=f"Tipo de archivo no permitido en incidencias: {ext}")
 
 @app.get("/incidencias", response_class=HTMLResponse)
-@app.get("/incidencias/", response_class=HTMLResponse)  # alias con barra final
+@app.get("/incidencias/", response_class=HTMLResponse)
 async def incidencias_view(request: Request):
     if not request.session.get("usuario"):
         return RedirectResponse("/login")
@@ -2089,12 +2154,10 @@ async def incidencias_view(request: Request):
     email = request.session.get("usuario")
     rol = request.session.get("rol", "usuario")
 
-    # admin ve todo, usuario ve las suyas
     rows = obtener_todos_los_tickets() if (rol == "admin" or es_admin(email)) else obtener_tickets_por_usuario(email)
 
     tickets = []
     for r in rows:
-        # fecha legible robusta
         try:
             fecha_leg = iso_utc_to_ar_str(r[6]) if r[6] else ""
         except Exception:
@@ -2114,7 +2177,6 @@ async def incidencias_view(request: Request):
             "fecha_legible": fecha_leg,
         }
 
-        # Adjuntos
         try:
             t["adjuntos"] = _incid_list_attachments(int(r[0]))
         except Exception:
@@ -2154,7 +2216,7 @@ async def incidencias_crear(
     titulo: str = Form(...),
     descripcion: str = Form(""),
     tipo: str = Form("General"),
-    archivos: List[UploadFile] = File(default=[])  # opcional, múltiples
+    archivos: List[UploadFile] = File(default=[])
 ):
     if not request.session.get("usuario"):
         return JSONResponse({"error":"No autenticado"}, status_code=401)
@@ -2162,15 +2224,12 @@ async def incidencias_crear(
     usuario = request.session.get("usuario")
     actor_user_id, ip = _actor_info(request)
 
-    # 1) Crear ticket
     now_iso = now_iso_utc()
     crear_ticket(usuario, titulo.strip(), (descripcion or "").strip(), (tipo or "General").strip(),
                  actor_user_id=actor_user_id, ip=ip)
 
-    # 2) Inferir ID del ticket recién creado
     ticket_id = _infer_ticket_id(usuario, titulo, descripcion or "", tipo or "General", now_iso)
 
-    # 3) Guardar adjuntos
     files = [a for a in (archivos or []) if (a and a.filename)]
     if ticket_id and files:
         total_bytes = 0
@@ -2193,7 +2252,6 @@ async def incidencias_crear(
             if wants_json(request)
             else RedirectResponse("/incidencias", status_code=303))
 
-# --- Aliases para aceptar también POST a /incidencias (JSON sin archivos) ---
 @app.post("/incidencias")
 @app.post("/incidencias/")
 async def incidencias_post_alias(
@@ -2202,7 +2260,6 @@ async def incidencias_post_alias(
     descripcion: Optional[str] = Form(default=""),
     tipo: Optional[str] = Form(default="General"),
 ):
-    # Si vino por fetch JSON:
     if titulo is None:
         try:
             data = await request.json()
@@ -2221,7 +2278,6 @@ async def incidencias_post_alias(
 
 @app.get("/incidencias/adjunto/{ticket_id}/{filename}")
 async def incidencias_adjunto(ticket_id: int, filename: str):
-    """Sirve un adjunto de incidencia, validando que el filename pertenezca al ticket."""
     filename = os.path.basename(filename)
     if not filename.startswith(f"{int(ticket_id)}_"):
         return JSONResponse({"error": "Adjunto inválido"}, status_code=400)
@@ -2244,7 +2300,6 @@ async def incidencias_eliminar(request: Request, id: int = Form(...)):
         return JSONResponse({"error":"No autenticado"}, status_code=401)
     actor_user_id, ip = _actor_info(request)
     eliminar_ticket(id, actor_user_id=actor_user_id, ip=ip)
-    # también podemos eliminar adjuntos del disco
     prefix = f"{int(id)}_"
     try:
         for name in list(os.listdir(INCID_ATTACH_DIR)):
@@ -2445,7 +2500,7 @@ async def notificaciones_vista(request: Request):
         return RedirectResponse("/login")
     return templates.TemplateResponse("notificaciones.html", {"request": request})
 
-# 👉 Aliases/redirects para que la campana y “Ver todas” SIEMPRE abran la vista HTML
+# Aliases para que la campana y “Ver todas” abran HTML
 @app.get("/notificaciones/panel")
 @app.get("/notificaciones/todas")
 @app.get("/notificaciones/")
@@ -2453,7 +2508,6 @@ async def notificaciones_vista(request: Request):
 def notificaciones_redirect():
     return RedirectResponse("/notificaciones/vista", status_code=307)
 
-# Alias directo que a veces usan los enlaces del front
 @app.get("/notificaciones/ui", response_class=HTMLResponse)
 async def notificaciones_ui_alias(request: Request):
     if not request.session.get("usuario"):
@@ -2570,7 +2624,7 @@ async def presence_online(minutes: int = 5):
                     "email": r["user"],
                     "nombre": r["nombre"] or r["user"],
                     "last_seen": r["last_seen"],
-                    "ip": r["ip"] or "",
+                    "ip": r["ip"] | "" if r["ip"] else "",
                     "ua": r["ua"] or ""
                 })
     return {"items": items}
