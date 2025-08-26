@@ -348,7 +348,6 @@
           display: inline-flex;
         }
       }
-
       .brand {
         display: flex;
         align-items: center;
@@ -1228,7 +1227,7 @@
             <div class="rating-stars mb-2" id="ratingStars" role="radiogroup" aria-label="Valoración en estrellas">
               <i class="bi bi-star star" data-val="1" role="radio" aria-label="1 estrella" aria-checked="false" tabindex="0"></i>
               <i class="bi bi-star star" data-val="2" role="radio" aria-label="2 estrellas" aria-checked="false" tabindex="0"></i>
-              <i class="bi bi-star star" data-val="3" role="radio" aria-label="3 estrellas" aria-checked="false" tabindex="0"></i>
+              <i class="bi bi-star star" data-val="3" role="radio" aria-checked="false" aria-label="3 estrellas" tabindex="0"></i>
               <i class="bi bi-star star" data-val="4" role="radio" aria-checked="false" aria-label="4 estrellas" tabindex="0"></i>
               <i class="bi bi-star star" data-val="5" role="radio" aria-checked="false" aria-label="5 estrellas" tabindex="0"></i>
             </div>
@@ -1382,12 +1381,12 @@
             list.innerHTML = j.items.length
               ? j.items
                   .map(
-                    (it) =>
+                    (it) => `
                       <div class="mb-2">
-                        <b>${escapeHTML(it.titulo||'')}</b>
-                        <div class="text-muted">${escapeHTML(it.cuerpo||'')}</div>
-                        <div class="small text-muted">${escapeHTML(it.fecha_legible||'')}</div>
-                      </div>
+                        <b>${escapeHTML(it.titulo||"")}</b>
+                        <div class="text-muted">${escapeHTML(it.cuerpo||"")}</div>
+                        <div class="small text-muted">${escapeHTML(it.fecha_legible||"")}</div>
+                      </div>`
                   )
                   .join("")
               : "Sin notificaciones";
@@ -1423,9 +1422,7 @@
       const btnOpen = document.getElementById("btnOpenDrawer");
       const btnClose = document.getElementById("btnCloseDrawer");
 
-      function isDesktop() {
-        return mqDesktop.matches;
-      }
+      function isDesktop() { return mqDesktop.matches; }
       function openSidebarMobile() {
         if (isDesktop()) return;
         sidebar.classList.add("open");
@@ -1433,10 +1430,7 @@
         sidebar.setAttribute("aria-hidden", "false");
         btnOpen?.setAttribute("aria-expanded", "true");
         const first = sidebar.querySelector("a,button,[tabindex]:not([tabindex='-1'])");
-        if (first)
-          try {
-            first.focus();
-          } catch (_) {}
+        if (first) { try { first.focus(); } catch (_) {} }
         setTimeout(() => window.dispatchEvent(new Event("resize")), 280);
       }
       function closeSidebarMobile() {
@@ -1457,9 +1451,7 @@
       btnOpen?.addEventListener("click", openSidebarMobile);
       btnClose?.addEventListener("click", closeSidebarMobile);
       overlay?.addEventListener("click", closeSidebarMobile);
-      document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") closeSidebarMobile();
-      });
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSidebarMobile(); });
 
       function applySidebarMode() {
         if (isDesktop()) {
@@ -1472,12 +1464,8 @@
         }
         window.dispatchEvent(new Event("resize"));
       }
-      /* Compatibilidad amplia */
-      if (mqDesktop.addEventListener) {
-        mqDesktop.addEventListener("change", applySidebarMode);
-      } else if (mqDesktop.addListener) {
-        mqDesktop.addListener(applySidebarMode);
-      }
+      if (mqDesktop.addEventListener) mqDesktop.addEventListener("change", applySidebarMode);
+      else if (mqDesktop.addListener) mqDesktop.addListener(applySidebarMode);
       applySidebarMode();
 
       /* ===== Chat IA (drawer) ===== */
@@ -1485,7 +1473,6 @@
       const chatIa = document.getElementById("chatIa");
       const chatIaOverlay = document.getElementById("chatIaOverlay");
       const the_chatIaClose = document.getElementById("chatIaClose");
-      // const
       const chatIaInput = document.getElementById("chatIaInput");
       const chatIaBody = document.getElementById("chatIaBody");
       const chatIaForm = document.getElementById("chatIaForm");
@@ -1493,9 +1480,7 @@
       const onAuth = document.body.getAttribute("data-auth") === "1";
 
       if (onAuth) {
-        try {
-          localStorage.removeItem(CHAT_STATE_KEY);
-        } catch (_) {}
+        try { localStorage.removeItem(CHAT_STATE_KEY); } catch (_) {}
         chatIa?.classList.remove("open");
         chatIaOverlay?.classList.remove("open");
         chatIa?.setAttribute("aria-hidden", "true");
@@ -1508,10 +1493,7 @@
         chatIa.setAttribute("aria-hidden", "false");
         setTimeout(() => chatIaInput?.focus(), 50);
         chatToggleBtn?.setAttribute("aria-pressed", "true");
-        if (persist)
-          try {
-            localStorage.setItem(CHAT_STATE_KEY, "open");
-          } catch (_) {}
+        if (persist) try { localStorage.setItem(CHAT_STATE_KEY, "open"); } catch (_) {}
       }
       function closeChatIA() {
         if (!chatIa) return;
@@ -1519,40 +1501,29 @@
         chatIaOverlay.classList.remove("open");
         chatIa.setAttribute("aria-hidden", "true");
         chatToggleBtn?.setAttribute("aria-pressed", "false");
-        try {
-          localStorage.removeItem(CHAT_STATE_KEY);
-        } catch (_) {}
+        try { localStorage.removeItem(CHAT_STATE_KEY); } catch (_) {}
       }
       function toggleChatIA() {
         if (onAuth) return;
         const isOpen = chatIa?.classList.contains("open");
-        if (isOpen) closeChatIA();
-        else openChatIA(true);
+        if (isOpen) closeChatIA(); else openChatIA(true);
       }
-      function openChatAndExpand() {
-        openChatIA(true);
-      }
+      function openChatAndExpand() { openChatIA(true); }
       window.openChatAndExpand = openChatAndExpand;
 
       chatIaOverlay?.addEventListener("click", closeChatIA);
       the_chatIaClose?.addEventListener("click", closeChatIA);
       chatToggleBtn?.addEventListener("click", toggleChatIA);
-      document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") closeChatIA();
-      });
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeChatIA(); });
 
-      /* ✅ Delegación estricta para el toggle del chat */
-      document.addEventListener(
-        "click",
-        function (ev) {
-          const btn = ev.target.closest('[data-ai-toggle="chat"]');
-          if (!btn) return;
-          ev.preventDefault();
-          ev.stopPropagation();
-          toggleChatIA();
-        },
-        true
-      );
+      /* Delegación estricta para el toggle del chat */
+      document.addEventListener("click", function (ev) {
+        const btn = ev.target.closest('[data-ai-toggle="chat"]');
+        if (!btn) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        toggleChatIA();
+      }, true);
 
       if (!onAuth && localStorage.getItem(CHAT_STATE_KEY) === "open") {
         openChatIA(false);
@@ -1561,9 +1532,7 @@
       function scrollToBottom(smooth = true) {
         try {
           chatIaBody.scrollTo({ top: chatIaBody.scrollHeight, behavior: smooth ? "smooth" : "auto" });
-        } catch (_) {
-          chatIaBody.scrollTop = chatIaBody.scrollHeight;
-        }
+        } catch (_) { chatIaBody.scrollTop = chatIaBody.scrollHeight; }
       }
 
       chatIaInput?.addEventListener("keydown", (e) => {
@@ -1586,13 +1555,8 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ message: text }),
           });
-          let data = null,
-            bodyText = "";
-          try {
-            data = await r.json();
-          } catch {
-            bodyText = await r.text();
-          }
+          let data = null, bodyText = "";
+          try { data = await r.json(); } catch { bodyText = await r.text(); }
           const reply = pickReply(data, bodyText) || "No recibí respuesta del servidor.";
           replaceMsg(thinkingNode, "ai", reply);
         } catch (err) {
@@ -1612,31 +1576,25 @@
         if (typeof fallbackText === "string" && fallbackText.trim()) return fallbackText.trim();
         return "";
       }
-
       function appendMsg(who, text) {
         const el = document.createElement("div");
         el.className = "msg " + (who === "ai" ? "ai" : "me");
         el.innerHTML = (who === "ai" ? "<b>IA:</b> " : "<b>Yo:</b> ") + escapeHTML(text);
-        const chatIaBody = document.getElementById("chatIaBody");
         chatIaBody.appendChild(el);
         scrollToBottom(true);
         return el;
       }
-
       function addTyping() {
         const el = document.createElement("div");
         el.className = "msg ai typing";
-        el.innerHTML =
-          "<b>IA:</b> " +
+        el.innerHTML = "<b>IA:</b> " +
           '<span class="typing-dot"></span>' +
           '<span class="typing-dot"></span>' +
           '<span class="typing-dot"></span>';
-        const chatIaBody = document.getElementById("chatIaBody");
         chatIaBody.appendChild(el);
         scrollToBottom(true);
         return el;
       }
-
       function replaceMsg(node, who, text) {
         if (!node) return appendMsg(who, text);
         node.className = "msg " + (who === "ai" ? "ai" : "me");
@@ -1670,12 +1628,14 @@
         el.setAttribute("role", "alert");
         el.setAttribute("aria-live", "assertive");
         el.setAttribute("aria-atomic", "true");
-        el.innerHTML =
+        el.innerHTML = `
           <div class="toast-header">
-            <i class="bi bi-${escapeHTML(icon)} me-1"></i><strong class="me-auto">${escapeHTML(title)}</strong>
-            <small>Ahora</small><button class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
+            <i class="bi bi-${escapeHTML(icon)} me-1"></i>
+            <strong class="me-auto">${escapeHTML(title)}</strong>
+            <small>Ahora</small>
+            <button class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Cerrar"></button>
           </div>
-          <div class="toast-body">${escapeHTML(body)}</div>;
+          <div class="toast-body">${escapeHTML(body)}</div>`;
         cont.appendChild(el);
         const t = new bootstrap.Toast(el, { delay });
         t.show();
@@ -1685,14 +1645,7 @@
       /* ===== Tema ===== */
       const btnTheme = document.getElementById("btnTheme");
       const icoTheme = document.getElementById("icoTheme");
-
-      function getTheme() {
-        try {
-          return localStorage.getItem("theme");
-        } catch (_) {
-          return null;
-        }
-      }
+      function getTheme() { try { return localStorage.getItem("theme"); } catch (_) { return null; } }
       function setTheme(val) {
         try {
           if (val) {
@@ -1708,12 +1661,7 @@
         try {
           const meta =
             document.querySelector('meta[name="theme-color"]') ||
-            (function () {
-              const m = document.createElement("meta");
-              m.name = "theme-color";
-              document.head.appendChild(m);
-              return m;
-            })();
+            (function () { const m = document.createElement("meta"); m.name = "theme-color"; document.head.appendChild(m); return m; })();
           const t = getTheme();
           const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
           const isDark = t ? t === "dark" : prefersDark;
@@ -1736,13 +1684,9 @@
       }
       btnTheme?.addEventListener("click", () => {
         const t = getTheme();
-        if (t === null) {
-          setTheme("dark");
-        } else if (t === "dark") {
-          setTheme("light");
-        } else {
-          setTheme(null);
-        }
+        if (t === null) setTheme("dark");
+        else if (t === "dark") setTheme("light");
+        else setTheme(null);
       });
       try {
         window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
@@ -1750,19 +1694,14 @@
         });
       } catch (_) {}
       updateThemeBtn();
-
       /* ===== PRESENCIA ===== */
       const presenceBtn = document.getElementById("btnPresence");
       const presenceBadge = document.getElementById("presenceBadge");
       const isAuthScreen = document.body.getAttribute("data-auth") === "1";
-      presenceBtn?.addEventListener("click", () => {
-        location.href = "/usuarios-activos";
-      });
+      presenceBtn?.addEventListener("click", () => { location.href = "/usuarios-activos"; });
       async function presencePing() {
         if (isAuthScreen) return;
-        try {
-          await fetch("/presence/ping", { method: "POST" });
-        } catch (_) {}
+        try { await fetch("/presence/ping", { method: "POST" }); } catch (_) {}
       }
       async function refreshPresence() {
         if (isAuthScreen) return;
@@ -1773,7 +1712,7 @@
           const n = Array.isArray(j.items) ? j.items.length : 0;
           presenceBadge.textContent = n > 99 ? "99+" : String(n);
           presenceBadge.style.display = n > 0 ? "inline-block" : "none";
-          presenceBtn.title = Usuarios activos: ${n};
+          presenceBtn.title = `Usuarios activos: ${n}`;
         } catch (_) {}
       }
       if (!isAuthScreen) {
@@ -1782,10 +1721,7 @@
         setInterval(presencePing, 30000);
         setInterval(refreshPresence, 15000);
         document.addEventListener("visibilitychange", () => {
-          if (!document.hidden) {
-            presencePing();
-            refreshPresence();
-          }
+          if (!document.hidden) { presencePing(); refreshPresence(); }
         });
       }
 
@@ -1807,31 +1743,20 @@
       setInterval(refreshChatUnread, 15000);
 
       // Kill-switch FAB externo
-      document
-        .querySelectorAll("#chatOpenAiFab, .chat-openai-fab, [data-chat-fab]")
-        .forEach((el) => {
-          try {
-            el.remove();
-          } catch (_) {
-            el.style.display = "none";
-          }
-        });
+      document.querySelectorAll("#chatOpenAiFab, .chat-openai-fab, [data-chat-fab]").forEach((el) => {
+        try { el.remove(); } catch (_) { el.style.display = "none"; }
+      });
 
       // Inicializaciones
       getUsuario();
       refreshNotif();
+
       /* =========================
          === RATING / WS / CAL ===
          ========================= */
       (function ratingInit() {
-        const RATING_CFG = {
-          minAutoDelayMs: 90_000,
-          pendingCheckIntervalMs: 45_000,
-        };
-        const LS_KEYS = {
-          last: "lastAnalysisInfo",
-          done: "ratingDone:",
-        };
+        const RATING_CFG = { minAutoDelayMs: 90_000, pendingCheckIntervalMs: 45_000 };
+        const LS_KEYS = { last: "lastAnalysisInfo", done: "ratingDone:" };
 
         const modalEl = document.getElementById("ratingModal");
         if (!modalEl) return;
@@ -1851,30 +1776,10 @@
 
         const state = { score: 0, timestamp: "", nombre_pdf: "" };
 
-        function loadLast() {
-          try {
-            return JSON.parse(localStorage.getItem(LS_KEYS.last) || "{}") || {};
-          } catch (_) {
-            return {};
-          }
-        }
-        function saveLast(obj) {
-          try {
-            localStorage.setItem(LS_KEYS.last, JSON.stringify(obj || {}));
-          } catch (_) {}
-        }
-        function setDone(ts) {
-          try {
-            localStorage.setItem(LS_KEYS.done + ts, "1");
-          } catch (_) {}
-        }
-        function isDone(ts) {
-          try {
-            return localStorage.getItem(LS_KEYS.done + ts) === "1";
-          } catch (_) {
-            return false;
-          }
-        }
+        function loadLast() { try { return JSON.parse(localStorage.getItem(LS_KEYS.last) || "{}") || {}; } catch (_) { return {}; } }
+        function saveLast(obj) { try { localStorage.setItem(LS_KEYS.last, JSON.stringify(obj || {})); } catch (_) {} }
+        function setDone(ts) { try { localStorage.setItem(LS_KEYS.done + ts, "1"); } catch (_) {} }
+        function isDone(ts) { try { return localStorage.getItem(LS_KEYS.done + ts) === "1"; } catch (_) { return false; } }
 
         function paintStars(n) {
           starsWrap.querySelectorAll(".star").forEach((st) => {
@@ -1884,7 +1789,7 @@
             st.classList.toggle("bi-star", !(v <= n));
             st.classList.toggle("bi-star-fill", v <= n);
           });
-          hint.textContent = n ? Tu valoración: ${n}/5 : 'Seleccioná una puntuación.';
+          hint.textContent = n ? `Tu valoración: ${n}/5` : "Seleccioná una puntuación.";
         }
 
         function openFor(ts, filename) {
@@ -1893,7 +1798,7 @@
           state.score = 0;
           commentEl.value = "";
           info.textContent = filename
-            ? Archivo: ${filename}. Por favor, calificá el resultado (1 = malo, 5 = excelente).
+            ? `Archivo: ${filename}. Por favor, calificá el resultado (1 = malo, 5 = excelente).`
             : "Por favor, calificá el resultado (1 = malo, 5 = excelente).";
           paintStars(0);
           modal.show();
@@ -1907,23 +1812,13 @@
           state.score = Number(st.getAttribute("data-val")) || 0;
           paintStars(state.score);
         });
-
         starsWrap.addEventListener("keydown", (e) => {
           const focused = document.activeElement?.closest?.(".star");
           if (!focused) return;
           let val = Number(focused.getAttribute("data-val")) || 0;
-          if (e.key === "ArrowRight" || e.key === "ArrowUp") {
-            e.preventDefault();
-            val = Math.min(5, val + 1);
-          }
-          if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
-            e.preventDefault();
-            val = Math.max(1, val - 1);
-          }
-          if (e.key === " " || e.key === "Enter") {
-            e.preventDefault();
-            state.score = val;
-          }
+          if (e.key === "ArrowRight" || e.key === "ArrowUp") { e.preventDefault(); val = Math.min(5, val + 1); }
+          if (e.key === "ArrowLeft" || e.key === "ArrowDown") { e.preventDefault(); val = Math.max(1, val - 1); }
+          if (e.key === " " || e.key === "Enter") { e.preventDefault(); state.score = val; }
           paintStars(e.key === " " || e.key === "Enter" ? state.score : val);
         });
 
@@ -1947,13 +1842,9 @@
               }),
             });
             const j = await res.json().catch(() => ({}));
-            if (!res.ok || j?.error) {
-              throw new Error(j?.error || "No se pudo registrar la valoración.");
-            }
+            if (!res.ok || j?.error) throw new Error(j?.error || "No se pudo registrar la valoración.");
             setDone(state.timestamp);
-            try {
-              bootstrap.Modal.getInstance(modalEl)?.hide();
-            } catch (_) {}
+            try { bootstrap.Modal.getInstance(modalEl)?.hide(); } catch (_) {}
             showToast({ title: "¡Gracias!", body: "Tu valoración fue registrada.", icon: "star-fill" });
             hideBanner();
             refreshNotif();
@@ -1967,14 +1858,8 @@
         }
         document.getElementById("ratingSubmit")?.addEventListener("click", sendRating);
 
-        function showBanner() {
-          const b = document.getElementById("ratingBanner");
-          if (b) b.style.display = "block";
-        }
-        function hideBanner() {
-          const b = document.getElementById("ratingBanner");
-          if (b) b.style.display = "none";
-        }
+        function showBanner() { const b = document.getElementById("ratingBanner"); if (b) b.style.display = "block"; }
+        function hideBanner() { const b = document.getElementById("ratingBanner"); if (b) b.style.display = "none"; }
         bannerBtn?.addEventListener("click", () => {
           const last = loadLast();
           if (last?.ts && !isDone(last.ts)) openFor(last.ts, last.pdf || "");
@@ -1989,25 +1874,17 @@
           clearTimeout(scheduleAutoOpen._t);
           scheduleAutoOpen._t = setTimeout(() => {
             const again = loadLast();
-            if (again?.ts && !isDone(again.ts)) {
-              openFor(again.ts, again.pdf || "");
-            }
+            if (again?.ts && !isDone(again.ts)) openFor(again.ts, again.pdf || "");
           }, wait);
         }
 
         function markViewed(ts) {
           const last = loadLast();
-          if (last?.ts === ts) {
-            last.viewed = true;
-            saveLast(last);
-          }
+          if (last?.ts === ts) { last.viewed = true; saveLast(last); }
         }
         function markDownloaded(ts) {
           const last = loadLast();
-          if (last?.ts === ts) {
-            last.downloaded = true;
-            saveLast(last);
-          }
+          if (last?.ts === ts) { last.downloaded = true; saveLast(last); }
         }
 
         document.addEventListener("click", (e) => {
@@ -2023,9 +1900,7 @@
               const last = loadLast();
               if (last?.ts === ts && !isDone(last.ts)) openFor(ts, last.pdf || href.split("/").pop());
             }, 800);
-          } else {
-            markViewed(ts);
-          }
+          } else { markViewed(ts); }
         });
 
         const _origFetch = window.fetch;
@@ -2033,31 +1908,19 @@
           const res = await _origFetch(input, init);
           try {
             const url = typeof input === "string" ? input : input?.url || "";
-            if (/\/analizar-pliego\/?$/.test(url)) {
+            if (/\/analizar-pliego\/?$/i.test(url)) {
               const clone = res.clone();
               const j = await clone.json().catch(() => ({}));
               if (res.status === 409 || res.headers.get("X-Require-Rating") === "1") {
                 const last = j?.last || j?.pending || {};
                 if (last?.timestamp) {
-                  saveLast({
-                    ts: last.timestamp,
-                    pdf: last.nombre_pdf || "",
-                    createdAt: Date.now(),
-                    viewed: false,
-                    downloaded: false,
-                  });
-                  showBanner();
-                  scheduleAutoOpen();
-                  showToast({
-                    title: "Valoración requerida",
-                    body: "Podés revisar el análisis y valorarlo cuando quieras.",
-                    icon: "star",
-                  });
+                  saveLast({ ts: last.timestamp, pdf: last.nombre_pdf || "", createdAt: Date.now(), viewed: false, downloaded: false });
+                  showBanner(); scheduleAutoOpen();
+                  showToast({ title: "Valoración requerida", body: "Podés revisar el análisis y valorarlo cuando quieras.", icon: "star" });
                 }
               } else if (j && j.pdf && j.timestamp) {
                 saveLast({ ts: j.timestamp, pdf: j.pdf, createdAt: Date.now(), viewed: false, downloaded: false });
-                showBanner();
-                scheduleAutoOpen();
+                showBanner(); scheduleAutoOpen();
                 showToast({ title: "Análisis listo", body: "Podés revisar/descargar y luego valorarlo.", icon: "check-circle" });
               }
             }
@@ -2074,12 +1937,9 @@
               const last = j.last || j.pending;
               if (last?.timestamp && !isDone(last.timestamp)) {
                 saveLast({ ts: last.timestamp, pdf: last.nombre_pdf || "", createdAt: Date.now(), viewed: false, downloaded: false });
-                showBanner();
-                scheduleAutoOpen();
+                showBanner(); scheduleAutoOpen();
               }
-            } else {
-              hideBanner();
-            }
+            } else { hideBanner(); }
           } catch (_) {}
         }
         checkPending();
@@ -2096,20 +1956,9 @@
               if (j?.pending) {
                 e.preventDefault();
                 const last = j.last || j.pending;
-                saveLast({
-                  ts: last?.timestamp || "",
-                  pdf: last?.nombre_pdf || "",
-                  createdAt: Date.now(),
-                  viewed: false,
-                  downloaded: false,
-                });
-                showBanner();
-                scheduleAutoOpen();
-                showToast({
-                  title: "Valoración requerida",
-                  body: "Calificá el análisis anterior para continuar.",
-                  icon: "exclamation-circle",
-                });
+                saveLast({ ts: last?.timestamp || "", pdf: last?.nombre_pdf || "", createdAt: Date.now(), viewed: false, downloaded: false });
+                showBanner(); scheduleAutoOpen();
+                showToast({ title: "Valoración requerida", body: "Calificá el análisis anterior para continuar.", icon: "exclamation-circle" });
               }
             }
           } catch (_) {}
@@ -2122,18 +1971,14 @@
           const ts = b.getAttribute("data-last-ts") || "";
           if (ts) {
             saveLast({ ts, pdf: fname || "", createdAt: Date.now(), viewed: false, downloaded: false });
-            showBanner();
-            scheduleAutoOpen();
+            showBanner(); scheduleAutoOpen();
           }
         })();
 
         window.__rateLast = async function () {
           const last = loadLast();
-          if (last?.ts && !isDone(last.ts)) {
-            openFor(last.ts, last.pdf || "");
-          } else {
-            showToast({ title: "Prueba", body: "No hay análisis pendiente para valorar.", icon: "info-circle" });
-          }
+          if (last?.ts && !isDone(last.ts)) openFor(last.ts, last.pdf || "");
+          else showToast({ title: "Prueba", body: "No hay análisis pendiente para valorar.", icon: "info-circle" });
         };
       })();
 
@@ -2142,10 +1987,7 @@
          ========================= */
       (function setupRealtime() {
         if (document.body.getAttribute("data-auth") === "1") return; // no WS en login
-        let ws,
-          retry = 0,
-          pingTimer = null,
-          reconnectTimer = null;
+        let ws, retry = 0, pingTimer = null, reconnectTimer = null;
 
         function wsUrl() {
           const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -2153,27 +1995,13 @@
         }
         function connect() {
           clearTimeout(reconnectTimer);
-          try {
-            ws = new WebSocket(wsUrl());
-          } catch (_) {
-            scheduleReconnect();
-            return;
-          }
-          ws.addEventListener("open", () => {
-            retry = 0;
-            startPing();
-          });
+          try { ws = new WebSocket(wsUrl()); } catch (_) { scheduleReconnect(); return; }
+          ws.addEventListener("open", () => { retry = 0; startPing(); });
           ws.addEventListener("message", (ev) => {
             let data = null;
-            try {
-              data = JSON.parse(ev.data);
-            } catch (_) {
-              return;
-            }
+            try { data = JSON.parse(ev.data); } catch (_) { return; }
             if (!data || !data.event) return;
-            if (data.event === "ws:pong") {
-              return;
-            }
+            if (data.event === "ws:pong") return;
             if (data.event === "alert:new") {
               refreshNotif();
               showToast({ title: data.title || "Notificación", body: data.body || "", icon: "bell" });
@@ -2191,19 +2019,12 @@
               if (!location.pathname.startsWith("/chat")) {
                 const from = data.from || "Nuevo mensaje";
                 const prev = data.preview || "";
-                showToast({ title: Mensaje de ${from}, body: prev, icon: 'chat-dots' });
+                showToast({ title: `Mensaje de ${from}`, body: prev, icon: "chat-dots" });
               }
             }
           });
-          ws.addEventListener("close", () => {
-            stopPing();
-            scheduleReconnect();
-          });
-          ws.addEventListener("error", () => {
-            try {
-              ws.close();
-            } catch (_) {}
-          });
+          ws.addEventListener("close", () => { stopPing(); scheduleReconnect(); });
+          ws.addEventListener("error", () => { try { ws.close(); } catch (_) {} });
         }
         function scheduleReconnect() {
           stopPing();
@@ -2214,21 +2035,12 @@
         function startPing() {
           stopPing();
           pingTimer = setInterval(() => {
-            try {
-              ws?.readyState === 1 && ws.send("ping");
-            } catch (_) {}
+            try { ws?.readyState === 1 && ws.send("ping"); } catch (_) {}
           }, 25000);
         }
-        function stopPing() {
-          clearInterval(pingTimer);
-          pingTimer = null;
-        }
+        function stopPing() { clearInterval(pingTimer); pingTimer = null; }
         connect();
-        window.addEventListener("beforeunload", () => {
-          try {
-            ws?.close();
-          } catch (_) {}
-        });
+        window.addEventListener("beforeunload", () => { try { ws?.close(); } catch (_) {} });
       })();
 
       /* ==========================================================
@@ -2236,32 +2048,24 @@
          ========================================================== */
       (function calendarGlobalControls() {
         const FCv = "6.1.11";
-        const FC_CSS = https://cdn.jsdelivr.net/npm/fullcalendar@${FCv}/index.global.min.css;
-        const FC_JS = https://cdn.jsdelivr.net/npm/fullcalendar@${FCv}/index.global.min.js;
-        const FC_LOC = https://cdn.jsdelivr.net/npm/fullcalendar@${FCv}/locales-all.global.min.js;
+        const FC_CSS = `https://cdn.jsdelivr.net/npm/fullcalendar@${FCv}/index.global.min.css`;
+        const FC_JS  = `https://cdn.jsdelivr.net/npm/fullcalendar@${FCv}/index.global.min.js`;
+        const FC_LOC = `https://cdn.jsdelivr.net/npm/fullcalendar@${FCv}/locales-all.global.min.js`;
 
         function addCss(href) {
           if ([...document.styleSheets].some((s) => s.href && s.href.includes("fullcalendar"))) return;
           const l = document.createElement("link");
-          l.rel = "stylesheet";
-          l.href = href;
-          document.head.appendChild(l);
+          l.rel = "stylesheet"; l.href = href; document.head.appendChild(l);
         }
         function addScript(src) {
           return new Promise((res, rej) => {
             const s = document.createElement("script");
-            s.defer = true;
-            s.src = src;
-            s.onload = res;
-            s.onerror = rej;
-            document.head.appendChild(s);
+            s.defer = true; s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s);
           });
         }
         async function ensureFullCalendar() {
           if (window.FullCalendar?.Calendar) return;
-          addCss(FC_CSS);
-          await addScript(FC_JS);
-          await addScript(FC_LOC);
+          addCss(FC_CSS); await addScript(FC_JS); await addScript(FC_LOC);
         }
         function installFullCalendarHook() {
           const FC = window.FullCalendar;
@@ -2269,11 +2073,7 @@
           const origRender = FC.Calendar.prototype.render;
           FC.Calendar.prototype.render = function () {
             const out = origRender.apply(this, arguments);
-            try {
-              this.el.__fcCalendar = this;
-              window.AppCalendar = window.AppCalendar || this;
-              window.__calendar = window.__calendar || this;
-            } catch (_) {}
+            try { this.el.__fcCalendar = this; window.AppCalendar = window.AppCalendar || this; window.__calendar = window.__calendar || this; } catch (_) {}
             return out;
           };
           FC.Calendar.__saHooked = true;
@@ -2330,60 +2130,45 @@
         function clickInside(root, sel) {
           if (!root) return false;
           const inRoot = root.querySelector(sel) || document.querySelector(sel);
-          if (inRoot) {
-            inRoot.click();
-            return true;
-          }
+          if (inRoot) { inRoot.click(); return true; }
           return false;
         }
 
-        document.addEventListener(
-          "click",
-          function (ev) {
-            const btn = ev.target.closest?.("[data-cal-nav],[data-cal-view]");
-            if (!btn) return;
-            const href = btn.getAttribute("href");
-            if (href === "#" || href === "") ev.preventDefault();
+        document.addEventListener("click", function (ev) {
+          const btn = ev.target.closest?.("[data-cal-nav],[data-cal-view]");
+          if (!btn) return;
+          const href = btn.getAttribute("href");
+          if (href === "#" || href === "") ev.preventDefault();
 
-            ensureFullCalendar()
-              .then(() => {
-                installFullCalendarHook();
-                const root = findFcRoot(btn);
-                const cal = getCalendarFor(btn);
+          ensureFullCalendar().then(() => {
+            installFullCalendarHook();
+            const root = findFcRoot(btn);
+            const cal = getCalendarFor(btn);
 
-                const nav = btn.getAttribute("data-cal-nav");
-                if (nav) {
-                  if (cal) {
-                    if (nav === "prev") cal.prev();
-                    if (nav === "next") cal.next();
-                    if (nav === "today") cal.today();
-                  } else {
-                    clickInside(root, NAV_SEL[nav]);
-                  }
-                }
+            const nav = btn.getAttribute("data-cal-nav");
+            if (nav) {
+              if (cal) {
+                if (nav === "prev") cal.prev();
+                if (nav === "next") cal.next();
+                if (nav === "today") cal.today();
+              } else {
+                clickInside(root, NAV_SEL[nav]);
+              }
+            }
 
-                const view = btn.getAttribute("data-cal-view");
-                if (view) {
-                  if (cal) {
-                    try {
-                      cal.changeView(view);
-                    } catch (_) {}
-                    highlightActive(cal);
-                  } else {
-                    clickInside(root, VIEW_SEL[view]);
-                  }
-                }
-              })
-              .catch(() => {
-                /* ignorar */
-              });
-          },
-          true
-        );
+            const view = btn.getAttribute("data-cal-view");
+            if (view) {
+              if (cal) {
+                try { cal.changeView(view); } catch (_) {}
+                highlightActive(cal);
+              } else {
+                clickInside(root, VIEW_SEL[view]);
+              }
+            }
+          }).catch(() => {});
+        }, true);
 
-        window.addEventListener("DOMContentLoaded", () => {
-          ensureDataAttrs(document);
-        });
+        window.addEventListener("DOMContentLoaded", () => { ensureDataAttrs(document); });
 
         window.__calProbe = function () {
           const tgtBtn = document.querySelector("[data-cal-target]");
@@ -2399,25 +2184,16 @@
       })();
 
       /* ===== Airbag global para botones con data-submit ===== */
-      document.addEventListener(
-        "click",
-        function (e) {
-          const btn = e.target.closest("[data-submit]");
-          if (!btn) return;
-          const sel = btn.getAttribute("data-submit");
-          const form = sel ? document.querySelector(sel) : btn.closest("form");
-          if (form) {
-            // si hay validación nativa y falla, no disparamos
-            if (form.reportValidity && !form.reportValidity()) return;
-            if (form.requestSubmit) form.requestSubmit();
-            else form.submit();
-          }
-        },
-        true
-      );
-
-      /* OPCIONAL (solo debug): advertir en consola botones sin type en formularios (no modifica el DOM) */
-      // document.querySelectorAll('form button:not([type])').forEach(b => console.warn('Button sin type encontrado:', b));
+      document.addEventListener("click", function (e) {
+        const btn = e.target.closest("[data-submit]");
+        if (!btn) return;
+        const sel = btn.getAttribute("data-submit");
+        const form = sel ? document.querySelector(sel) : btn.closest("form");
+        if (form) {
+          if (form.reportValidity && !form.reportValidity()) return;
+          if (form.requestSubmit) form.requestSubmit(); else form.submit();
+        }
+      }, true);
     </script>
 
     {% block extra_scripts %}{% endblock %}
