@@ -2635,7 +2635,7 @@ async def auditoria_actividad(
     conds, args = [], []
     if usuario:
         conds.append("user LIKE ?")
-        args.append(f\"%{usuario}%\")
+        args.append(f"%{usuario}%")
     d = _parse_iso(desde)
     h = _parse_iso(hasta)
     if d:
