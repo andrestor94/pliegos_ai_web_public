@@ -1212,7 +1212,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         return JSONResponse({"error": "Subí al menos un archivo"}, status_code=400)
 
     for a in archivos:
-        if not a o not a.filename:
+        if not a or not a.filename:
             continue
         _validate_ext(a.filename)
 
