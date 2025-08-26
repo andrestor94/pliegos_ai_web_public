@@ -180,10 +180,7 @@
     (function () {
       const el = document.getElementById('todayLabel');
       const fmt = new Intl.DateTimeFormat('es-AR', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
       });
       if (el) el.textContent = fmt.format(new Date());
     })();
@@ -226,22 +223,11 @@
       });
 
       calendar.render();
-
-      // Exponer instancia para que los botones externos funcionen
       el.__fcCalendar = calendar;
       window.MiniCalendar = calendar;
 
-      setTimeout(() => {
-        try {
-          calendar.updateSize();
-        } catch (_) {}
-      }, 80);
-
-      window.addEventListener('resize', () => {
-        try {
-          calendar.updateSize();
-        } catch (_) {}
-      });
+      setTimeout(() => { try { calendar.updateSize(); } catch (_) {} }, 80);
+      window.addEventListener('resize', () => { try { calendar.updateSize(); } catch (_) {} });
     })();
 
     // ===== Módulo análisis =====
@@ -298,12 +284,12 @@
         resumenGlobal = j.resumen;
         ultimoPDF = j.pdf;
         document.getElementById('result').innerHTML =
-          <div class="alert alert-success"><strong>✅ Análisis completo.</strong><br><br>${resumenGlobal}</div>;
-        await Historial.load(); // recarga la página actual con los nuevos datos
+          `<div class="alert alert-success"><strong>✅ Análisis completo.</strong><br><br>${resumenGlobal}</div>`;
+        await Historial.load();
         document.getElementById('historial')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } else {
         document.getElementById('result').innerHTML =
-          <div class="alert alert-danger">❌ ${j.error||'No se pudo analizar.'}</div>;
+          `<div class="alert alert-danger">❌ ${j.error || 'No se pudo analizar.'}</div>`;
       }
     });
 
@@ -313,7 +299,7 @@
           '<div class="alert alert-danger">❌ Primero analizá un pliego.</div>';
         return;
       }
-      window.location.href = /descargar/${ultimoPDF};
+      window.location.href = `/descargar/${ultimoPDF}`;
     });
 
     function limpiar() {
@@ -347,7 +333,7 @@
       function fmtRange(p, per, total) {
         const start = total ? ((p - 1) * per + 1) : 0;
         const end = Math.min(p * per, total);
-        return ${start}–${end} de ${total};
+        return `${start}–${end} de ${total}`;
       }
 
       function renderItems(items) {
@@ -358,7 +344,7 @@
 
           const div = document.createElement('div');
           div.className = 'mb-3 p-3 border rounded-3 hist-item';
-          div.innerHTML =
+          div.innerHTML = `
             <div class="d-flex flex-wrap justify-content-between gap-2">
               <div>
                 <div><strong>📄 Archivo:</strong> ${entry.nombre_archivo}</div>
@@ -374,11 +360,12 @@
                   <i class="bi bi-trash me-1"></i> Eliminar
                 </button>
               </div>
-            </div>;
+            </div>
+          `;
 
           const btn = div.querySelector('button.btn-ghost-danger');
           btn.onclick = async () => {
-            await fetch(/eliminar/${entry.timestamp}, { method: 'DELETE' });
+            await fetch(`/eliminar/${entry.timestamp}`, { method: 'DELETE' });
             if (els.list.childElementCount === 1 && page > 1) {
               page--;
             }
@@ -433,7 +420,7 @@
         if (q && q.trim()) params.set('q', q.trim());
 
         try {
-          const r = await fetch(/historial?${params.toString()});
+          const r = await fetch(`/historial?${params.toString()}`);
           const j = await r.json();
           const items = Array.isArray(j.items) ? j.items : (Array.isArray(j) ? j : []);
           const totalPages = j.total_pages || 1;
@@ -475,10 +462,7 @@
         }, 300);
       });
 
-      return {
-        load,
-        setPage: (p) => { page = p; load(); }
-      };
+      return { load, setPage: (p) => { page = p; load(); } };
     })();
 
     // Scroll por hash / query
@@ -517,11 +501,8 @@
     window.addEventListener('load', async () => {
       await Historial.load();
       scrollByAnchorOrQuery();
-      setTimeout(() => {
-        try {
-          calendar && calendar.updateSize();
-        } catch (_) {}
-      }, 200);
+      setTimeout(() => { try { calendar && calendar.updateSize(); } catch (_) {} }, 200);
     });
   </script>
 {% endblock %}
+
