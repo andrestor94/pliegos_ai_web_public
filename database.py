@@ -765,7 +765,7 @@ def guardar_en_historial(
     ruta_pdf: str,
     resumen_texto: str = "",
 ) -> None:
-    """Inserta un registro “simple” en historial (sin requerir valoración).
+    """Inserta un registro "simple" en historial (sin requerir valoración).
 
     Conserva compatibilidad con implementaciones previas.
     """
@@ -1106,7 +1106,7 @@ def eliminar_ticket(ticket_id, actor_user_id=None, ip=None):
 # ---- Chat interno — Operaciones --------------------------------------------
 
 def enviar_mensaje(de_email: str, para_email: str, texto: str, actor_user_id=None, ip=None) -> int:
-    """Guarda un mensaje 1:1 y registra auditoría; también ‘desoculta’ el hilo del emisor."""
+    """Guarda un mensaje 1:1 y registra auditoría; también 'desoculta' el hilo del emisor."""
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with _get_conn() as conn:
         cur = conn.execute(
@@ -1351,4 +1351,5 @@ def obtener_auditoria(limit: int = 50):
                 }
             )
         return resultado
+
 
