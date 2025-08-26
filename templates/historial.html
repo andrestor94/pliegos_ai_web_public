@@ -9,14 +9,14 @@
   .hist-ctrl .form-select, .hist-ctrl .form-control{ border-radius:12px; }
 
   .hist-card{
-    background:var(--card,#fff); border:1px solid var(--border); border-radius:14px;
-    padding:16px; margin-bottom:14px; box-shadow:0 4px 16px rgba(4,67,105,.08);
+    background:var(--surface); border:1px solid var(--bs-border-color, var(--border));
+    border-radius:14px; padding:16px; margin-bottom:14px; box-shadow:var(--shadow);
   }
   .hist-card .meta{ color:#667085; }
   .hist-card .acciones .btn{ margin-right:8px; border-radius:10px; }
   .empty-state{
     display:none; text-align:center; color:#6b7280;
-    background:var(--bg-soft,#eef2ff); border:1px dashed var(--border);
+    background:var(--brand-50,#eef2ff); border:1px dashed var(--bs-border-color, var(--border));
     border-radius:14px; padding:16px;
   }
   mark.highlight{ background:#fff3bf; padding:0 .15em; border-radius:4px; }
@@ -42,7 +42,7 @@
         <button id="btnLimpiar" class="btn btn-outline-secondary" type="button">Limpiar</button>
       </div>
 
-      <select id="orden" class="form-select" title="Ordenar por">
+      <select id="orden" class="form-select" title="Ordenar por" aria-label="Ordenar por">
         <option value="ts_desc" selected>Más recientes</option>
         <option value="ts_asc">Más antiguos</option>
         <option value="archivo_asc">Archivo (A→Z)</option>
@@ -51,7 +51,7 @@
         <option value="usuario_desc">Usuario (Z→A)</option>
       </select>
 
-      <select id="pageSize" class="form-select" title="Ítems por página">
+      <select id="pageSize" class="form-select" title="Ítems por página" aria-label="Ítems por página">
         <option>10</option><option selected>25</option><option>50</option><option>100</option>
       </select>
 
@@ -72,11 +72,11 @@
       <p class="mb-1 meta"><strong>🕓 Fecha:</strong> <span class="campo-fecha">{{ item.fecha_legible }}</span></p>
       <p class="mb-0 meta"><strong>👤 Usuario:</strong> <span class="campo-usuario">{{ item.usuario }}</span></p>
       <div class="acciones mt-3">
-        <a href="/descargar/{{ item.nombre_archivo }}" class="btn btn-sm btn-success">
+        <a href="/descargar/{{ item.nombre_archivo | urlencode }}" class="btn btn-sm btn-success" aria-label="Descargar PDF">
           <i class="bi bi-download me-1"></i> Descargar PDF
         </a>
         <button class="btn btn-sm btn-outline-danger"
-                onclick="eliminar('{{ item.timestamp }}')">
+                onclick="eliminarHistItem('{{ item.timestamp }}')">
           <i class="bi bi-trash"></i> Eliminar
         </button>
       </div>
@@ -84,7 +84,7 @@
     {% endfor %}
   </div>
 
-  <div id="sinResultados" class="empty-state">
+  <div id="sinResultados" class="empty-state" aria-live="polite">
     <i class="bi bi-search"></i> No se encontraron resultados para el término ingresado.
   </div>
 
@@ -110,6 +110,7 @@
   const $pager = $('#pager');
   const $range = $('#rangeInfo');
   const $wrap = $('#contenedor-historial');
+  const $cntAll = $('#cntAll');
 
   function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function toastOk(t,b){ if(window.showToast) showToast({title:t, body:b||'', icon:'check2-circle'}); else alert(t+(b?': '+b:'')); }
@@ -128,34 +129,38 @@
   }
 
   /* ===== Dataset (desde DOM) ===== */
-  const DATA = $$('#contenedor-historial .hist-card').map(el=>{
-    return {
-      el,
-      archivo: el.dataset.archivo || '',
-      usuario: el.dataset.usuario || '',
-      fecha:   el.dataset.fecha   || '',
-      ts:      Number(el.dataset.ts || '0') || 0
-    };
-  });
+  const DATA = $$('#contenedor-historial .hist-card').map(el=>({
+    el,
+    archivo: el.dataset.archivo || '',
+    usuario: el.dataset.usuario || '',
+    fecha:   el.dataset.fecha   || '',
+    ts:      Number(el.dataset.ts || '0') || 0
+  }));
 
   /* ===== Estado ===== */
+  const LS_KEY = 'historialPrefs';
+  function loadPrefs(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)||'{}')||{}; }catch(_){ return {}; } }
+  function savePrefs(obj){ try{ localStorage.setItem(LS_KEY, JSON.stringify(obj||{})); }catch(_){ } }
+
+  const prefs = loadPrefs();
+  if(prefs.order) $orden.value = prefs.order;
+  if(prefs.pageSize) $pageSize.value = String(prefs.pageSize);
+
   const STATE = {
     term: '',
-    order: 'ts_desc',
+    order: $orden.value,
     pageSize: parseInt($pageSize.value,10) || 25,
     page: 1,
     filtered: DATA.slice()
   };
 
   /* ===== Filtro + orden ===== */
-  function applyFilters(){
+  function computeFiltered(){
     const term = (STATE.term||'').toLowerCase().trim();
     const out = DATA.filter(it=>{
       if(!term) return true;
       return (it.archivo + ' ' + it.usuario + ' ' + it.fecha).toLowerCase().includes(term);
     });
-
-    // Orden
     out.sort((a,b)=>{
       switch(STATE.order){
         case 'ts_asc': return a.ts - b.ts;
@@ -167,8 +172,11 @@
         default: return 0;
       }
     });
+    return out;
+  }
 
-    STATE.filtered = out;
+  function applyFilters(){
+    STATE.filtered = computeFiltered();
     STATE.page = 1;
     render();
   }
@@ -200,22 +208,24 @@
 
   function renderPager(pages){
     $pager.innerHTML = '';
-    const make = (label, page, disabled=false, active=false)=>{
+    const make = (label, page, disabled=false, active=false, aria)=>{
       const li = document.createElement('li'); li.className = `page-item ${disabled?'disabled':''} ${active?'active':''}`;
       const a  = document.createElement('a'); a.className='page-link'; a.href='#'; a.textContent=label;
+      if(aria) a.setAttribute('aria-label', aria);
       a.onclick = (e)=>{ e.preventDefault(); if(!disabled){ STATE.page = page; render(); window.scrollTo({top:0,behavior:'smooth'}); } };
       li.appendChild(a); return li;
     };
-    $pager.appendChild(make('«', 1, STATE.page===1));
-    $pager.appendChild(make('‹', Math.max(1, STATE.page-1), STATE.page===1));
+    const pagesCount = Math.max(1, pages);
+    $pager.appendChild(make('«', 1, STATE.page===1, false, 'Primera página'));
+    $pager.appendChild(make('‹', Math.max(1, STATE.page-1), STATE.page===1, false, 'Anterior'));
 
     const win = 3;
     const s = Math.max(1, STATE.page - win);
-    const e = Math.min(pages, STATE.page + win);
-    for(let p=s; p<=e; p++) $pager.appendChild(make(String(p), p, false, p===STATE.page));
+    const e = Math.min(pagesCount, STATE.page + win);
+    for(let p=s; p<=e; p++) $pager.appendChild(make(String(p), p, false, p===STATE.page, `Ir a página ${p}`));
 
-    $pager.appendChild(make('›', Math.min(pages, STATE.page+1), STATE.page===pages));
-    $pager.appendChild(make('»', pages, STATE.page===pages));
+    $pager.appendChild(make('›', Math.min(pagesCount, STATE.page+1), STATE.page===pagesCount, false, 'Siguiente'));
+    $pager.appendChild(make('»', pagesCount, STATE.page===pagesCount, false, 'Última página'));
   }
 
   /* ===== Búsqueda (debounce) ===== */
@@ -233,14 +243,20 @@
   $btnLimpiar.addEventListener('click', ()=>{ $q.value=''; STATE.term=''; applyFilters(); });
 
   /* ===== Orden/paginación ===== */
-  $orden.addEventListener('change', ()=>{ STATE.order = $orden.value; applyFilters(); });
-  $pageSize.addEventListener('change', ()=>{ STATE.pageSize = parseInt($pageSize.value,10)||25; STATE.page=1; render(); });
+  $orden.addEventListener('change', ()=>{
+    STATE.order = $orden.value;
+    savePrefs({ ...prefs, order: STATE.order, pageSize: STATE.pageSize });
+    applyFilters();
+  });
+  $pageSize.addEventListener('change', ()=>{
+    STATE.pageSize = parseInt($pageSize.value,10)||25;
+    savePrefs({ ...prefs, order: STATE.order, pageSize: STATE.pageSize });
+    STATE.page=1; render();
+  });
 
   /* ===== Export CSV (filtrado actual) ===== */
   $('#btnExport').addEventListener('click', ()=>{
-    const rows = STATE.filtered.map(it=>({
-      archivo: it.archivo, usuario: it.usuario, fecha: it.fecha
-    }));
+    const rows = STATE.filtered.map(it=>({ timestamp: it.ts, archivo: it.archivo, usuario: it.usuario, fecha: it.fecha }));
     if(!rows.length){ toastWarn('Exportar', 'No hay resultados para exportar'); return; }
     const headers = Object.keys(rows[0]);
     const esc = v => `"${String(v??'').replace(/"/g,'""')}"`;
@@ -252,26 +268,35 @@
     toastOk('Exportado', 'Se descargó el CSV del filtro actual');
   });
 
-  /* ===== Eliminar item ===== */
-  async function eliminar(timestamp){
+  /* ===== Eliminar item (con re-render seguro) ===== */
+  async function eliminarHistItem(timestamp){
     if(!confirm('¿Seguro que deseas eliminar este análisis?')) return;
     try{
       const r = await fetch(`/eliminar/${encodeURIComponent(timestamp)}`, { method:'DELETE' });
       if(!r.ok) throw new Error('No se pudo eliminar');
+
       // quitar del DOM y del dataset
       const idx = DATA.findIndex(it=> String(it.ts) === String(timestamp));
       if(idx>=0){
         DATA[idx].el.remove();
         DATA.splice(idx,1);
       }
-      // Reaplicar filtros/orden (manteniendo término/orden/página si se puede)
-      applyFilters();
+      // actualizar contador total
+      if($cntAll){ $cntAll.textContent = String(DATA.length); }
+
+      // recalcular filtrado manteniendo página si es posible
+      const prevPage = STATE.page;
+      STATE.filtered = computeFiltered();
+      const pages = Math.max(1, Math.ceil((STATE.filtered.length||1) / STATE.pageSize));
+      STATE.page = Math.min(prevPage, pages);
+      render();
+
       toastOk('Eliminado', 'El análisis fue eliminado.');
     }catch(e){
       toastWarn('Error', 'No se pudo eliminar.');
     }
   }
-  window.eliminar = eliminar; // para los botones inline
+  window.eliminarHistItem = eliminarHistItem;
 
   /* ===== Atajos ===== */
   // / o Ctrl+K enfoca búsqueda, ESC limpia

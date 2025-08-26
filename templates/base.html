@@ -1444,6 +1444,70 @@
     /* OPCIONAL (solo debug): advertir en consola botones sin type en formularios (no modifica el DOM) */
     // document.querySelectorAll('form button:not([type])').forEach(b => console.warn('Button sin type encontrado:', b));
   </script>
+<script>
+/* === Helpers agregados: analizar / eliminar / rating === */
+window.toast = function (msg, type = 'info') {
+  const icon =
+    type === 'danger' ? 'exclamation-triangle' :
+    type === 'warning' ? 'exclamation-circle' : 'info-circle';
+  (window.showToast || function(){ alert(msg); })({ title: 'Aviso', body: String(msg||''), icon });
+};
+
+window.analizar = async function (filesOrFormData) {
+  try {
+    let body;
+    if (filesOrFormData instanceof FormData) {
+      body = filesOrFormData;
+    } else {
+      const fd = new FormData();
+      (filesOrFormData || []).forEach(f => f && fd.append('archivos', f));
+      body = fd;
+    }
+    const r = await fetch('/analizar-pliego', { method: 'POST', body });
+    // Tu wrapper global de fetch ya gestiona 409 + toasts.
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      showToast({ title: 'Análisis', body: j.error || 'No se pudo analizar', icon: 'exclamation-triangle' });
+      return null;
+    }
+    return await r.json().catch(() => ({}));
+  } catch (err) {
+    showToast({ title: 'Análisis', body: String(err?.message || 'Error'), icon: 'exclamation-triangle' });
+    return null;
+  }
+};
+
+window.eliminarItem = async function (timestamp, { onSuccess } = {}) {
+  if (!timestamp) return;
+  if (!confirm('¿Eliminar este análisis?')) return;
+  try {
+    const r = await fetch(`/eliminar/${encodeURIComponent(timestamp)}`, { method: 'DELETE' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      showToast({ title: 'Eliminar', body: j.error || 'No se pudo eliminar', icon: 'exclamation-triangle' });
+      return false;
+    }
+    showToast({ title: 'Eliminar', body: 'Eliminado correctamente', icon: 'trash3' });
+    if (typeof onSuccess === 'function') onSuccess(); else location.reload();
+    return true;
+  } catch (err) {
+    showToast({ title: 'Eliminar', body: String(err?.message || 'Error'), icon: 'exclamation-triangle' });
+    return false;
+  }
+};
+
+window.abrirModalValoracion = function (last) {
+  try {
+    const ts = last?.timestamp || last?.ts || '';
+    const pdf = last?.nombre_pdf || last?.pdf || '';
+    if (ts) window.promptRatingFor(ts, pdf);
+  } catch (_) {}
+};
+
+window.enviarValoracion = function () {
+  document.getElementById('ratingSubmit')?.click();
+};
+</script>
 
   {% block extra_scripts %}{% endblock %}
 </body>

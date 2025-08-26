@@ -47,7 +47,8 @@ from database import (
     buscar_usuarios,
     guardar_en_historial,
     obtener_historial,
-    eliminar_del_historial,
+    #⬇️ reemplazo: borrado validado y operación atómica valorar+eliminar
+    eliminar_del_historial_validado,
     obtener_historial_completo,
     crear_ticket,
     obtener_todos_los_tickets,
@@ -68,7 +69,9 @@ from database import (
     marcar_valoracion_historial,
     tiene_valoracion_pendiente,
     # 👇 importamos para usarlo en la sección Admin (PARTE 4)
-    crear_o_restaurar_usuario
+    crear_o_restaurar_usuario,
+    # ⬇️ nuevo helper DB
+    valorar_y_eliminar_por_timestamp,
 )
 
 # ORM (audit_logs)
@@ -476,7 +479,7 @@ def _build_audit_filters(q, filtros):
             if hasattr(AuditLog, col):
                 ors.append(getattr(AuditLog, col).like(like))
         if ors:
-            q = q.filter(or_(*ors))
+            return q.filter(or_(*ors))
     return q
 
 # --- helpers extra para rating/identificación por timestamp/nombre ---
@@ -533,108 +536,6 @@ async def chat_config():
         "max_files": CHAT_MAX_FILES,
         "max_total_mb": CHAT_MAX_TOTAL_MB
     }
-
-
-# ========= Helpers para HISTORIAL en home (paginado) =========
-def _paginate(items: List[dict], page: int, per_page: int):
-    per_page = max(1, min(int(per_page or 10), 100))
-    page = max(1, int(page or 1))
-    total = len(items)
-    total_pages = max(1, ceil(total / per_page))
-    if page > total_pages:
-        page = total_pages
-    start = (page - 1) * per_page
-    return items[start:start + per_page], page, per_page, total_pages, total
-
-def _historial_para_home(email: str, rol: str, q: str = "") -> List[dict]:
-    """
-    Devuelve el historial (dicts) filtrado para el usuario/rol y ordenado DESC por fecha/timestamp.
-    """
-    try:
-        data = obtener_historial_completo() or []
-    except Exception:
-        data = []
-
-    # Filtrar por rol: admin ve todo, usuario solo lo suyo
-    if (rol or "").lower() != "admin" and not es_admin(email):
-        data = [h for h in data if (h.get("usuario") or "").lower() == (email or "").lower()]
-
-    # Normalizar y ordenar
-    def _sort_key(h):
-        # intenta por 'fecha' (ISO) y si no por 'timestamp' (YYYYMMDDHHMMSS)
-        dt = _parse_dt_utc(h.get("fecha"))
-        if not dt:
-            ts = (h.get("timestamp") or "")[:14]
-            try:
-                dt = datetime.strptime(ts, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
-            except Exception:
-                dt = datetime.min.replace(tzinfo=timezone.utc)
-        return dt
-
-    data.sort(key=_sort_key, reverse=True)
-
-    # Búsqueda simple
-    ql = (q or "").strip().lower()
-    if ql:
-        def _match(h):
-            corpus = " ".join([
-                str(h.get("nombre_archivo") or ""),
-                str(h.get("usuario") or ""),
-                str(h.get("resumen") or ""),
-                str(h.get("ruta_pdf") or ""),
-            ]).lower()
-            return ql in corpus
-        data = [h for h in data if _match(h)]
-
-    # Añadir 'fecha_legible' para comodidad del template
-    for h in data:
-        try:
-            h["fecha_legible"] = iso_utc_to_ar_str(h.get("fecha"))
-        except Exception:
-            pass
-    return data
-
-
-# ================== Rutas base ==================
-@app.get("/", response_class=HTMLResponse)
-async def home(
-    request: Request,
-    page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=10, ge=1, le=100),
-    q: str = Query(default="")
-):
-    if not request.session.get("usuario"):
-        return RedirectResponse("/login")
-
-    email = request.session.get("usuario")
-    rol = request.session.get("rol", "usuario")
-
-    # Historial con filtros del querystring
-    hist = _historial_para_home(email=email, rol=rol, q=q)
-    items, page, per_page, total_pages, total_items = _paginate(hist, page, per_page)
-
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "rol": rol,
-        # ↙️ variables nuevas para la paginación del historial
-        "historial_items": items,
-        "page": page,
-        "per_page": per_page,
-        "total_pages": total_pages,
-        "total_items": total_items,
-        "q": q,
-    })
-
-@app.get("/login", response_class=HTMLResponse)
-async def login_form(request: Request):
-    # Si ya estás logueado, te llevo al home.
-    if request.session.get("usuario"):
-        return RedirectResponse("/", status_code=303)
-    # Permite mostrar estado por query (opcional)
-    msg = None
-    if request.query_params.get("logout") == "1":
-        msg = "Sesión cerrada."
-    return templates.TemplateResponse("login.html", {"request": request, "error": None, "mensaje": msg})
 # =========================
 # main.py — PARTE 2 / 5
 # (login/logout, cambiar password, rating, analizar pliego)
@@ -1045,6 +946,52 @@ async def enviar_rating(request: Request, payload: RatingIn):
 
     return {"ok": True, "message": "Valoración registrada"}
 
+# ========== NUEVO: endpoint atómico valorar + eliminar por timestamp ==========
+class RateAndDeleteIn(BaseModel):
+    rating: int
+
+@app.post("/api/analisis/{timestamp}/rate-and-delete")
+async def api_rate_and_delete(timestamp: str, request: Request, payload: RateAndDeleteIn):
+    user = request.session.get("usuario")
+    if not user:
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+
+    actor_user_id, ip = _actor_info(request)
+
+    try:
+        ok, code = valorar_y_eliminar_por_timestamp(
+            timestamp,
+            payload.rating,
+            actor_user_id=actor_user_id,
+            ip=ip
+        )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        print("❌ api_rate_and_delete:", repr(e))
+        return JSONResponse({"error": "No se pudo completar la operación"}, status_code=500)
+
+    if not ok:
+        if code == "NOT_FOUND":
+            return JSONResponse({"error": "No encontrado"}, status_code=404)
+        return JSONResponse({"error": "No se pudo valorar y eliminar"}, status_code=400)
+
+    # Si salió bien: eliminar también el PDF físico
+    ruta = os.path.join("generated_pdfs", f"resumen_{os.path.basename(timestamp)}.pdf")
+    if os.path.exists(ruta):
+        try:
+            os.remove(ruta)
+        except Exception:
+            pass
+
+    # Limpiamos el sidecar de rating pendiente de este usuario (por si quedaba huella)
+    try:
+        _pr_clear(user)
+    except Exception:
+        pass
+
+    return {"ok": True}
+
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
     usuario = request.session.get("usuario", "Anónimo")
@@ -1061,7 +1008,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             resp.headers["X-Require-Rating"] = "1"
             return resp
     except Exception as e:
-        print("⚠️ Warning al chequear pendiente:", repr(e))
+        print(⚠️ Warning al chequear pendiente:", repr(e))
 
     if not archivos:
         return JSONResponse({"error": "Subí al menos un archivo"}, status_code=400)
@@ -1165,17 +1112,89 @@ async def descargar_pdf(archivo: str):
         return FileResponse(ruta, media_type="application/pdf", filename=archivo)
     return JSONResponse({"error": "Archivo no encontrado"}, status_code=404)
 
+#⬇️ ACTUALIZADO: impedir eliminación si falta valoración
 @app.delete("/eliminar/{timestamp}")
-async def eliminar_archivo(timestamp: str):
-    eliminar_del_historial(timestamp)
-    ruta = os.path.join("generated_pdfs", f"resumen_{os.path.basename(timestamp)}.pdf")
+async def eliminar_archivo(timestamp: str, request: Request):
+    """
+    Elimina un análisis por timestamp **sólo** si:
+      - pertenece al usuario (o el usuario es admin), y
+      - NO tiene valoración pendiente (rating_required=0).
+
+    Si hay valoración pendiente, devuelve 409 + X-Require-Rating: 1 y payload con 'last'
+    para que el front pueda abrir el modal de rating.
+    """
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+
+    usuario_actual = request.session.get("usuario")
+    es_admin_flag = False
+    try:
+        es_admin_flag = es_admin(usuario_actual)
+    except Exception:
+        es_admin_flag = (request.session.get("rol") == "admin")
+
+    ts = (timestamp or "").strip()
+    # Buscar el registro exacto en el historial
+    try:
+        data = obtener_historial_completo() or []
+    except Exception:
+        data = []
+
+    item = next((h for h in data if str(h.get("timestamp") or "") == ts), None)
+
+    # Si no existe en DB, intentamos limpiar el PDF del disco igualmente.
+    if not item:
+        ruta_pdf = os.path.join("generated_pdfs", f"resumen_{os.path.basename(ts)}.pdf")
+        if os.path.exists(ruta_pdf):
+            try:
+                os.remove(ruta_pdf)
+            except Exception:
+                pass
+        return JSONResponse({"error": "Análisis no encontrado"}, status_code=404)
+
+    # Chequear pertenencia o admin
+    if (item.get("usuario") or "").lower() != (usuario_actual or "").lower() and not es_admin_flag:
+        return JSONResponse({"error": "No autorizado"}, status_code=403)
+
+    # Si requiere valoración, bloquear
+    if bool(item.get("rating_required")):
+        payload = {
+            "error": "Debes valorar el análisis antes de eliminarlo.",
+            "pending": True,
+            "last": {
+                "historial_id": item.get("id"),
+                "timestamp": item.get("timestamp"),
+                "nombre_pdf": item.get("nombre_archivo")
+            }
+        }
+        resp = JSONResponse(payload, status_code=409)
+        resp.headers["X-Require-Rating"] = "1"
+        return resp
+
+    # ✅ No hay valoración pendiente: eliminar fila de DB
+    try:
+        eliminar_del_historial(ts)
+    except Exception as e:
+        print("❌ eliminar_del_historial:", repr(e))
+        return JSONResponse({"error": "No se pudo eliminar el registro"}, status_code=500)
+
+    # Eliminar archivo físico si existe
+    ruta = os.path.join("generated_pdfs", f"resumen_{os.path.basename(ts)}.pdf")
     if os.path.exists(ruta):
         try:
             os.remove(ruta)
         except Exception:
             pass
-    return {"mensaje": "Eliminado correctamente"}
 
+    # Si el sidecar pending_ratings apuntaba a este timestamp, limpiarlo
+    try:
+        pr = _pr_get(usuario_actual)
+        if pr and (pr.get("timestamp") == ts):
+            _pr_clear(usuario_actual)
+    except Exception:
+        pass
+
+    return {"mensaje": "Eliminado correctamente"}
 
 # ================== Usuario actual ==================
 @app.get("/usuario-actual")
@@ -1201,7 +1220,6 @@ async def usuario_actual(request: Request):
         "nombre": nombre,
         "avatar_url": avatar_url
     }
-
 
 # ===== Subir/actualizar avatar =====
 @app.post("/perfil/avatar")
@@ -1782,20 +1800,14 @@ async def admin_users_list(request: Request, q: str = "", limit: int = 500):
 async def admin_users_list_alias(request: Request, q: str = "", limit: int = 500):
     return await admin_users_list(request, q=q, limit=limit)
 
+#⬇️ Actualizado para usar crear_o_restaurar_usuario (maneja usuarios soft-deleted).
 @app.post("/api/admin/users")
 async def admin_users_create(request: Request, payload: AdminUserCreate):
     require_admin(request)
     actor_user_id, ip = _actor_info(request)
-    email = payload.email.lower()
-
-    # ⚠️ Antes devolvía 409 con sólo existir.
-    # Ahora sólo bloquea si EXISTE y está ACTIVO.
-    row = obtener_usuario_por_email(email)  # (id, nombre, email, password, rol, activo)
-    if row and bool(row[5]):  # activo = 1
-        return JSONResponse({"error": "El email ya existe"}, status_code=409)
-
+    email = payload.email.lower().strip()
     try:
-        user_id = agregar_usuario(
+        ok, restored, user_id, msg = crear_o_restaurar_usuario(
             nombre=payload.nombre.strip(),
             email=email,
             password=DEFAULT_NEW_USER_PASSWORD,
@@ -1803,12 +1815,10 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
             actor_user_id=actor_user_id,
             ip=ip
         )
-        if user_id:
-            # Si había fila previa inactiva, se reactivó
-            restored = bool(row and not bool(row[5]))
+        if ok:
             return {"ok": True, "restaurado": restored}
-        # Fallback: si no devolvió id, algo raro pasó
-        return JSONResponse({"error": "No se pudo crear/restaurar el usuario"}, status_code=500)
+        # ok=False -> ya existía activo
+        return JSONResponse({"error": msg or "El email ya existe"}, status_code=409)
     except Exception as e:
         print("❌ admin_users_create:", repr(e))
         return JSONResponse({"error": "No se pudo crear/restaurar el usuario"}, status_code=500)
@@ -2625,7 +2635,7 @@ async def auditoria_actividad(
     conds, args = [], []
     if usuario:
         conds.append("user LIKE ?")
-        args.append(f"%{usuario}%")
+        args.append(f\"%{usuario}%\")
     d = _parse_iso(desde)
     h = _parse_iso(hasta)
     if d:

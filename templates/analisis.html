@@ -18,7 +18,8 @@
       <div class="card-body">
         <!-- 1) Carga de archivos -->
         <h2 class="h6 mb-2">1) Cargar archivos (PDF / DOCX / Imágenes)</h2>
-        <div id="dzArea" class="dropzone mb-3" aria-label="Zona para arrastrar y soltar archivos">
+        <div id="dzArea" class="dropzone mb-3" tabindex="0" role="button"
+             aria-label="Zona para arrastrar y soltar archivos. Enter o espacio para seleccionar desde el equipo">
           Arrastrá y soltá aquí o
           <label class="btn btn-sm btn-primary ms-1">
             Seleccionar
@@ -26,19 +27,20 @@
                    accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.tiff,.tif"/>
           </label>
           <div class="small subtle mt-2">También podés pegar con <kbd>Ctrl</kbd>+<kbd>V</kbd> imágenes copiadas del portapapeles.</div>
+          <div class="small text-muted mt-1">Tamaño máximo recomendado por archivo: 25 MB</div>
         </div>
 
         <!-- Lista de archivos seleccionados -->
         <div class="table-wrap mb-4" id="filesWrap" style="display:none;">
           <table class="table table-sm align-middle mb-0">
             <thead>
-              <tr>
-                <th style="min-width:220px;">Archivo</th>
-                <th>Peso</th>
-                <th>Tipo</th>
-                <th>Estado</th>
-                <th style="min-width:120px;">Acciones</th>
-              </tr>
+            <tr>
+              <th style="min-width:220px;">Archivo</th>
+              <th>Peso</th>
+              <th>Tipo</th>
+              <th>Estado</th>
+              <th style="min-width:120px;">Acciones</th>
+            </tr>
             </thead>
             <tbody id="filesTbody"></tbody>
           </table>
@@ -75,10 +77,11 @@
         <!-- 3) Controles -->
         <div class="d-flex flex-wrap gap-2 mt-3">
           <button id="analyzeBtn" class="btn btn-primary" disabled>
-            <i class="bi bi-cpu me-1"></i> Analizar
+            <span class="spinner-border spinner-border-sm me-1 d-none" id="anaSpin" role="status" aria-hidden="true"></span>
+            <i class="bi bi-cpu me-1" id="anaIco"></i> Analizar
           </button>
           <button id="exportPdfBtn" class="btn btn-outline-primary" disabled>
-            <i class="bi bi-filetype-pdf me-1"></i> Generar PDF
+            <i class="bi bi-filetype-pdf me-1"></i> Descargar PDF
           </button>
           <button id="clearBtn" class="btn btn-outline-secondary">
             <i class="bi bi-trash3 me-1"></i> Limpiar
@@ -114,16 +117,14 @@
           <div class="table-wrap">
             <table class="table table-sm" id="tablaRequisitos">
               <thead>
-                <tr>
-                  <th>Ítem</th>
-                  <th>Requisito</th>
-                  <th>Referencia (pág./anexo)</th>
-                  <th>Observaciones</th>
-                </tr>
+              <tr>
+                <th>Ítem</th>
+                <th>Requisito</th>
+                <th>Referencia (pág./anexo)</th>
+                <th>Observaciones</th>
+              </tr>
               </thead>
-              <tbody>
-                <!-- Filas renderizadas por JS -->
-              </tbody>
+              <tbody></tbody>
             </table>
           </div>
         </div>
@@ -138,7 +139,6 @@
       <div class="card-body">
         <h2 class="h6 mb-2">Chat de análisis</h2>
         <div id="chatBox" class="border rounded p-2 h-pane-55 bg-body-tertiary">
-          <!-- Mensajes -->
           <div class="small text-muted">Sin mensajes aún.</div>
         </div>
         <div class="mt-2 d-flex gap-2">
@@ -161,13 +161,10 @@
 /* ===== Helpers UI ===== */
 const $ = (s,sc)=> (sc||document).querySelector(s);
 const $$ = (s,sc)=> Array.from((sc||document).querySelectorAll(s));
-const fmtBytes = n=>{
-  if(!Number.isFinite(n)) return '—';
-  const u=['B','KB','MB','GB']; let i=0;
-  while(n>=1024 && i<u.length-1){ n/=1024; i++; }
-  return `${n.toFixed(i?1:0)} ${u[i]}`;
-};
+const esc = window.escapeHTML || (s=> (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
+const fmtBytes = n=>{ if(!Number.isFinite(n)) return '—'; const u=['B','KB','MB','GB']; let i=0; while(n>=1024 && i<u.length-1){ n/=1024; i++; } return `${n.toFixed(i?1:0)} ${u[i]}`; };
 function log(msg){ const el=$("#logBox"); if(!el) return; const t=new Date().toLocaleTimeString(); el.textContent += `[${t}] ${msg}\n`; el.scrollTop=el.scrollHeight; }
+function toast(title, body, icon){ if(window.showToast) showToast({title, body, icon}); else alert(`${title}${body?': '+body:''}`); }
 
 /* ===== Drag & drop / file input ===== */
 const dz = $("#dzArea");
@@ -177,8 +174,13 @@ const filesTbody = $("#filesTbody");
 const analyzeBtn = $("#analyzeBtn");
 const exportPdfBtn = $("#exportPdfBtn");
 const clearBtn = $("#clearBtn");
+const anaSpin = $("#anaSpin"); const anaIco = $("#anaIco");
 
-let files = []; // {file, id, status}
+const MAX_MB = 25;
+let files = [];   // {file, id, status}
+let lastPdfName = ""; // nombre a descargar post análisis
+
+function dedupKey(f){ return `${(f.name||'').toLowerCase()}::${f.size}`; }
 
 function refreshFilesUI(){
   if(!files.length){
@@ -192,19 +194,19 @@ function refreshFilesUI(){
   analyzeBtn.disabled=false;
   filesTbody.innerHTML = files.map((f,i)=>`
     <tr>
-      <td>${f.file.name}</td>
+      <td>${esc(f.file.name)}</td>
       <td>${fmtBytes(f.file.size)}</td>
-      <td>${(f.file.type||'').split('/').pop().toUpperCase() || f.file.name.split('.').pop().toUpperCase()}</td>
+      <td>${esc((f.file.type||'').split('/').pop().toUpperCase() || f.file.name.split('.').pop().toUpperCase())}</td>
       <td>
-        <span class="badge ${f.status==='ok'?'bg-success-subtle text-success': f.status==='processing'?'bg-warning-subtle text-warning':'bg-secondary-subtle text-secondary'}">
-          ${f.status||'pendiente'}
+        <span class="badge ${f.status==='ok'?'bg-success-subtle text-success': f.status==='processing'?'bg-warning-subtle text-warning': f.status==='error'?'bg-danger-subtle text-danger':'bg-secondary-subtle text-secondary'}">
+          ${esc(f.status||'pendiente')}
         </span>
       </td>
       <td class="d-flex gap-1">
-        <button class="btn btn-sm btn-outline-secondary" data-idx="${i}" data-act="preview" type="button" aria-label="Previsualizar ${f.file.name}">
+        <button class="btn btn-sm btn-outline-secondary" data-idx="${i}" data-act="preview" type="button" aria-label="Previsualizar ${esc(f.file.name)}">
           <i class="bi bi-eye"></i>
         </button>
-        <button class="btn btn-sm btn-outline-danger" data-idx="${i}" data-act="remove" type="button" aria-label="Quitar ${f.file.name}">
+        <button class="btn btn-sm btn-outline-danger" data-idx="${i}" data-act="remove" type="button" aria-label="Quitar ${esc(f.file.name)}">
           <i class="bi bi-x"></i>
         </button>
       </td>
@@ -213,56 +215,61 @@ function refreshFilesUI(){
 }
 
 function addFiles(list){
-  for(const f of list){
+  const seen = new Set(files.map(x=>x._k));
+  let added = 0, skipped = 0, tooBig = 0;
+  for(const f of (list||[])){
     if(!f) continue;
-    files.push({file:f, id:crypto.randomUUID(), status:'pendiente'});
+    if(f.size > MAX_MB*1024*1024){ tooBig++; continue; }
+    const k = dedupKey(f);
+    if(seen.has(k)){ skipped++; continue; }
+    files.push({file:f, id:(crypto?.randomUUID?.()||Math.random().toString(36).slice(2)), status:'pendiente', _k:k});
+    seen.add(k); added++;
   }
+  if(tooBig) toast('Archivos grandes', `Se omitieron ${tooBig} archivo(s) > ${MAX_MB} MB.`, 'exclamation-triangle');
+  if(skipped) toast('Duplicados', `Se omitieron ${skipped} duplicado(s).`, 'info-circle');
+  if(added) log(`Agregados ${added} archivo(s).`);
   refreshFilesUI();
 }
 
 filesInput?.addEventListener('change', e=> addFiles(e.target.files||[]));
 
 ["dragenter","dragover"].forEach(ev=> dz.addEventListener(ev, e=>{
-  e.preventDefault(); e.stopPropagation(); dz.classList.add('border-primary');
+  e.preventDefault(); e.stopPropagation(); dz.classList.add('border','border-primary','bg-primary-subtle');
 }));
 ["dragleave","drop"].forEach(ev=> dz.addEventListener(ev, e=>{
-  e.preventDefault(); e.stopPropagation(); dz.classList.remove('border-primary');
+  e.preventDefault(); e.stopPropagation(); dz.classList.remove('border','border-primary','bg-primary-subtle');
 }));
 dz.addEventListener('drop', e=>{ addFiles(e.dataTransfer.files||[]); });
+dz.addEventListener('keydown', e=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); filesInput?.click(); }});
 
 document.addEventListener('paste', e=>{
   const items = e.clipboardData?.items||[];
   const imgs = [];
-  for(const it of items){
-    if(it.kind==='file'){ const f=it.getAsFile(); if(f) imgs.push(f); }
-  }
+  for(const it of items){ if(it.kind==='file'){ const f=it.getAsFile(); if(f) imgs.push(f); } }
   if(imgs.length){ addFiles(imgs); log(`Pegaste ${imgs.length} archivo(s) desde el portapapeles.`); }
 });
 
 /* Acciones fila */
 filesTbody?.addEventListener('click', e=>{
-  const btn = e.target.closest('button[data-act]');
-  if(!btn) return;
-  const idx = +btn.dataset.idx;
-  const act = btn.dataset.act;
+  const btn = e.target.closest('button[data-act]'); if(!btn) return;
+  const idx = +btn.dataset.idx; const act = btn.dataset.act;
   if(Number.isNaN(idx) || !files[idx]) return;
 
   if(act==='remove'){
     files.splice(idx,1);
     refreshFilesUI();
   }else if(act==='preview'){
-    // Hookea tu visor/endpoint si lo tenés (PDF viewer, etc.)
-    log(`Previsualizar: ${files[idx].file.name}`);
+    // Previsualización local básica (abre un blob si el navegador lo permite)
+    const f = files[idx].file;
+    const url = URL.createObjectURL(f);
+    window.open(url, '_blank','noopener,noreferrer');
+    setTimeout(()=> URL.revokeObjectURL(url), 4000);
   }
 });
 
 /* ===== Vistas de resultados (segmented) ===== */
 const viewBtns = $$('[data-view]');
-const views = {
-  texto: $("#view-texto"),
-  estructura: $("#view-estructura"),
-  tablas: $("#view-tablas")
-};
+const views = { texto: $("#view-texto"), estructura: $("#view-estructura"), tablas: $("#view-tablas") };
 viewBtns.forEach(b=> b.addEventListener('click', ()=>{
   viewBtns.forEach(x=> x.classList.remove('active'));
   b.classList.add('active');
@@ -276,19 +283,21 @@ clearBtn?.addEventListener('click', ()=>{
   $("#textoOut").innerHTML = '';
   $("#accEstructura").innerHTML = '';
   $("#tablaRequisitos tbody").innerHTML = '';
+  lastPdfName = '';
+  exportPdfBtn.disabled = true;
   refreshFilesUI();
   log('Se limpió la lista y los resultados.');
 });
 
 analyzeBtn?.addEventListener('click', async ()=>{
   if(!files.length) return;
-  analyzeBtn.disabled = true;
+  analyzeBtn.disabled = true; anaSpin.classList.remove('d-none'); anaIco.classList.add('d-none');
   exportPdfBtn.disabled = true;
   log('Iniciando análisis…');
 
-  // Envío al backend (ajustá la URL a tu endpoint real)
+  // Enviamos al mismo endpoint que usás en index: /analizar-pliego
   const fd = new FormData();
-  files.forEach(f => fd.append('files', f.file, f.file.name));
+  files.forEach(f => fd.append('archivos', f.file, f.file.name));
   fd.append('out_type', $("#outType").value);
   fd.append('lang', $("#lang").value);
   fd.append('ocr', $("#ocrMode").value);
@@ -297,37 +306,44 @@ analyzeBtn?.addEventListener('click', async ()=>{
   refreshFilesUI();
 
   try{
-    const res = await fetch('/analizar', { method:'POST', body: fd }); // <-- ajustá ruta si es necesario
-    if(!res.ok) throw new Error('Error en el análisis');
-    const data = await res.json();
+    const res = await fetch('/analizar-pliego', { method:'POST', body: fd });
+    let data = null, textBackup = '';
+    try{ data = await res.json(); }catch(_){ textBackup = await res.text(); }
 
-    // Esperamos:
-    // data.texto_html, data.estructura (array de secciones), data.tabla (array de filas)
-    $("#textoOut").innerHTML = data.texto_html || '<div class="text-muted">Sin contenido.</div>';
+    if(!res.ok){
+      const msg = data?.error || (textBackup || 'No se pudo analizar.');
+      throw new Error(msg);
+    }
 
-    // Estructura → acordeón
+    // Soportar respuesta vieja (resumen/pdf) y nueva (texto_html/estructura/tabla)
+    const textoHtml = data?.texto_html || data?.resumen || data?.detalle || '';
+    $("#textoOut").innerHTML = textoHtml ? esc(textoHtml).replace(/\n/g,'<br>') : '<div class="text-muted">Sin contenido.</div>';
+
+    // Estructura → acordeón (si viene)
     const acc = $("#accEstructura");
-    acc.innerHTML = (data.estructura||[]).map((sec,i)=>`
+    const estructura = Array.isArray(data?.estructura) ? data.estructura : [];
+    acc.innerHTML = estructura.map((sec,i)=>`
       <div class="accordion-item">
         <h2 class="accordion-header" id="h${i}">
           <button class="accordion-button ${i?'collapsed':''}" type="button" data-bs-toggle="collapse" data-bs-target="#c${i}" aria-controls="c${i}">
-            ${sec.titulo ? sec.titulo : ('Sección '+(i+1))}
+            ${esc(sec.titulo ? sec.titulo : ('Sección '+(i+1)))}
           </button>
         </h2>
         <div id="c${i}" class="accordion-collapse collapse ${i===0?'show':''}" data-bs-parent="#accEstructura">
-          <div class="accordion-body small">${sec.html || ''}</div>
+          <div class="accordion-body small">${sec.html ? sec.html : (sec.texto? esc(sec.texto).replace(/\n/g,'<br>') : '')}</div>
         </div>
       </div>
     `).join('');
 
-    // Tablas → requisitos
+    // Tablas → requisitos (si viene)
     const tb = $("#tablaRequisitos tbody");
-    tb.innerHTML = (data.tabla||[]).map((row,idx)=>`
+    const tabla = Array.isArray(data?.tabla) ? data.tabla : (Array.isArray(data?.requisitos)? data.requisitos : []);
+    tb.innerHTML = tabla.map((row,idx)=>`
       <tr>
-        <td>${row.item ?? (idx+1)}</td>
-        <td>${row.requisito ?? ''}</td>
-        <td>${row.referencia ?? ''}</td>
-        <td>${row.obs ?? ''}</td>
+        <td>${esc(row.item ?? (idx+1))}</td>
+        <td>${esc(row.requisito ?? '')}</td>
+        <td>${esc(row.referencia ?? '')}</td>
+        <td>${esc(row.obs ?? row.observaciones ?? '')}</td>
       </tr>
     `).join('');
 
@@ -335,71 +351,70 @@ analyzeBtn?.addEventListener('click', async ()=>{
     files = files.map(f => ({...f, status:'ok'}));
     refreshFilesUI();
 
-    exportPdfBtn.disabled = false;
+    // Nombre del PDF para descargar
+    lastPdfName = data?.pdf || data?.nombre_pdf || '';
+    exportPdfBtn.disabled = !lastPdfName;
+
+    // Enganche con “valoración pendiente”
+    if(data?.timestamp){
+      try{
+        localStorage.setItem('lastAnalysisInfo', JSON.stringify({
+          ts: data.timestamp, pdf: lastPdfName||'', createdAt: Date.now(), viewed:false, downloaded:false
+        }));
+        // mostrará el banner desde base.html si corresponde
+      }catch(_){}
+    }
+
     log('Análisis finalizado correctamente.');
+    toast('Análisis', 'Listo. Revisá las pestañas de resultados.', 'check-circle');
   }catch(err){
     files = files.map(f => ({...f, status:'error'}));
     refreshFilesUI();
     log('Error: ' + (err?.message || 'desconocido'));
+    toast('Error', err?.message || 'No se pudo analizar.', 'exclamation-triangle');
   }finally{
-    analyzeBtn.disabled = false;
+    analyzeBtn.disabled = false; anaSpin.classList.add('d-none'); anaIco.classList.remove('d-none');
   }
 });
 
-exportPdfBtn?.addEventListener('click', async ()=>{
-  exportPdfBtn.disabled = true;
-  log('Generando PDF…');
-  try{
-    // Enviá ids/resultado si tu backend lo requiere. Ejemplo básico:
-    const payload = {
-      html: $("#textoOut").innerHTML,
-      estructura: $("#accEstructura").innerHTML,
-      tabla_html: $("#view-tablas").innerHTML
-    };
-    const res = await fetch('/generar-pdf', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    });
-    if(!res.ok) throw new Error('No se pudo generar el PDF');
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href=url; a.download='analisis.pdf'; a.click();
-    URL.revokeObjectURL(url);
-    log('PDF generado.');
-  }catch(err){
-    log('Error al generar PDF: ' + (err?.message||'desconocido'));
-  }finally{
-    exportPdfBtn.disabled = false;
-  }
+exportPdfBtn?.addEventListener('click', ()=>{
+  if(!lastPdfName){ toast('PDF', 'Primero realizá un análisis.', 'info-circle'); return; }
+  const name = encodeURIComponent(lastPdfName);
+  window.location.href = `/descargar/${name}`;
+  log('Descargando PDF…');
 });
 
 /* ===== Chat simple (front) ===== */
 const chatBox = $("#chatBox");
 const chatInput = $("#chatInput");
 $("#chatSend")?.addEventListener('click', sendChat);
-chatInput?.addEventListener('keydown', e=>{
-  if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendChat(); }
-});
+chatInput?.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendChat(); } });
+
 function appendMsg(who, text){
   const wrap = document.createElement('div');
   wrap.className = 'mb-2';
-  wrap.innerHTML = `<div class="small ${who==='ai'?'text-brand':'text-body'}"><b>${who==='ai'?'IA':'Yo'}:</b> ${escapeHtml(text)}</div>`;
+  wrap.innerHTML = `<div class="small ${who==='ai'?'text-primary':'text-body'}"><b>${who==='ai'?'IA':'Yo'}:</b> ${esc(text)}</div>`;
   chatBox.appendChild(wrap); chatBox.scrollTop = chatBox.scrollHeight;
 }
-function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'":'&#39;' }[m])); }
+
 async function sendChat(){
   const txt = (chatInput.value||'').trim(); if(!txt) return;
   appendMsg('me', txt);
   chatInput.value='';
+
+  // Intentamos endpoint específico; si falla, fallback al general
+  async function call(path, payload){
+    const r = await fetch(path, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    let j=null, t=''; try{ j = await r.json(); }catch(_){ t = await r.text(); }
+    if(!r.ok) throw new Error(j?.error || t || 'Error');
+    return j;
+  }
+
   try{
-    // Endpoint de chat para esta vista (ajustá a tu backend real)
-    const r = await fetch('/api/chat-analisis', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ message: txt })
-    });
-    const j = await r.json().catch(()=> ({}));
+    const payload = { message: txt, meta: { files: files.map(f=>f.file.name), page: 'analisis' } };
+    let j;
+    try { j = await call('/api/chat-analisis', payload); }
+    catch { j = await call('/api/chat-openai', { message: txt }); } // fallback
     const reply = j.reply || j.respuesta || j.text || 'Sin respuesta.';
     appendMsg('ai', reply);
   }catch(_){

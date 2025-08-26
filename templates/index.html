@@ -63,7 +63,6 @@
         <div id="historial-empty" class="hist-empty d-none">Sin análisis aún.</div>
 
         <div class="d-flex align-items-center justify-content-between mt-3">
-          <!-- más visible con .pager-info (estilo en app.theme.css) -->
           <div id="historial-count" class="hist-meta pager-info"></div>
           <div id="historial-pager" class="hist-pager btn-group"></div>
         </div>
@@ -185,7 +184,7 @@
     window.addEventListener('resize', ()=>{ try{ calendar.updateSize(); }catch(_){} });
   })();
 
-  // ===== Módulo análisis =====
+  // ===== Módulo análisis (usa helpers globales) =====
   let resumenGlobal="", ultimoPDF="", archivosSeleccionados=[];
 
   function agregarArchivos(){
@@ -214,26 +213,38 @@
       document.getElementById("result").innerHTML='<div class="alert alert-danger">❌ Seleccioná al menos un archivo.</div>';
       return;
     }
-    const fd=new FormData(); archivosSeleccionados.forEach(f=>fd.append("archivos",f));
     document.getElementById("result").innerHTML='<div class="alert alert-info">⏳ Analizando pliegos...</div>';
-    const r = await fetch("/analizar-pliego",{method:"POST", body:fd});
-    const j = await r.json();
-    if(r.ok){
-      resumenGlobal=j.resumen; ultimoPDF=j.pdf;
-      document.getElementById("result").innerHTML = `<div class="alert alert-success"><strong>✅ Análisis completo.</strong><br><br>${resumenGlobal}</div>`;
-      await Historial.load(); // recarga la página actual con los nuevos datos
-      document.getElementById('historial')?.scrollIntoView({behavior:'smooth', block:'start'});
-    }else{
-      document.getElementById("result").innerHTML = `<div class="alert alert-danger">❌ ${j.error||'No se pudo analizar.'}</div>`;
+
+    // 👉 Usa el helper global (maneja 409 y banner de rating)
+    const out = await window.analizar(archivosSeleccionados);
+    if(!out){
+      // Puede haber sido 409 (pendiente de valoración). El wrapper ya mostró banner/toast.
+      document.getElementById("result").innerHTML =
+        '<div class="alert alert-warning">⚠️ Tenés una valoración pendiente. Revisá el banner o el panel de notificaciones.</div>';
+      return;
     }
+
+    const resumen = out.resumen || out.summary || '';
+    const pdf = out.pdf || out.nombre_pdf || '';
+    resumenGlobal = resumen; ultimoPDF = pdf;
+
+    document.getElementById("result").innerHTML =
+      `<div class="alert alert-success"><strong>✅ Análisis completo.</strong><br><br>${resumenGlobal || 'El análisis terminó correctamente.'}</div>`;
+
+    await Historial.load(); // recarga la página actual con los nuevos datos
+    document.getElementById('historial')?.scrollIntoView({behavior:'smooth', block:'start'});
   });
 
   document.getElementById("generate-btn").addEventListener("click", ()=>{
-    if(!ultimoPDF){
-      document.getElementById("result").innerHTML='<div class="alert alert-danger">❌ Primero analizá un pliego.</div>';
+    // Prioriza el último guardado por el wrapper (localStorage) y cae al local
+    let last = null;
+    try{ last = JSON.parse(localStorage.getItem('lastAnalysisInfo')||'{}'); }catch(_){}
+    const pdf = (last && last.pdf) || ultimoPDF;
+    if(!pdf){
+      document.getElementById("result").innerHTML='<div class="alert alert-danger">❌ No hay un PDF reciente para descargar.</div>';
       return;
     }
-    window.location.href = `/descargar/${ultimoPDF}`;
+    window.location.href = `/descargar/${encodeURIComponent(pdf)}`;
   });
 
   function limpiar(){
@@ -281,19 +292,19 @@
               <div class="text-muted small"><strong>🕓 Fecha:</strong> ${fecha} &nbsp; • &nbsp; <strong>👤 Usuario:</strong> ${entry.usuario}</div>
             </div>
             <div class="d-flex gap-2 align-items-center">
-              <!-- Botón PDF centrado en círculo -->
-              <a href="/descargar/${pdfName}" class="btn btn-outline-primary btn-circle btn-sm" aria-label="Descargar PDF">PDF</a>
+              <a href="/descargar/${encodeURIComponent(pdfName)}" class="btn btn-outline-primary btn-circle btn-sm" aria-label="Descargar PDF">PDF</a>
               <button class="btn btn-compact btn-ghost-danger btn-pill" data-ts="${entry.timestamp}">
                 <i class="bi bi-trash me-1"></i> Eliminar
               </button>
             </div>
           </div>`;
         const btn = div.querySelector('button.btn-ghost-danger');
-        btn.onclick = async ()=>{
-          await fetch(`/eliminar/${entry.timestamp}`, { method:'DELETE' });
-          if(els.list.childElementCount === 1 && page>1){ page--; }
-          await load();
-        };
+        btn.onclick = () => window.eliminarItem(entry.timestamp, {
+          onSuccess: async ()=>{
+            if(els.list.childElementCount === 1 && page>1){ page--; }
+            await load();
+          }
+        });
         els.list.appendChild(div);
       });
     }
