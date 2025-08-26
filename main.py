@@ -1197,7 +1197,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     # Si hay una valoración pendiente, bloquear nuevo análisis
     try:
         pr = _pr_get(usuario)
-        if pr o tiene_valoracion_pendiente(usuario):
+        if pr or tiene_valoracion_pendiente(usuario):
             payload = {"error": "Tienes una valoración pendiente. Califica el análisis anterior para continuar."}
             if pr:
                 payload["pending"] = True
