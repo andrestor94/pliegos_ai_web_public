@@ -6,7 +6,7 @@ import re
 import base64
 import mimetypes
 import time
-import json  # <-- agregar
+import json  # necesario para tool-calling en el chat
 from datetime import datetime
 from typing import List, Tuple, Dict, Optional
 from tempfile import NamedTemporaryFile
@@ -165,8 +165,6 @@ def _ocr_selectivo_por_pagina(doc: fitz.Document, max_pages: int) -> str:
     if n > to_process:
         res.append(f"\n[AVISO] OCR muestreó {to_process}/{n} páginas distribuidas.")
     return "\n\n".join([r for r in res if r]).strip()
-
-# utils.py — Parte 2/5
 # utils.py — Parte 2/5
 
 # ==================== Extracción por tipo de archivo ====================
@@ -519,6 +517,7 @@ Ejemplos:
 - [FALTA] campo X — NO ESPECIFICADO. (Fuente: documento provisto)
 """
 # utils.py — Parte 3/5
+# utils.py — Parte 3/5
 
 # ==================== Filtrado de meta-frases y utilidades ====================
 _META_PATTERNS = [
@@ -703,6 +702,7 @@ DETECTABLE_FIELDS: Dict[str, Dict] = {
     "obj_gasto":   {"label": "Objeto del gasto", "pats": [r"objeto\s+del\s+gasto", r"partida\s+presupuestaria", r"clasificador"]},
     "ofertas_perm":{"label": "Ofertas permitidas", "pats": [r"m[aá]s\s+de\s+una\s+oferta", r"ofertas?\s+alternativas", r"una\s+sola\s+oferta"]},
 }
+# utils.py — Parte 4/5
 # utils.py — Parte 4/5
 
 # ==================== Utilidades de conteo y evidencia ====================
@@ -1113,6 +1113,7 @@ def _reparar_ficha(informe: str, texto_fuente: str) -> str:
     )
 
     return (informe or "")
+# utils.py — Parte 5/5
 # utils.py — Parte 5/5
 
 # ==================== Llamada a OpenAI robusta ====================
