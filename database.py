@@ -1,4 +1,4 @@
-"""
+﻿"""
 from __future__ import annotations
 
 # =========================
@@ -1351,3 +1351,4 @@ def obtener_auditoria(limit: int = 50):
                 }
             )
         return resultado
+
