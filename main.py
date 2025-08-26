@@ -1,4 +1,4 @@
-# =========================
+﻿# =========================
 # main.py — PARTE 1 / 5
 # (imports, helpers base, app init, WS, utils)
 # =========================
@@ -2785,7 +2785,7 @@ async def notificaciones_vista(request: Request):
     return templates.TemplateResponse("notificaciones.html", {"request": request})
 
 
-# 👉 Aliases/redirects para que la campana y “Ver todas” SIEMPRE abran la vista HTML
+# 👉 Aliases/redirects para que la campana y "Ver todas" SIEMPRE abran la vista HTML
 @app.get("/notificaciones/panel")
 @app.get("/notificaciones/todas")
 @app.get("/notificaciones/")
@@ -3091,3 +3091,4 @@ async def auditoria_actividad_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+

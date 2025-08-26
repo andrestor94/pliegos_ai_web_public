@@ -1,4 +1,4 @@
-[1mdiff --git a/database.py b/database.py[m
+﻿[1mdiff --git a/database.py b/database.py[m
 [1mindex bf64cce..ae46720 100644[m
 [1m--- a/database.py[m
 [1m+++ b/database.py[m
@@ -37,7 +37,7 @@
 [31m-    "SEND_MESSAGE": "Enviar mensaje",  # 👈 chat interno[m
 [31m-    "HIDE_THREAD": "Ocultar conversación",[m
 [31m-    "UNHIDE_THREAD": "Restaurar conversación",[m
-[32m+[m[32m    "SEND_MESSAGE": "Enviar mensaje",  # ðŸ‘ˆ chat interno[m
+[32m+[m[32m    "SEND_MESSAGE": "Enviar mensaje",  # ðŸ'ˆ chat interno[m
 [32m+[m[32m    "HIDE_THREAD": "Ocultar conversaciÃ³n",[m
 [32m+[m[32m    "UNHIDE_THREAD": "Restaurar conversaciÃ³n",[m
      # Roles[m
@@ -45,7 +45,7 @@
 [31m-    # 👇 Nuevas acciones[m
 [31m-    "CREATE_ANALYSIS_RECORD": "Registrar análisis",[m
 [31m-    "RATE_ANALYSIS": "Valorar análisis",[m
-[32m+[m[32m    # ðŸ‘‡ Nuevas acciones[m
+[32m+[m[32m    # ðŸ'‡ Nuevas acciones[m
 [32m+[m[32m    "CREATE_ANALYSIS_RECORD": "Registrar anÃ¡lisis",[m
 [32m+[m[32m    "RATE_ANALYSIS": "Valorar anÃ¡lisis",[m
  }[m
@@ -90,12 +90,12 @@
  def inicializar_bd():[m
      crear_tabla_usuarios()[m
 [31m-    _migrar_tabla_usuarios_si_falta_rol_y_activo()  # 👈 asegura columnas en DBs existentes[m
-[32m+[m[32m    _migrar_tabla_usuarios_si_falta_rol_y_activo()  # ðŸ‘ˆ asegura columnas en DBs existentes[m
+[32m+[m[32m    _migrar_tabla_usuarios_si_falta_rol_y_activo()  # ðŸ'ˆ asegura columnas en DBs existentes[m
      _crear_indices_usuarios()[m
  [m
      crear_tabla_historial()[m
 [31m-    _migrar_historial_add_rating_fields()           # 👈 agrega columnas de rating si faltan[m
-[32m+[m[32m    _migrar_historial_add_rating_fields()           # ðŸ‘ˆ agrega columnas de rating si faltan[m
+[32m+[m[32m    _migrar_historial_add_rating_fields()           # ðŸ'ˆ agrega columnas de rating si faltan[m
      _crear_indices_historial_rating()[m
  [m
      # crear_tabla_tickets()  # TODO[m
@@ -103,8 +103,8 @@
 [31m-    crear_tabla_hilos_ocultos()  # 👈 gestión de hilos ocultos[m
 [31m-    crear_tabla_adjuntos()       # 👈 adjuntos de mensajes[m
 [32m+[m[32m    # crear_tabla_mensajes()  # TODO (deshabilitado en Render)[m
-[32m+[m[32m    crear_tabla_hilos_ocultos()  # ðŸ‘ˆ gestiÃ³n de hilos ocultos[m
-[32m+[m[32m    crear_tabla_adjuntos()       # ðŸ‘ˆ adjuntos de mensajes[m
+[32m+[m[32m    crear_tabla_hilos_ocultos()  # ðŸ'ˆ gestiÃ³n de hilos ocultos[m
+[32m+[m[32m    crear_tabla_adjuntos()       # ðŸ'ˆ adjuntos de mensajes[m
  [m
  def crear_tabla_usuarios():[m
      with _get_conn() as conn:[m
