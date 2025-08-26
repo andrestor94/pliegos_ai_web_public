@@ -1,419 +1,527 @@
 {% extends "base.html" %}
+
 {% block title %}Inicio – Suizo Argentina{% endblock %}
 
 {% block extra_head %}
   <!-- FullCalendar -->
-  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css" rel="stylesheet"/>
+  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css" rel="stylesheet" />
   <style>
-    /* Todo lo de estilos principales vive en app.theme.css.
-       Dejamos este bloque vacío para evitar pisar tokens. */
+    /* Todo lo de estilos principales vive en app.theme.css. Dejamos este bloque vacío para evitar pisar tokens. */
   </style>
 {% endblock %}
 
 {% block content %}
-<div class="py-3">
-  <div class="d-flex align-items-center justify-content-between mb-3 px-1">
-    <div>
-      <h1 class="hero-title mb-1">Panel principal</h1>
-      <div class="subtle" id="todayLabel"></div>
+  <div class="py-3">
+    <div class="d-flex align-items-center justify-content-between mb-3 px-1">
+      <div>
+        <h1 class="hero-title mb-1">Panel principal</h1>
+        <div class="subtle" id="todayLabel"></div>
+      </div>
+    </div>
+
+    <div class="row g-3 px-1">
+      <!-- 1) Analizar -->
+      <div class="col-12" id="analisis">
+        <div class="cardx">
+          <div class="title mb-2"><i class="bi bi-upload me-2"></i> Subir pliegos para análisis</div>
+          <form id="form-analyze" class="mb-2">
+            <input type="file" id="file-hidden" class="form-control d-none" multiple />
+            <div class="mb-2">
+              <button type="button" class="btn btn-outline-secondary btn-sm" onclick="agregarArchivos()">+ Agregar archivo</button>
+            </div>
+            <small class="text-muted d-block mb-2">Tamaño máximo recomendado por archivo: 25 MB</small>
+            <ul id="lista-archivos" class="list-group mb-3"></ul>
+            <div class="d-flex flex-wrap gap-2">
+              <button type="button" id="analyze-btn" class="btn btn-primary">
+                <i class="bi bi-rocket-takeoff me-1"></i> Analizar
+              </button>
+              <button type="button" id="generate-btn" class="btn btn-outline-primary">
+                <i class="bi bi-file-earmark-arrow-down me-1"></i> Descargar último PDF
+              </button>
+              <button type="button" class="btn btn-outline-secondary" onclick="limpiar()">Limpiar</button>
+            </div>
+          </form>
+          <div id="result"></div>
+        </div>
+      </div>
+
+      <!-- 2) Historial -->
+      <div class="col-12" id="historial">
+        <div class="cardx">
+          <div class="d-flex align-items-center justify-content-between mb-2 hist-toolbar">
+            <div class="title mb-0"><i class="bi bi-clock-history me-2"></i> Historial de análisis</div>
+            <div class="d-flex align-items-center ms-auto gap-2">
+              <input
+                type="text"
+                id="search-input"
+                class="form-control form-control-sm"
+                placeholder="Buscar en el historial..."
+                style="max-width:260px"
+              />
+              <select id="per-page" class="form-select form-select-sm w-110" title="Ítems por página">
+                <option value="10">10 / pág</option>
+                <option value="20" selected>20 / pág</option>
+                <option value="50">50 / pág</option>
+                <option value="100">100 / pág</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="historial-meta" class="hist-meta mb-2"></div>
+          <div id="historial-list"></div>
+          <div id="historial-empty" class="hist-empty d-none">Sin análisis aún.</div>
+
+          <div class="d-flex align-items-center justify-content-between mt-3">
+            <!-- más visible con .pager-info (estilo en app.theme.css) -->
+            <div id="historial-count" class="hist-meta pager-info"></div>
+            <div id="historial-pager" class="hist-pager btn-group"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3) Calendario + Acciones -->
+      <div class="col-12 col-xl-8">
+        <div class="cardx calendar-card">
+          <div class="title mb-2"><i class="bi bi-calendar3 me-2"></i> Calendario</div>
+
+          <!-- Contenedor del mini-calendario -->
+          <div id="calMini" class="calendar-compact"></div>
+
+          <!-- Controles externos -->
+          <div class="d-flex align-items-center gap-2 mt-2">
+            <div class="segmented">
+              <button class="btn btn-sm btn-light active" type="button" data-cal-view="dayGridMonth" data-cal-target="#calMini">
+                Mes
+              </button>
+              <button class="btn btn-sm btn-light" type="button" data-cal-view="timeGridWeek" data-cal-target="#calMini">
+                Semana
+              </button>
+              <button class="btn btn-sm btn-light" type="button" data-cal-view="listWeek" data-cal-target="#calMini">
+                Lista
+              </button>
+            </div>
+
+            <div class="ms-auto d-flex align-items-center gap-2">
+              <button
+                class="btn btn-sm btn-outline-secondary"
+                type="button"
+                aria-label="Anterior"
+                data-cal-nav="prev"
+                data-cal-target="#calMini"
+              >
+                <i class="bi bi-chevron-left"></i>
+              </button>
+              <button class="btn btn-sm btn-outline-secondary" type="button" data-cal-nav="today" data-cal-target="#calMini">
+                Hoy
+              </button>
+              <button
+                class="btn btn-sm btn-outline-secondary"
+                type="button"
+                aria-label="Siguiente"
+                data-cal-nav="next"
+                data-cal-target="#calMini"
+              >
+                <i class="bi bi-chevron-right"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-xl-4">
+        <div class="cardx mb-3">
+          <div class="title mb-2"><i class="bi bi-lightning-charge me-2"></i> Acciones rápidas</div>
+          <div class="d-grid gap-2">
+            <a class="btn btn-primary" href="/incidencias"><i class="bi bi-tools me-1"></i> Crear incidencia</a>
+            <a class="btn btn-outline-primary" href="/chat"><i class="bi bi-chat-dots me-1"></i> Abrir chat interno</a>
+            <a class="btn btn-outline-primary" href="#analisis"><i class="bi bi-diagram-3 me-1"></i> Nuevo análisis de pliego</a>
+          </div>
+        </div>
+
+        {% if rol == 'admin' %}
+          <div class="cardx mb-3">
+            <div class="title mb-2"><i class="bi bi-graph-up me-2"></i> Auditoría & actividad</div>
+            <div class="d-grid gap-2">
+              <a class="btn btn-outline-primary" href="/auditoria-actividad"><i class="bi bi-activity me-1"></i> Auditoría de actividad</a>
+              <a class="btn btn-outline-primary" href="/usuarios-activos"><i class="bi bi-people me-1"></i> Usuarios activos (vivo)</a>
+              <a class="btn btn-outline-secondary" href="/auditoria"><i class="bi bi-clipboard-data me-1"></i> Auditoría de eventos</a>
+            </div>
+          </div>
+        {% endif %}
+
+        <div class="cardx">
+          <div class="title mb-2"><i class="bi bi-list-check me-2"></i> Resumen</div>
+          <ul class="list-unstyled mb-0">
+            <li class="mb-1">
+              <span class="badge bg-primary-subtle text-primary me-2">•</span>
+              Incidencias abiertas: <strong>{{ incidencias_abiertas or 0 }}</strong>
+            </li>
+            <li class="mb-1">
+              <span class="badge bg-warning-subtle text-warning me-2">•</span>
+              Eventos esta semana: <strong id="kpiSemana">—</strong>
+            </li>
+            <li>
+              <span class="badge bg-success-subtle text-success me-2">•</span>
+              Último análisis: <strong>{{ ultimo_analisis or '—' }}</strong>
+            </li>
+          </ul>
+        </div>
+      </div>
     </div>
   </div>
-
-  <div class="row g-3 px-1">
-
-    <!-- 1) Analizar -->
-    <div class="col-12" id="analisis">
-      <div class="cardx">
-        <div class="title mb-2"><i class="bi bi-upload me-2"></i> Subir pliegos para análisis</div>
-        <form id="form-analyze" class="mb-2">
-          <input type="file" id="file-hidden" class="form-control d-none" multiple>
-          <div class="mb-2">
-            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="agregarArchivos()">+ Agregar archivo</button>
-          </div>
-          <small class="text-muted d-block mb-2">Tamaño máximo recomendado por archivo: 25 MB</small>
-          <ul id="lista-archivos" class="list-group mb-3"></ul>
-          <div class="d-flex flex-wrap gap-2">
-            <button type="button" id="analyze-btn" class="btn btn-primary"><i class="bi bi-rocket-takeoff me-1"></i> Analizar</button>
-            <button type="button" id="generate-btn" class="btn btn-outline-primary"><i class="bi bi-file-earmark-arrow-down me-1"></i> Descargar último PDF</button>
-            <button type="button" class="btn btn-outline-secondary" onclick="limpiar()">Limpiar</button>
-          </div>
-        </form>
-        <div id="result"></div>
-      </div>
-    </div>
-
-    <!-- 2) Historial -->
-    <div class="col-12" id="historial">
-      <div class="cardx">
-        <div class="d-flex align-items-center justify-content-between mb-2 hist-toolbar">
-          <div class="title mb-0"><i class="bi bi-clock-history me-2"></i> Historial de análisis</div>
-          <div class="d-flex align-items-center ms-auto gap-2">
-            <input type="text" id="search-input" class="form-control form-control-sm" placeholder="Buscar en el historial..." style="max-width:260px"/>
-            <select id="per-page" class="form-select form-select-sm w-110" title="Ítems por página">
-              <option value="10">10 / pág</option>
-              <option value="20" selected>20 / pág</option>
-              <option value="50">50 / pág</option>
-              <option value="100">100 / pág</option>
-            </select>
-          </div>
-        </div>
-
-        <div id="historial-meta" class="hist-meta mb-2"></div>
-        <div id="historial-list"></div>
-        <div id="historial-empty" class="hist-empty d-none">Sin análisis aún.</div>
-
-        <div class="d-flex align-items-center justify-content-between mt-3">
-          <!-- más visible con .pager-info (estilo en app.theme.css) -->
-          <div id="historial-count" class="hist-meta pager-info"></div>
-          <div id="historial-pager" class="hist-pager btn-group"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 3) Calendario + Acciones -->
-    <div class="col-12 col-xl-8">
-      <div class="cardx calendar-card">
-        <div class="title mb-2"><i class="bi bi-calendar3 me-2"></i> Calendario</div>
-
-        <!-- Contenedor del mini-calendario -->
-        <div id="calMini" class="calendar-compact"></div>
-
-        <!-- Controles externos -->
-        <div class="d-flex align-items-center gap-2 mt-2">
-          <div class="segmented">
-            <button class="btn btn-sm btn-light active" type="button"
-                    data-cal-view="dayGridMonth" data-cal-target="#calMini">Mes</button>
-            <button class="btn btn-sm btn-light" type="button"
-                    data-cal-view="timeGridWeek" data-cal-target="#calMini">Semana</button>
-            <button class="btn btn-sm btn-light" type="button"
-                    data-cal-view="listWeek" data-cal-target="#calMini">Lista</button>
-          </div>
-          <div class="ms-auto d-flex align-items-center gap-2">
-            <button class="btn btn-sm btn-outline-secondary" type="button" aria-label="Anterior"
-                    data-cal-nav="prev" data-cal-target="#calMini"><i class="bi bi-chevron-left"></i></button>
-            <button class="btn btn-sm btn-outline-secondary" type="button"
-                    data-cal-nav="today" data-cal-target="#calMini">Hoy</button>
-            <button class="btn btn-sm btn-outline-secondary" type="button" aria-label="Siguiente"
-                    data-cal-nav="next" data-cal-target="#calMini"><i class="bi bi-chevron-right"></i></button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="col-12 col-xl-4">
-      <div class="cardx mb-3">
-        <div class="title mb-2"><i class="bi bi-lightning-charge me-2"></i> Acciones rápidas</div>
-        <div class="d-grid gap-2">
-          <a class="btn btn-primary" href="/incidencias"><i class="bi bi-tools me-1"></i> Crear incidencia</a>
-          <a class="btn btn-outline-primary" href="/chat"><i class="bi bi-chat-dots me-1"></i> Abrir chat interno</a>
-          <a class="btn btn-outline-primary" href="#analisis"><i class="bi bi-diagram-3 me-1"></i> Nuevo análisis de pliego</a>
-        </div>
-      </div>
-
-      {% if rol == 'admin' %}
-      <div class="cardx mb-3">
-        <div class="title mb-2"><i class="bi bi-graph-up me-2"></i> Auditoría & actividad</div>
-        <div class="d-grid gap-2">
-          <a class="btn btn-outline-primary" href="/auditoria-actividad"><i class="bi bi-activity me-1"></i> Auditoría de actividad</a>
-          <a class="btn btn-outline-primary" href="/usuarios-activos"><i class="bi bi-people me-1"></i> Usuarios activos (vivo)</a>
-          <a class="btn btn-outline-secondary" href="/auditoria"><i class="bi bi-clipboard-data me-1"></i> Auditoría de eventos</a>
-        </div>
-      </div>
-      {% endif %}
-
-      <div class="cardx">
-        <div class="title mb-2"><i class="bi bi-list-check me-2"></i> Resumen</div>
-        <ul class="list-unstyled mb-0">
-          <li class="mb-1"><span class="badge bg-primary-subtle text-primary me-2">•</span> Incidencias abiertas: <strong>{{ incidencias_abiertas or 0 }}</strong></li>
-          <li class="mb-1"><span class="badge bg-warning-subtle text-warning me-2">•</span> Eventos esta semana: <strong id="kpiSemana">—</strong></li>
-          <li><span class="badge bg-success-subtle text-success me-2">•</span> Último análisis: <strong>{{ ultimo_analisis or '—' }}</strong></li>
-        </ul>
-      </div>
-    </div>
-  </div>
-</div>
 {% endblock %}
 
 {% block extra_scripts %}
-<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/locales-all.global.min.js"></script>
-<script>
-  // Fecha de hoy
-  (function(){
-    const el=document.getElementById('todayLabel');
-    const fmt=new Intl.DateTimeFormat('es-AR',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
-    if(el) el.textContent = fmt.format(new Date());
-  })();
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/locales-all.global.min.js"></script>
 
-  // ===== FullCalendar (mini en panel) =====
-  let calendar;
-  (function(){
-    const el=document.getElementById('calMini');
-    if(!el) return;
-    calendar = new FullCalendar.Calendar(el, {
-      height:'auto',
-      initialView:'dayGridMonth',
-      headerToolbar:false,
-      locale:'es',
-      nowIndicator:true,
-      firstDay:1,
-      navLinks:true,
-      events: async (info, successCallback) => {
-        try{
-          const r = await fetch('/api/calendar/events');
-          const j = await r.json();
-          successCallback(j.events || []);
-          // KPI semana
-          const start=new Date(); const end=new Date(); end.setDate(start.getDate()+7);
-          const cnt=(j.events||[]).filter(e=>{
-            const d=new Date(e.start||e.date); return d>=start && d<=end;
-          }).length;
-          document.getElementById('kpiSemana').textContent = cnt;
-        }catch(e){
-          successCallback([]); document.getElementById('kpiSemana').textContent='0';
-        }
-      },
-      eventTimeFormat:{hour:'2-digit',minute:'2-digit',meridiem:false},
-    });
-    calendar.render();
+  <script>
+    // Fecha de hoy
+    (function () {
+      const el = document.getElementById('todayLabel');
+      const fmt = new Intl.DateTimeFormat('es-AR', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+      if (el) el.textContent = fmt.format(new Date());
+    })();
 
-    // Exponer instancia para que los botones externos funcionen
-    el.__fcCalendar = calendar;
-    window.MiniCalendar = calendar;
+    // ===== FullCalendar (mini en panel) =====
+    let calendar;
+    (function () {
+      const el = document.getElementById('calMini');
+      if (!el) return;
 
-    setTimeout(()=>{ try{ calendar.updateSize(); }catch(_){} }, 80);
-    window.addEventListener('resize', ()=>{ try{ calendar.updateSize(); }catch(_){} });
-  })();
+      calendar = new FullCalendar.Calendar(el, {
+        height: 'auto',
+        initialView: 'dayGridMonth',
+        headerToolbar: false,
+        locale: 'es',
+        nowIndicator: true,
+        firstDay: 1,
+        navLinks: true,
+        events: async (info, successCallback) => {
+          try {
+            const r = await fetch('/api/calendar/events');
+            const j = await r.json();
+            successCallback(j.events || []);
 
-  // ===== Módulo análisis =====
-  let resumenGlobal="", ultimoPDF="", archivosSeleccionados=[];
+            // KPI semana
+            const start = new Date();
+            const end = new Date();
+            end.setDate(start.getDate() + 7);
+            const cnt = (j.events || []).filter(e => {
+              const d = new Date(e.start || e.date);
+              return d >= start && d <= end;
+            }).length;
+            document.getElementById('kpiSemana').textContent = cnt;
+          } catch (e) {
+            successCallback([]);
+            document.getElementById('kpiSemana').textContent = '0';
+          }
+        },
+        eventTimeFormat: { hour: '2-digit', minute: '2-digit', meridiem: false }
+      });
 
-  function agregarArchivos(){
-    const input=document.getElementById("file-hidden");
-    input.value="";
-    input.onchange=()=>{ for(const a of input.files) archivosSeleccionados.push(a); actualizarListaArchivos(); };
-    input.click();
-  }
-  function actualizarListaArchivos(){
-    const lista=document.getElementById("lista-archivos");
-    lista.innerHTML="";
-    archivosSeleccionados.forEach((archivo, idx)=>{
-      const li=document.createElement("li");
-      li.className="list-group-item d-flex justify-content-between align-items-center";
-      li.textContent=archivo.name;
-      const btn=document.createElement("button");
-      btn.className="btn btn-sm btn-outline-danger";
-      btn.textContent="Eliminar";
-      btn.onclick=()=>{ archivosSeleccionados.splice(idx,1); actualizarListaArchivos(); };
-      li.appendChild(btn); lista.appendChild(li);
-    });
-  }
+      calendar.render();
 
-  document.getElementById("analyze-btn").addEventListener("click", async ()=>{
-    if(!archivosSeleccionados.length){
-      document.getElementById("result").innerHTML='<div class="alert alert-danger">❌ Seleccioná al menos un archivo.</div>';
-      return;
-    }
-    const fd=new FormData(); archivosSeleccionados.forEach(f=>fd.append("archivos",f));
-    document.getElementById("result").innerHTML='<div class="alert alert-info">⏳ Analizando pliegos...</div>';
-    const r = await fetch("/analizar-pliego",{method:"POST", body:fd});
-    const j = await r.json();
-    if(r.ok){
-      resumenGlobal=j.resumen; ultimoPDF=j.pdf;
-      document.getElementById("result").innerHTML = `<div class="alert alert-success"><strong>✅ Análisis completo.</strong><br><br>${resumenGlobal}</div>`;
-      await Historial.load(); // recarga la página actual con los nuevos datos
-      document.getElementById('historial')?.scrollIntoView({behavior:'smooth', block:'start'});
-    }else{
-      document.getElementById("result").innerHTML = `<div class="alert alert-danger">❌ ${j.error||'No se pudo analizar.'}</div>`;
-    }
-  });
+      // Exponer instancia para que los botones externos funcionen
+      el.__fcCalendar = calendar;
+      window.MiniCalendar = calendar;
 
-  document.getElementById("generate-btn").addEventListener("click", ()=>{
-    if(!ultimoPDF){
-      document.getElementById("result").innerHTML='<div class="alert alert-danger">❌ Primero analizá un pliego.</div>';
-      return;
-    }
-    window.location.href = `/descargar/${ultimoPDF}`;
-  });
+      setTimeout(() => {
+        try {
+          calendar.updateSize();
+        } catch (_) {}
+      }, 80);
 
-  function limpiar(){
-    archivosSeleccionados=[]; document.getElementById("lista-archivos").innerHTML="";
-    document.getElementById("result").innerHTML=""; resumenGlobal=""; ultimoPDF="";
-  }
+      window.addEventListener('resize', () => {
+        try {
+          calendar.updateSize();
+        } catch (_) {}
+      });
+    })();
 
-  // ===== Historial (server-side pagination) =====
-  const Historial = (function(){
-    let page = 1;
-    let perPage = parseInt(document.getElementById('per-page').value, 10) || 20;
-    let q = "";
+    // ===== Módulo análisis =====
+    let resumenGlobal = '', ultimoPDF = '', archivosSeleccionados = [];
 
-    const els = {
-      list: document.getElementById('historial-list'),
-      empty: document.getElementById('historial-empty'),
-      pager: document.getElementById('historial-pager'),
-      count: document.getElementById('historial-count'),
-      meta: document.getElementById('historial-meta'),
-      per: document.getElementById('per-page'),
-      search: document.getElementById('search-input'),
-    };
-
-    function setLoading(loading){
-      els.meta.innerHTML = loading ? '<span class="spinner-sm"></span> Cargando historial...' : '';
+    function agregarArchivos() {
+      const input = document.getElementById('file-hidden');
+      input.value = '';
+      input.onchange = () => {
+        for (const a of input.files) archivosSeleccionados.push(a);
+        actualizarListaArchivos();
+      };
+      input.click();
     }
 
-    function fmtRange(p, per, total){
-      const start = total ? ((p-1)*per + 1) : 0;
-      const end = Math.min(p*per, total);
-      return `${start}–${end} de ${total}`;
-    }
+    function actualizarListaArchivos() {
+      const lista = document.getElementById('lista-archivos');
+      lista.innerHTML = '';
+      archivosSeleccionados.forEach((archivo, idx) => {
+        const li = document.createElement('li');
+        li.className = 'list-group-item d-flex justify-content-between align-items-center';
+        li.textContent = archivo.name;
 
-    function renderItems(items){
-      els.list.innerHTML = "";
-      items.forEach(entry=>{
-        const fecha=entry.fecha_legible || entry.fecha || "—";
-        const pdfName = (entry.ruta_pdf||'').split('/').pop() || entry.nombre_archivo || '';
-        const div=document.createElement("div");
-        div.className="mb-3 p-3 border rounded-3 hist-item";
-        div.innerHTML = `
-          <div class="d-flex flex-wrap justify-content-between gap-2">
-            <div>
-              <div><strong>📄 Archivo:</strong> ${entry.nombre_archivo}</div>
-              <div class="text-muted small"><strong>🕓 Fecha:</strong> ${fecha} &nbsp; • &nbsp; <strong>👤 Usuario:</strong> ${entry.usuario}</div>
-            </div>
-            <div class="d-flex gap-2 align-items-center">
-              <!-- Botón PDF centrado en círculo -->
-              <a href="/descargar/${pdfName}" class="btn btn-outline-primary btn-circle btn-sm" aria-label="Descargar PDF">PDF</a>
-              <button class="btn btn-compact btn-ghost-danger btn-pill" data-ts="${entry.timestamp}">
-                <i class="bi bi-trash me-1"></i> Eliminar
-              </button>
-            </div>
-          </div>`;
-        const btn = div.querySelector('button.btn-ghost-danger');
-        btn.onclick = async ()=>{
-          await fetch(`/eliminar/${entry.timestamp}`, { method:'DELETE' });
-          if(els.list.childElementCount === 1 && page>1){ page--; }
-          await load();
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-sm btn-outline-danger';
+        btn.textContent = 'Eliminar';
+        btn.onclick = () => {
+          archivosSeleccionados.splice(idx, 1);
+          actualizarListaArchivos();
         };
-        els.list.appendChild(div);
+
+        li.appendChild(btn);
+        lista.appendChild(li);
       });
     }
 
-    function renderPager(totalPages){
-      const p = page;
-      els.pager.innerHTML = "";
-      if(totalPages<=1) return;
+    document.getElementById('analyze-btn').addEventListener('click', async () => {
+      if (!archivosSeleccionados.length) {
+        document.getElementById('result').innerHTML =
+          '<div class="alert alert-danger">❌ Seleccioná al menos un archivo.</div>';
+        return;
+      }
 
-      const mkBtn = (label, disabled, onClick, aria) => {
-        const b = document.createElement('button');
-        b.type='button';
-        b.className='btn btn-sm btn-light';
-        b.textContent=label;
-        if(aria) b.setAttribute('aria-label', aria);
-        if(disabled) b.setAttribute('disabled','disabled');
-        if(onClick) b.addEventListener('click', onClick);
-        return b;
+      const fd = new FormData();
+      archivosSeleccionados.forEach(f => fd.append('archivos', f));
+
+      document.getElementById('result').innerHTML =
+        '<div class="alert alert-info">⏳ Analizando pliegos...</div>';
+
+      const r = await fetch('/analizar-pliego', { method: 'POST', body: fd });
+      const j = await r.json();
+
+      if (r.ok) {
+        resumenGlobal = j.resumen;
+        ultimoPDF = j.pdf;
+        document.getElementById('result').innerHTML =
+          <div class="alert alert-success"><strong>✅ Análisis completo.</strong><br><br>${resumenGlobal}</div>;
+        await Historial.load(); // recarga la página actual con los nuevos datos
+        document.getElementById('historial')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        document.getElementById('result').innerHTML =
+          <div class="alert alert-danger">❌ ${j.error||'No se pudo analizar.'}</div>;
+      }
+    });
+
+    document.getElementById('generate-btn').addEventListener('click', () => {
+      if (!ultimoPDF) {
+        document.getElementById('result').innerHTML =
+          '<div class="alert alert-danger">❌ Primero analizá un pliego.</div>';
+        return;
+      }
+      window.location.href = /descargar/${ultimoPDF};
+    });
+
+    function limpiar() {
+      archivosSeleccionados = [];
+      document.getElementById('lista-archivos').innerHTML = '';
+      document.getElementById('result').innerHTML = '';
+      resumenGlobal = '';
+      ultimoPDF = '';
+    }
+
+    // ===== Historial (server-side pagination) =====
+    const Historial = (function () {
+      let page = 1;
+      let perPage = parseInt(document.getElementById('per-page').value, 10) || 20;
+      let q = '';
+
+      const els = {
+        list: document.getElementById('historial-list'),
+        empty: document.getElementById('historial-empty'),
+        pager: document.getElementById('historial-pager'),
+        count: document.getElementById('historial-count'),
+        meta: document.getElementById('historial-meta'),
+        per: document.getElementById('per-page'),
+        search: document.getElementById('search-input')
       };
 
-      els.pager.appendChild(mkBtn('‹', p<=1, ()=>{ page--; load(); }, 'Anterior'));
-
-      const windowSize = 5;
-      const start = Math.max(1, p - Math.floor(windowSize/2));
-      const end = Math.min(totalPages, start + windowSize - 1);
-      for(let i = start; i<=end; i++){
-        const b = mkBtn(String(i), false, ()=>{ page = i; load(); });
-        if(i===p){ b.classList.add('active'); b.classList.remove('btn-light'); b.classList.add('btn-primary'); }
-        els.pager.appendChild(b);
+      function setLoading(loading) {
+        els.meta.innerHTML = loading ? '<span class="spinner-sm"></span> Cargando historial...' : '';
       }
 
-      els.pager.appendChild(mkBtn('›', p>=totalPages, ()=>{ page++; load(); }, 'Siguiente'));
-    }
+      function fmtRange(p, per, total) {
+        const start = total ? ((p - 1) * per + 1) : 0;
+        const end = Math.min(p * per, total);
+        return ${start}–${end} de ${total};
+      }
 
-    async function load(){
-      setLoading(true);
-      els.empty.classList.add('d-none');
-      els.list.innerHTML="";
+      function renderItems(items) {
+        els.list.innerHTML = '';
+        items.forEach(entry => {
+          const fecha = entry.fecha_legible || entry.fecha || '—';
+          const pdfName = (entry.ruta_pdf || '').split('/').pop() || entry.nombre_archivo || '';
 
-      const params = new URLSearchParams({ page:String(page), per_page:String(perPage) });
-      if(q && q.trim()) params.set('q', q.trim());
+          const div = document.createElement('div');
+          div.className = 'mb-3 p-3 border rounded-3 hist-item';
+          div.innerHTML =
+            <div class="d-flex flex-wrap justify-content-between gap-2">
+              <div>
+                <div><strong>📄 Archivo:</strong> ${entry.nombre_archivo}</div>
+                <div class="text-muted small">
+                  <strong>🕓 Fecha:</strong> ${fecha} &nbsp; • &nbsp;
+                  <strong>👤 Usuario:</strong> ${entry.usuario}
+                </div>
+              </div>
+              <div class="d-flex gap-2 align-items-center">
+                <!-- Botón PDF centrado en círculo -->
+                <a href="/descargar/${pdfName}" class="btn btn-outline-primary btn-circle btn-sm" aria-label="Descargar PDF">PDF</a>
+                <button class="btn btn-compact btn-ghost-danger btn-pill" data-ts="${entry.timestamp}">
+                  <i class="bi bi-trash me-1"></i> Eliminar
+                </button>
+              </div>
+            </div>;
 
-      try{
-        const r = await fetch(`/historial?${params.toString()}`);
-        const j = await r.json();
-        const items = Array.isArray(j.items) ? j.items : (Array.isArray(j) ? j : []);
-        const totalPages = j.total_pages || 1;
-        const totalItems = j.total_items ?? items.length;
+          const btn = div.querySelector('button.btn-ghost-danger');
+          btn.onclick = async () => {
+            await fetch(/eliminar/${entry.timestamp}, { method: 'DELETE' });
+            if (els.list.childElementCount === 1 && page > 1) {
+              page--;
+            }
+            await load();
+          };
 
-        if(!items.length){
-          els.empty.classList.remove('d-none');
-        }else{
-          renderItems(items);
+          els.list.appendChild(div);
+        });
+      }
+
+      function renderPager(totalPages) {
+        const p = page;
+        els.pager.innerHTML = '';
+        if (totalPages <= 1) return;
+
+        const mkBtn = (label, disabled, onClick, aria) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'btn btn-sm btn-light';
+          b.textContent = label;
+          if (aria) b.setAttribute('aria-label', aria);
+          if (disabled) b.setAttribute('disabled', 'disabled');
+          if (onClick) b.addEventListener('click', onClick);
+          return b;
+        };
+
+        els.pager.appendChild(mkBtn('‹', p <= 1, () => { page--; load(); }, 'Anterior'));
+
+        const windowSize = 5;
+        const start = Math.max(1, p - Math.floor(windowSize / 2));
+        const end = Math.min(totalPages, start + windowSize - 1);
+
+        for (let i = start; i <= end; i++) {
+          const b = mkBtn(String(i), false, () => { page = i; load(); });
+          if (i === p) {
+            b.classList.add('active');
+            b.classList.remove('btn-light');
+            b.classList.add('btn-primary');
+          }
+          els.pager.appendChild(b);
         }
-        els.count.textContent = fmtRange(j.page||1, j.per_page||perPage, totalItems);
-        renderPager(totalPages);
-      }catch(e){
-        els.empty.classList.remove('d-none');
-        els.count.textContent = "";
-        els.pager.innerHTML="";
-      }finally{
-        setLoading(false);
+
+        els.pager.appendChild(mkBtn('›', p >= totalPages, () => { page++; load(); }, 'Siguiente'));
       }
-    }
 
-    // Eventos UI
-    els.per.addEventListener('change', ()=>{
-      perPage = parseInt(els.per.value,10) || 20;
-      page = 1;
-      load();
-    });
+      async function load() {
+        setLoading(true);
+        els.empty.classList.add('d-none');
+        els.list.innerHTML = '';
 
-    // Búsqueda con debounce
-    let t=null;
-    els.search.addEventListener('input', ()=>{
-      const val = els.search.value || "";
-      if(t) clearTimeout(t);
-      t = setTimeout(()=>{
-        q = val;
+        const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+        if (q && q.trim()) params.set('q', q.trim());
+
+        try {
+          const r = await fetch(/historial?${params.toString()});
+          const j = await r.json();
+          const items = Array.isArray(j.items) ? j.items : (Array.isArray(j) ? j : []);
+          const totalPages = j.total_pages || 1;
+          const totalItems = j.total_items ?? items.length;
+
+          if (!items.length) {
+            els.empty.classList.remove('d-none');
+          } else {
+            renderItems(items);
+          }
+
+          els.count.textContent = fmtRange(j.page || 1, j.per_page || perPage, totalItems);
+          renderPager(totalPages);
+        } catch (e) {
+          els.empty.classList.remove('d-none');
+          els.count.textContent = '';
+          els.pager.innerHTML = '';
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      // Eventos UI
+      els.per.addEventListener('change', () => {
+        perPage = parseInt(els.per.value, 10) || 20;
         page = 1;
         load();
-      }, 300);
-    });
+      });
 
-    return { load, setPage: (p)=>{ page=p; load(); } };
-  })();
+      // Búsqueda con debounce
+      let t = null;
+      els.search.addEventListener('input', () => {
+        const val = els.search.value || '';
+        if (t) clearTimeout(t);
+        t = setTimeout(() => {
+          q = val;
+          page = 1;
+          load();
+        }, 300);
+      });
 
-  // Scroll por hash / query
-  function scrollByAnchorOrQuery(){
-    const params = new URLSearchParams(location.search);
-    const goto = params.get('goto');
-    const fromHash = (location.hash || '').replace('#','');
-    const targetId = goto || fromHash;
-    if(!targetId) return;
-    const el = document.getElementById(targetId);
-    if(!el) return;
-    setTimeout(()=> el.scrollIntoView({behavior:'smooth', block:'start'}), 60);
-    if(goto){
-      const url = new URL(location.href);
-      url.searchParams.delete('goto');
-      history.replaceState({}, '', url.pathname + (location.hash || ''));
-    }
-  }
+      return {
+        load,
+        setPage: (p) => { page = p; load(); }
+      };
+    })();
 
-  // Presencia (ping)
-  (async function(){
-    try{
-      const r = await fetch('/usuario-actual');
-      const u = await r.json();
-      if (u && u.usuario){
-        const ping = () => fetch('/presence/ping', { method:'POST' }).catch(()=>{});
-        ping(); setInterval(ping, 30000);
+    // Scroll por hash / query
+    function scrollByAnchorOrQuery() {
+      const params = new URLSearchParams(location.search);
+      const goto = params.get('goto');
+      const fromHash = (location.hash || '').replace('#', '');
+      const targetId = goto || fromHash;
+      if (!targetId) return;
+
+      const el = document.getElementById(targetId);
+      if (!el) return;
+
+      setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+
+      if (goto) {
+        const url = new URL(location.href);
+        url.searchParams.delete('goto');
+        history.replaceState({}, '', url.pathname + (location.hash || ''));
       }
-    }catch(_){}
-  })();
+    }
 
-  window.addEventListener('load', async ()=>{
-    await Historial.load();
-    scrollByAnchorOrQuery();
-    setTimeout(()=>{ try{ calendar && calendar.updateSize(); }catch(_){} }, 200);
-  });
-</script>
+    // Presencia (ping)
+    (async function () {
+      try {
+        const r = await fetch('/usuario-actual');
+        const u = await r.json();
+        if (u && u.usuario) {
+          const ping = () => fetch('/presence/ping', { method: 'POST' }).catch(() => {});
+          ping();
+          setInterval(ping, 30000);
+        }
+      } catch (_) {}
+    })();
+
+    window.addEventListener('load', async () => {
+      await Historial.load();
+      scrollByAnchorOrQuery();
+      setTimeout(() => {
+        try {
+          calendar && calendar.updateSize();
+        } catch (_) {}
+      }, 200);
+    });
+  </script>
 {% endblock %}

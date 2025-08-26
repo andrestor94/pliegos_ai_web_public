@@ -1,32 +1,29 @@
-# =========================
-# database.py — PARTE 1 / 4
-# (imports, configuración, helpers, conexión SQLite, auditoría ORM,
-#  inicialización y migraciones de tablas/índices)
-# =========================
-
+"""
 from __future__ import annotations
 
-import os
-import sqlite3
-import re
-import time
+# =========================
+# Imports & Configuración
+# =========================
 import json
-from datetime import datetime, timezone, timedelta  # ⬅️ import timedelta (nuevo)
-from typing import Optional, List, Dict, Any, Tuple
+import os
+import re
+import sqlite3
+import time
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 
 # zoneinfo para manejar zona horaria local (Python 3.9+)
-try:
+try:  # pragma: no cover
     from zoneinfo import ZoneInfo
 except Exception:  # pragma: no cover
     ZoneInfo = None  # fallback simple si no está disponible
 
 # ORM para auditoría y join con email/nombre
-from db_orm import SessionLocal, AuditLog, Usuario
+from db_orm import AuditLog, SessionLocal, Usuario
 
-# =============================================================================
-# Configuración
-# =============================================================================
-
+# -------------------------
+# Variables de entorno
+# -------------------------
 DB_PATH = os.getenv("SQLITE_PATH", "usuarios.db")  # <- permite override en Render
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "America/Argentina/Buenos_Aires")
 
@@ -48,44 +45,54 @@ ACCION_ES = {
     "RATE_ANALYSIS": "Valorar análisis",
 }
 
-# =============================================================================
-# Utilidades de fecha/hora y helpers
-# =============================================================================
+
+# =========================
+# Utilidades comunes
+# =========================
 
 def _accion_es(codigo: str) -> str:
     return ACCION_ES.get(codigo, codigo)
 
+
 def _fmt_fecha(dt_utc: Optional[datetime]) -> str:
-    """AuditLog.at se guarda en UTC. Mostramos en zona local (APP_TIMEZONE)."""
+    """Convierte un datetime UTC a zona local y lo formatea.
+
+    AuditLog.at se guarda en UTC. Mostramos en zona local (APP_TIMEZONE).
+    """
     if dt_utc is None:
         return "-"
     if dt_utc.tzinfo is None:
         dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+
     if ZoneInfo:
         try:
             local = dt_utc.astimezone(ZoneInfo(APP_TIMEZONE))
         except Exception:
             local = dt_utc
     else:
-        from datetime import timedelta
+        # Fallback simple: UTC-3
         local = dt_utc.astimezone(timezone(timedelta(hours=-3)))
+
     return local.strftime("%d/%m/%Y %H:%M:%S")
+
 
 def _norm_email(email: Optional[str]) -> str:
     return (email or "").strip().lower()
 
-# =============================================================================
-# Conexión SQLite robusta
-# =============================================================================
+
+# =========================
+# Conexión SQLite & Retry
+# =========================
 
 def _ensure_db_dir(path: str) -> None:
     d = os.path.dirname(os.path.abspath(path))
     if d and not os.path.isdir(d):
         os.makedirs(d, exist_ok=True)
 
+
 def _get_conn() -> sqlite3.Connection:
-    """
-    Conexión SQLite con WAL, busy_timeout y foreign_keys.
+    """Conexión SQLite con WAL, busy_timeout y foreign_keys.
+
     NOTA: Cada llamada abre una conexión nueva (patrón recomendado con SQLite).
     """
     _ensure_db_dir(DB_PATH)
@@ -97,6 +104,7 @@ def _get_conn() -> sqlite3.Connection:
     except Exception:
         pass
     return conn
+
 
 def _with_retry(callable_fn, retries: int = 5, base_delay: float = 0.15):
     """Reintenta operaciones si SQLite está bloqueada."""
@@ -110,9 +118,10 @@ def _with_retry(callable_fn, retries: int = 5, base_delay: float = 0.15):
                 continue
             raise
 
-# =============================================================================
+
+# =========================
 # Auditoría (ORM)
-# =============================================================================
+# =========================
 
 def registrar_auditoria(
     actor_user_id: Optional[int],
@@ -123,8 +132,8 @@ def registrar_auditoria(
     after: Optional[Dict[str, Any]] = None,
     ip: Optional[str] = None,
 ) -> None:
-    """
-    Inserta en audit_logs (SQLAlchemy). Funciona c/ SQLite local o Postgres.
+    """Inserta en audit_logs (SQLAlchemy). Funciona c/ SQLite local o Postgres.
+
     Se protege con try/except para no romper operaciones primarias si falla la auditoría.
     """
     try:
@@ -140,35 +149,42 @@ def registrar_auditoria(
             )
             session.add(log)
             session.commit()
-    except Exception as e:
+    except Exception as e:  # pragma: no cover
         # Evitar romper flujo por errores de auditoría (solo log a stdout)
         print(f"⚠️ registrar_auditoria falló: {repr(e)}")
 
-# =============================================================================
+
+# =========================
 # Inicialización / Migraciones
-# =============================================================================
+# =========================
 
 def inicializar_bd() -> None:
-    """
-    Crea tablas requeridas y aplica migraciones idempotentes.
+    """Crea tablas requeridas y aplica migraciones idempotentes.
+
     Llamar en el startup de la app.
     """
+    # Usuarios
     crear_tabla_usuarios()
     _migrar_tabla_usuarios_si_falta_rol_y_activo()
     _crear_indices_usuarios()
 
+    # Historial
     crear_tabla_historial()
     _migrar_historial_add_rating_fields()
     _crear_indices_historial_rating()
 
+    # Tickets
     crear_tabla_tickets()
 
+    # Chat
     crear_tabla_mensajes()
     _migrar_mensajes_add_leido_si_falta()
     _crear_indices_mensajes()
 
+    # Hilos ocultos & Adjuntos
     crear_tabla_hilos_ocultos()
     crear_tabla_adjuntos()
+
 
 # ----- Usuarios --------------------------------------------------------------
 
@@ -187,27 +203,37 @@ def crear_tabla_usuarios() -> None:
             """
         )
 
+
 def _migrar_tabla_usuarios_si_falta_rol_y_activo() -> None:
     """Asegura que existan columnas 'rol' y 'activo' en DBs antiguas."""
     with _get_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.execute("PRAGMA table_info(usuarios)")
         cols = {r["name"] for r in cur.fetchall()}
+
         if "rol" not in cols:
             try:
-                conn.execute("ALTER TABLE usuarios ADD COLUMN rol TEXT NOT NULL DEFAULT 'usuario'")
+                conn.execute(
+                    "ALTER TABLE usuarios ADD COLUMN rol TEXT NOT NULL DEFAULT 'usuario'"
+                )
             except Exception:
                 pass
         if "activo" not in cols:
             try:
-                conn.execute("ALTER TABLE usuarios ADD COLUMN activo INTEGER NOT NULL DEFAULT 1")
+                conn.execute(
+                    "ALTER TABLE usuarios ADD COLUMN activo INTEGER NOT NULL DEFAULT 1"
+                )
             except Exception:
                 pass
 
+
 def _crear_indices_usuarios() -> None:
     with _get_conn() as conn:
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_usuarios_email ON usuarios (email)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_usuarios_email ON usuarios (email)"
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_usuarios_rol ON usuarios (rol)")
+
 
 # ----- Historial -------------------------------------------------------------
 
@@ -226,9 +252,10 @@ def crear_tabla_historial() -> None:
             """
         )
 
+
 def _migrar_historial_add_rating_fields() -> None:
-    """
-    Migra 'historial' para soportar valoración obligatoria por análisis.
+    """Migra 'historial' para soportar valoración obligatoria por análisis.
+
     Agrega:
       - analisis_id TEXT
       - rating INTEGER (1..5)
@@ -239,6 +266,7 @@ def _migrar_historial_add_rating_fields() -> None:
         conn.row_factory = sqlite3.Row
         cur = conn.execute("PRAGMA table_info(historial)")
         cols = {r["name"] for r in cur.fetchall()}
+
         if "analisis_id" not in cols:
             try:
                 conn.execute("ALTER TABLE historial ADD COLUMN analisis_id TEXT")
@@ -256,15 +284,25 @@ def _migrar_historial_add_rating_fields() -> None:
                 pass
         if "rating_required" not in cols:
             try:
-                conn.execute("ALTER TABLE historial ADD COLUMN rating_required INTEGER NOT NULL DEFAULT 0")
+                conn.execute(
+                    "ALTER TABLE historial ADD COLUMN rating_required INTEGER NOT NULL DEFAULT 0"
+                )
             except Exception:
                 pass
 
+
 def _crear_indices_historial_rating() -> None:
     with _get_conn() as conn:
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_historial_usuario ON historial (usuario)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_historial_usuario_pending ON historial (usuario, rating_required)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_historial_analisis_id ON historial (analisis_id)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_historial_usuario ON historial (usuario)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_historial_usuario_pending ON historial (usuario, rating_required)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_historial_analisis_id ON historial (analisis_id)"
+        )
+
 
 # ----- Tickets ---------------------------------------------------------------
 
@@ -283,8 +321,11 @@ def crear_tabla_tickets() -> None:
             )
             """
         )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_usuario ON tickets (usuario)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tickets_usuario ON tickets (usuario)"
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_fecha ON tickets (fecha)")
+
 
 # ----- Chat interno (mensajes, hilos ocultos, adjuntos) ----------------------
 
@@ -294,14 +335,15 @@ def crear_tabla_mensajes() -> None:
             """
             CREATE TABLE IF NOT EXISTS mensajes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                de_email   TEXT NOT NULL,
+                de_email TEXT NOT NULL,
                 para_email TEXT NOT NULL,
-                texto      TEXT NOT NULL,
-                fecha      TEXT NOT NULL,                 -- 'YYYY-MM-DD HH:MM:SS'
-                leido      INTEGER NOT NULL DEFAULT 0     -- 0 no leído / 1 leído
+                texto TEXT NOT NULL,
+                fecha TEXT NOT NULL,  -- 'YYYY-MM-DD HH:MM:SS'
+                leido INTEGER NOT NULL DEFAULT 0  -- 0 no leído / 1 leído
             )
             """
         )
+
 
 def _migrar_mensajes_add_leido_si_falta() -> None:
     with _get_conn() as conn:
@@ -310,17 +352,25 @@ def _migrar_mensajes_add_leido_si_falta() -> None:
         cols = {r["name"] for r in cur.fetchall()}
         if "leido" not in cols:
             try:
-                conn.execute("ALTER TABLE mensajes ADD COLUMN leido INTEGER NOT NULL DEFAULT 0")
+                conn.execute(
+                    "ALTER TABLE mensajes ADD COLUMN leido INTEGER NOT NULL DEFAULT 0"
+                )
             except Exception:
                 pass
+
 
 def _crear_indices_mensajes() -> None:
     with _get_conn() as conn:
         # Para contar no leídos y bandeja de entrada
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_msj_para_leido ON mensajes (para_email, leido)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_msj_para_leido ON mensajes (para_email, leido)"
+        )
         # Para hilos y listados
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_msj_hilo ON mensajes (de_email, para_email)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_msj_hilo ON mensajes (de_email, para_email)"
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_msj_fecha ON mensajes (fecha)")
+
 
 def crear_tabla_hilos_ocultos() -> None:
     with _get_conn() as conn:
@@ -328,12 +378,13 @@ def crear_tabla_hilos_ocultos() -> None:
             """
             CREATE TABLE IF NOT EXISTS hilos_ocultos (
                 owner_email TEXT NOT NULL,
-                otro_email  TEXT NOT NULL,
-                hidden_at   TEXT NOT NULL,
+                otro_email TEXT NOT NULL,
+                hidden_at TEXT NOT NULL,
                 PRIMARY KEY(owner_email, otro_email)
             )
             """
         )
+
 
 def crear_tabla_adjuntos() -> None:
     with _get_conn() as conn:
@@ -342,28 +393,28 @@ def crear_tabla_adjuntos() -> None:
             CREATE TABLE IF NOT EXISTS mensajes_adjuntos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 mensaje_id INTEGER NOT NULL,
-                filename   TEXT NOT NULL,   -- nombre guardado en disco
-                original   TEXT,            -- nombre original
-                mime       TEXT,
-                size       INTEGER,
+                filename TEXT NOT NULL,  -- nombre guardado en disco
+                original TEXT,           -- nombre original
+                mime TEXT,
+                size INTEGER,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(mensaje_id) REFERENCES mensajes(id) ON DELETE CASCADE
             )
             """
         )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_adj_mensaje ON mensajes_adjuntos (mensaje_id)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_adj_mensaje ON mensajes_adjuntos (mensaje_id)"
+        )
+
 
 # =========================
-# database.py — PARTE 2 / 4
-# (Usuarios: CRUD + helpers)
+# PARTE 2/4 — Usuarios: CRUD + Helpers
 # =========================
-
-# =============================================================================
-# Usuarios
-# =============================================================================
 
 def obtener_usuario_por_email(email: str):
-    """Devuelve la fila completa del usuario (tupla): (id, nombre, email, password, rol, activo)"""
+    """Devuelve la fila completa del usuario (tupla):
+    (id, nombre, email, password, rol, activo)
+    """
     email = _norm_email(email)
     with _get_conn() as conn:
         cur = conn.execute(
@@ -371,6 +422,7 @@ def obtener_usuario_por_email(email: str):
             (email,),
         )
         return cur.fetchone()
+
 
 def obtener_rol_por_email(email: str) -> Optional[str]:
     """Devuelve 'admin' / 'usuario' / 'borrado' o None si no existe."""
@@ -380,13 +432,15 @@ def obtener_rol_por_email(email: str) -> Optional[str]:
         row = cur.fetchone()
         return row[0] if row else None
 
+
 def es_admin(email: str) -> bool:
     """Helper rápido para checks de UI/Backend."""
     return obtener_rol_por_email(email) == "admin"
 
+
 def listar_usuarios():
-    """
-    Devuelve lista de dicts con campos básicos.
+    """Devuelve lista de dicts con campos básicos.
+
     (main.py tolera dicts o tuplas gracias a su _user_row_to_dict)
     """
     with _get_conn() as conn:
@@ -402,6 +456,7 @@ def listar_usuarios():
             for row in cur.fetchall()
         ]
 
+
 def buscar_usuarios(term: str, limit: int = 8):
     """Autocompletar por nombre o email (case-insensitive), solo activos."""
     like = f"%{(term or '').strip()}%"
@@ -409,22 +464,21 @@ def buscar_usuarios(term: str, limit: int = 8):
         conn.row_factory = sqlite3.Row
         cur = conn.execute(
             """
-            SELECT id, nombre, email
-              FROM usuarios
-             WHERE activo = 1
-               AND (LOWER(nombre) LIKE LOWER(?) OR LOWER(email) LIKE LOWER(?))
-             ORDER BY 
-                CASE 
-                    WHEN LOWER(email)  LIKE LOWER(?) THEN 0
-                    WHEN LOWER(nombre) LIKE LOWER(?) THEN 1
-                    ELSE 2
-                END,
+            SELECT id, nombre, email FROM usuarios
+            WHERE activo = 1 AND (
+                LOWER(nombre) LIKE LOWER(?) OR LOWER(email) LIKE LOWER(?)
+            )
+            ORDER BY
+                CASE WHEN LOWER(email) LIKE LOWER(?) THEN 0
+                     WHEN LOWER(nombre) LIKE LOWER(?) THEN 1
+                     ELSE 2 END,
                 nombre ASC
-             LIMIT ?
+            LIMIT ?
             """,
             (like, like, like, like, limit),
         )
         return [dict(r) for r in cur.fetchall()]
+
 
 def agregar_usuario(
     nombre: str,
@@ -434,10 +488,10 @@ def agregar_usuario(
     actor_user_id: Optional[int] = None,
     ip: Optional[str] = None,
 ) -> Optional[int]:
-    """
-    Crea un usuario nuevo.
-    Si existe uno con el mismo email pero está inactivo (soft-delete),
-    lo REACTIVA (actualiza nombre, password, rol y activo=1) en lugar de insertar.
+    """Crea un usuario nuevo.
+
+    Si existe uno con el mismo email pero está inactivo (soft-delete), lo
+    REACTIVA (actualiza nombre, password, rol y activo=1) en lugar de insertar.
     """
     email = _norm_email(email)
     rol = (rol or "usuario").strip().lower()
@@ -492,6 +546,7 @@ def agregar_usuario(
         print(f"⚠️ El usuario con email {email} ya existe.")
         return None
 
+
 # --------- NUEVO: wrapper seguro para endpoints (crear o restaurar) ----------
 
 def crear_o_restaurar_usuario(
@@ -502,8 +557,7 @@ def crear_o_restaurar_usuario(
     actor_user_id: Optional[int] = None,
     ip: Optional[str] = None,
 ) -> Tuple[bool, bool, Optional[int], str]:
-    """
-    Retorna (ok, restored, user_id, msg).
+    """Retorna (ok, restored, user_id, msg).
 
     - ok=True si se creó o restauró.
     - restored=True si se reactivó un usuario existente (activo=1, rol/password/nombre actualizados).
@@ -525,21 +579,31 @@ def crear_o_restaurar_usuario(
                 (nombre, password, (rol or "usuario").strip().lower(), user_id),
             )
         registrar_auditoria(
-            actor_user_id, "RESTORE_USER", "usuarios", user_id,
+            actor_user_id,
+            "RESTORE_USER",
+            "usuarios",
+            user_id,
             before={"email": previo[2], "rol": previo[4], "activo": bool(previo[5])},
-            after={"email": email_n, "rol": (rol or 'usuario').strip().lower(), "activo": True},
+            after={"email": email_n, "rol": (rol or "usuario").strip().lower(), "activo": True},
             ip=ip,
         )
         return (True, True, user_id, "Usuario restaurado")
 
     # no existe -> crear
-    new_id = agregar_usuario(nombre, email_n, password, rol, actor_user_id=actor_user_id, ip=ip)
+    new_id = agregar_usuario(
+        nombre,
+        email_n,
+        password,
+        rol,
+        actor_user_id=actor_user_id,
+        ip=ip,
+    )
     if new_id is None:
         return (False, False, None, "El email ya existe y está activo")
     return (True, False, new_id, "Usuario creado")
 
-# -----------------------------------------------------------------------------
 
+# -----------------------------------------------------------------------------
 
 def actualizar_password(
     email: str,
@@ -552,7 +616,6 @@ def actualizar_password(
         before = obtener_usuario_por_email(email)
         conn.execute("UPDATE usuarios SET password = ? WHERE email = ?", (nueva_password, email))
         after = obtener_usuario_por_email(email)
-
     if before:
         registrar_auditoria(
             actor_user_id,
@@ -563,6 +626,7 @@ def actualizar_password(
             after={"email": after[2]} if after else None,
             ip=ip,
         )
+
 
 def cambiar_estado_usuario(
     email: str,
@@ -575,7 +639,6 @@ def cambiar_estado_usuario(
         before = obtener_usuario_por_email(email)
         conn.execute("UPDATE usuarios SET activo = ? WHERE email = ?", (1 if activo else 0, email))
         after = obtener_usuario_por_email(email)
-
     if before:
         registrar_auditoria(
             actor_user_id,
@@ -587,28 +650,24 @@ def cambiar_estado_usuario(
             ip=ip,
         )
 
+
 def cambiar_rol(
     email: str,
     nuevo_rol: str,
     actor_user_id: Optional[int] = None,
     ip: Optional[str] = None,
 ) -> bool:
-    """
-    Cambia el rol del usuario ('admin' | 'usuario' | 'borrado').
-    Auditoría incluida.
-    """
+    """Cambia el rol del usuario ('admin' | 'usuario' | 'borrado'). Auditoría incluida."""
     email = _norm_email(email)
     nuevo_rol = (nuevo_rol or "usuario").strip().lower()
     if nuevo_rol not in ("admin", "usuario", "borrado"):
         nuevo_rol = "usuario"
-
     with _get_conn() as conn:
         before = obtener_usuario_por_email(email)
         if not before:
             return False
         conn.execute("UPDATE usuarios SET rol = ? WHERE email = ?", (nuevo_rol, email))
         after = obtener_usuario_por_email(email)
-
     registrar_auditoria(
         actor_user_id,
         "UPDATE_ROLE",
@@ -620,14 +679,15 @@ def cambiar_rol(
     )
     return True
 
+
 def borrar_usuario(
     email: str,
     actor_user_id: Optional[int] = None,
     ip: Optional[str] = None,
     soft: bool = True,
 ) -> bool:
-    """
-    Soft delete (activo=0, rol='borrado') o hard delete si soft=False.
+    """Soft delete (activo=0, rol='borrado') o hard delete si soft=False.
+
     IMPORTANTE: usamos _with_retry para evitar 'database is locked' cuando coinciden escrituras.
     """
     email = _norm_email(email)
@@ -637,7 +697,6 @@ def borrar_usuario(
         if not before:
             return False
         user_id = before[0]
-
         if soft:
             with _get_conn() as conn:
                 conn.execute(
@@ -651,7 +710,13 @@ def borrar_usuario(
                 "usuarios",
                 user_id,
                 before={"email": before[2], "rol": before[4], "activo": bool(before[5])},
-                after={"email": after[2], "rol": after[4], "activo": bool(after[5])} if after else None,
+                after={
+                    "email": after[2],
+                    "rol": after[4],
+                    "activo": bool(after[5]),
+                }
+                if after
+                else None,
                 ip=ip,
             )
         else:
@@ -669,18 +734,14 @@ def borrar_usuario(
 
     return _with_retry(_op)
 
-# =========================
-# database.py — PARTE 3 / 4
-# (Historial de análisis)
-# =========================
 
-# =============================================================================
-# Historial de análisis
-# =============================================================================
+# =========================
+# PARTE 3/4 — Historial de análisis
+# =========================
 
 def _now_local() -> datetime:
-    """
-    Devuelve datetime 'aware' en la zona APP_TIMEZONE.
+    """Devuelve datetime 'aware' en la zona APP_TIMEZONE.
+
     Fallback: UTC-3 si ZoneInfo no está disponible.
     """
     if ZoneInfo:
@@ -691,9 +752,11 @@ def _now_local() -> datetime:
     # Fallback simple: UTC-3
     return datetime.utcnow() - timedelta(hours=3)
 
+
 def _ahora_stamp() -> str:
     """Devuelve timestamp local como 'YYYYMMDDHHMMSS' (compatible con historial.timestamp)."""
     return _now_local().strftime("%Y%m%d%H%M%S")
+
 
 def guardar_en_historial(
     timestamp: str,
@@ -702,8 +765,8 @@ def guardar_en_historial(
     ruta_pdf: str,
     resumen_texto: str = "",
 ) -> None:
-    """
-    Inserta un registro “simple” en historial (sin requerir valoración).
+    """Inserta un registro “simple” en historial (sin requerir valoración).
+
     Conserva compatibilidad con implementaciones previas.
     """
     try:
@@ -717,8 +780,9 @@ def guardar_en_historial(
                 """,
                 (ts, usuario, nombre_archivo, ruta_pdf, resumen_texto),
             )
-    except Exception as e:
+    except Exception as e:  # pragma: no cover
         print(f"❌ Error al guardar en historial: {e}")
+
 
 def iniciar_analisis_historial(
     usuario: str,
@@ -727,18 +791,19 @@ def iniciar_analisis_historial(
     analisis_id: str,
     resumen_texto: str = "",
 ) -> int:
-    """
-    Crea un registro de análisis en 'historial' y marca rating_required=1.
+    """Crea un registro de análisis en 'historial' y marca rating_required=1.
+
     Devuelve el id autoincremental del historial.
     """
+
     def _op():
         ts = _ahora_stamp()
         with _get_conn() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO historial
-                    (timestamp, usuario, nombre_archivo, ruta_pdf, resumen_texto, analisis_id, rating_required)
-                VALUES (?, ?, ?, ?, ?, ?, 1)
+                INSERT INTO historial (
+                    timestamp, usuario, nombre_archivo, ruta_pdf, resumen_texto, analisis_id, rating_required
+                ) VALUES (?, ?, ?, ?, ?, ?, 1)
                 """,
                 (ts, usuario, nombre_archivo, ruta_pdf, resumen_texto, analisis_id),
             )
@@ -758,8 +823,8 @@ def iniciar_analisis_historial(
         )
     except Exception:
         pass
-
     return historial_id
+
 
 def marcar_valoracion_historial(
     historial_id: int,
@@ -767,8 +832,8 @@ def marcar_valoracion_historial(
     actor_user_id=None,
     ip: str = None,
 ) -> None:
-    """
-    Guarda la valoración (1..5), marca rating_required=0 y registra auditoría.
+    """Guarda la valoración (1..5), marca rating_required=0 y registra auditoría.
+
     Lanza ValueError si el rating es inválido.
     """
     try:
@@ -784,14 +849,13 @@ def marcar_valoracion_historial(
             conn.execute(
                 """
                 UPDATE historial
-                   SET rating = ?, rating_at = ?, rating_required = 0
-                 WHERE id = ?
+                SET rating = ?, rating_at = ?, rating_required = 0
+                WHERE id = ?
                 """,
                 (rating, ra, historial_id),
             )
 
     _with_retry(_op)
-
     registrar_auditoria(
         actor_user_id,
         "RATE_ANALYSIS",
@@ -801,34 +865,35 @@ def marcar_valoracion_historial(
         ip=ip,
     )
 
+
 def tiene_valoracion_pendiente(usuario: str) -> bool:
     """True si el usuario tiene algún análisis sin valorar (rating_required=1)."""
     with _get_conn() as conn:
         cur = conn.execute(
             """
-            SELECT 1
-              FROM historial
-             WHERE usuario = ? AND rating_required = 1
-             LIMIT 1
+            SELECT 1 FROM historial
+            WHERE usuario = ? AND rating_required = 1
+            LIMIT 1
             """,
             (usuario,),
         )
         return cur.fetchone() is not None
 
+
 def obtener_historial():
-    """
-    Lista resumida del historial (sin texto completo del resumen).
+    """Lista resumida del historial (sin texto completo del resumen).
+
     Devuelve: [{id, timestamp, usuario, nombre_archivo, ruta_pdf, fecha_legible}, ...]
     """
     with _get_conn() as conn:
         cur = conn.execute(
             """
             SELECT id, timestamp, usuario, nombre_archivo, ruta_pdf
-              FROM historial
-             ORDER BY id DESC
+            FROM historial
+            ORDER BY id DESC
             """
         )
-        out = []
+        out: List[Dict[str, Any]] = []
         for row in cur.fetchall():
             ts = row[1]
             try:
@@ -847,20 +912,21 @@ def obtener_historial():
             )
         return out
 
+
 def obtener_historial_completo():
-    """
-    Lista detallada del historial (incluye resumen y estado de rating).
+    """Lista detallada del historial (incluye resumen y estado de rating).
+
     Devuelve: [{id, timestamp, usuario, nombre_archivo, resumen, rating, rating_at, rating_required, fecha}, ...]
     """
     with _get_conn() as conn:
         cur = conn.execute(
             """
             SELECT id, timestamp, usuario, nombre_archivo, resumen_texto, rating, rating_at, rating_required
-              FROM historial
-             ORDER BY id DESC
+            FROM historial
+            ORDER BY id DESC
             """
         )
-        out = []
+        out: List[Dict[str, Any]] = []
         for row in cur.fetchall():
             ts = row[1]
             try:
@@ -882,25 +948,30 @@ def obtener_historial_completo():
             )
         return out
 
+
 def eliminar_del_historial(timestamp: str) -> None:
     """Elimina por timestamp exacto (string de 14 dígitos). Silencioso si no existe."""
     ts = (timestamp or "").strip()
     if not re.fullmatch(r"\d{14}", ts):
         # Para compatibilidad, si viene otra cosa intentamos igual por igualdad
         ts = timestamp
+
     def _op():
         with _get_conn() as conn:
             cur = conn.execute("DELETE FROM historial WHERE timestamp = ?", (ts,))
             return cur.rowcount
+
     _with_retry(_op)
 
+
 def limpiar_historial_invalido() -> int:
-    """
-    Elimina filas cuyo timestamp no cumpla con 'YYYYMMDDHHMMSS'.
+    """Elimina filas cuyo timestamp no cumpla con 'YYYYMMDDHHMMSS'.
+
     Devuelve la cantidad de registros eliminados.
     """
+
     def _collect():
-        bad_ids = []
+        bad_ids: List[int] = []
         with _get_conn() as conn:
             cur = conn.execute("SELECT id, timestamp FROM historial")
             for _id, ts in cur.fetchall():
@@ -922,14 +993,11 @@ def limpiar_historial_invalido() -> int:
 
     return _with_retry(_op)
 
-# =========================
-# database.py — PARTE 4 / 4
-# (Tickets + Chat + Adjuntos + Hilos ocultos + Auditoría)
-# =========================
 
-# =============================================================================
-# Tickets (CRUD mínimo)
-# =============================================================================
+# =========================
+# PARTE 4/4 — Tickets + Chat + Adjuntos + Hilos ocultos + Auditoría
+# =========================
+# ---- Tickets (CRUD mínimo) --------------------------------------------------
 
 def crear_ticket(usuario, titulo, descripcion, tipo, actor_user_id=None, ip=None):
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -944,26 +1012,33 @@ def crear_ticket(usuario, titulo, descripcion, tipo, actor_user_id=None, ip=None
         "CREATE_TICKET",
         "tickets",
         new_id,
-        after={"usuario": usuario, "titulo": titulo, "descripcion": descripcion, "tipo": tipo, "estado": "Abierto"},
+        after={
+            "usuario": usuario,
+            "titulo": titulo,
+            "descripcion": descripcion,
+            "tipo": tipo,
+            "estado": "Abierto",
+        },
         ip=ip,
     )
+
 
 def obtener_tickets_por_usuario(usuario):
     with _get_conn() as conn:
         cur = conn.execute(
-            "SELECT id, usuario, titulo, descripcion, tipo, estado, fecha "
-            "FROM tickets WHERE usuario = ? ORDER BY fecha DESC",
+            "SELECT id, usuario, titulo, descripcion, tipo, estado, fecha FROM tickets WHERE usuario = ? ORDER BY fecha DESC",
             (usuario,),
         )
         return cur.fetchall()
 
+
 def obtener_todos_los_tickets():
     with _get_conn() as conn:
         cur = conn.execute(
-            "SELECT id, usuario, titulo, descripcion, tipo, estado, fecha "
-            "FROM tickets ORDER BY fecha DESC"
+            "SELECT id, usuario, titulo, descripcion, tipo, estado, fecha FROM tickets ORDER BY fecha DESC"
         )
         return cur.fetchall()
+
 
 def actualizar_estado_ticket(ticket_id, nuevo_estado, actor_user_id=None, ip=None):
     with _get_conn() as conn:
@@ -981,17 +1056,18 @@ def actualizar_estado_ticket(ticket_id, nuevo_estado, actor_user_id=None, ip=Non
             ip=ip,
         )
 
+
 def agregar_ticket(timestamp, usuario, titulo, descripcion, actor_user_id=None, ip=None):
     # Alias legado (se ignora timestamp)
     crear_ticket(usuario, titulo, descripcion, "General", actor_user_id=actor_user_id, ip=ip)
 
+
 def obtener_tickets():
     with _get_conn() as conn:
         cur = conn.execute(
-            "SELECT id, usuario, titulo, descripcion, tipo, estado, fecha "
-            "FROM tickets ORDER BY fecha DESC"
+            "SELECT id, usuario, titulo, descripcion, tipo, estado, fecha FROM tickets ORDER BY fecha DESC"
         )
-        out = []
+        out: List[Dict[str, Any]] = []
         for row in cur.fetchall():
             out.append(
                 {
@@ -1006,8 +1082,10 @@ def obtener_tickets():
             )
         return out
 
+
 def marcar_ticket_resuelto(ticket_id, actor_user_id=None, ip=None):
     actualizar_estado_ticket(ticket_id, "Resuelto", actor_user_id=actor_user_id, ip=ip)
+
 
 def eliminar_ticket(ticket_id, actor_user_id=None, ip=None):
     with _get_conn() as conn:
@@ -1024,9 +1102,8 @@ def eliminar_ticket(ticket_id, actor_user_id=None, ip=None):
             ip=ip,
         )
 
-# =============================================================================
-# Chat interno — Operaciones
-# =============================================================================
+
+# ---- Chat interno — Operaciones --------------------------------------------
 
 def enviar_mensaje(de_email: str, para_email: str, texto: str, actor_user_id=None, ip=None) -> int:
     """Guarda un mensaje 1:1 y registra auditoría; también ‘desoculta’ el hilo del emisor."""
@@ -1052,22 +1129,22 @@ def enviar_mensaje(de_email: str, para_email: str, texto: str, actor_user_id=Non
     )
     return msg_id
 
+
 def obtener_hilos_para(email: str):
-    """
-    Devuelve lista de hilos [{con, ultima_fecha}], sin los ocultos por 'email'
+    """Devuelve lista de hilos [{con, ultima_fecha}], sin los ocultos por 'email'
     salvo que haya mensajes posteriores al ocultamiento.
     """
     with _get_conn() as conn:
         cur = conn.execute(
             """
             SELECT otro, MAX(fecha) AS ultima_fecha
-              FROM (
+            FROM (
                 SELECT para_email AS otro, fecha FROM mensajes WHERE de_email = ?
                 UNION ALL
-                SELECT de_email  AS otro, fecha FROM mensajes WHERE para_email = ?
-              ) sub
-             GROUP BY otro
-             ORDER BY ultima_fecha DESC
+                SELECT de_email   AS otro, fecha FROM mensajes WHERE para_email = ?
+            ) sub
+            GROUP BY otro
+            ORDER BY ultima_fecha DESC
             """,
             (email, email),
         )
@@ -1082,14 +1159,11 @@ def obtener_hilos_para(email: str):
             # Reaparece si hubo mensajes después de ocultarlo
             cur2 = conn.execute(
                 """
-                SELECT 1
-                  FROM mensajes
-                 WHERE (
-                        (de_email = ? AND para_email = ?)
-                     OR (de_email = ? AND para_email = ?)
-                       )
-                   AND fecha > ?
-                 LIMIT 1
+                SELECT 1 FROM mensajes
+                WHERE (
+                    (de_email = ? AND para_email = ?) OR (de_email = ? AND para_email = ?)
+                ) AND fecha > ?
+                LIMIT 1
                 """,
                 (email, h["con"], h["con"], email, hidden_at),
             )
@@ -1097,9 +1171,16 @@ def obtener_hilos_para(email: str):
                 res.append(h)
         return res
 
+
 # ---------------- Adjuntos ----------------
 
-def guardar_adjunto(mensaje_id: int, filename: str, original: str, mime: str = None, size: int = None):
+def guardar_adjunto(
+    mensaje_id: int,
+    filename: str,
+    original: str,
+    mime: str = None,
+    size: int = None,
+):
     """Registra metadatos del archivo subido para un mensaje."""
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with _get_conn() as conn:
@@ -1112,15 +1193,16 @@ def guardar_adjunto(mensaje_id: int, filename: str, original: str, mime: str = N
         )
         return cur.lastrowid
 
+
 def obtener_adjuntos_por_mensaje(mensaje_id: int):
     with _get_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.execute(
-            "SELECT id, filename, original, mime, size, created_at "
-            "FROM mensajes_adjuntos WHERE mensaje_id = ?",
+            "SELECT id, filename, original, mime, size, created_at FROM mensajes_adjuntos WHERE mensaje_id = ?",
             (mensaje_id,),
         )
         return [dict(r) for r in cur.fetchall()]
+
 
 # --------------- Mensajes ---------------
 
@@ -1130,18 +1212,17 @@ def obtener_mensajes_entre(a: str, b: str, limit: int = 100):
         cur = conn.execute(
             """
             SELECT id, de_email, para_email, texto, leido, fecha
-              FROM mensajes
-             WHERE (de_email = ? AND para_email = ?)
-                OR (de_email = ? AND para_email = ?)
-             ORDER BY id DESC
-             LIMIT ?
+            FROM mensajes
+            WHERE (de_email = ? AND para_email = ?) OR (de_email = ? AND para_email = ?)
+            ORDER BY id DESC
+            LIMIT ?
             """,
             (a, b, b, a, limit),
         )
         rows = cur.fetchall()
 
     rows = list(reversed(rows))  # cronológico
-    out = []
+    out: List[Dict[str, Any]] = []
     for r in rows:
         out.append(
             {
@@ -1156,17 +1237,19 @@ def obtener_mensajes_entre(a: str, b: str, limit: int = 100):
         )
     return out
 
+
 def marcar_mensajes_leidos(de_email: str, para_email: str):
     """Marca como leídos todos los mensajes entrantes de 'de_email' hacia 'para_email'."""
     with _get_conn() as conn:
         conn.execute(
             """
             UPDATE mensajes
-               SET leido = 1
-             WHERE de_email = ? AND para_email = ? AND leido = 0
+            SET leido = 1
+            WHERE de_email = ? AND para_email = ? AND leido = 0
             """,
             (de_email, para_email),
         )
+
 
 def contar_no_leidos(email: str) -> int:
     """Total de mensajes no leídos para 'email'."""
@@ -1178,13 +1261,12 @@ def contar_no_leidos(email: str) -> int:
         row = cur.fetchone()
         return row[0] if row else 0
 
-# =============================================================================
-# Hilos ocultos (ocultar/restaurar/estado)
-# =============================================================================
+
+# ---- Hilos ocultos (ocultar/restaurar/estado) -------------------------------
 
 def ocultar_hilo(owner_email: str, otro_email: str, actor_user_id=None, ip=None):
-    """
-    Oculta el hilo para 'owner_email'. No borra mensajes.
+    """Oculta el hilo para 'owner_email'. No borra mensajes.
+
     Si luego llegan mensajes nuevos, reaparece automáticamente.
     """
     hidden_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1207,6 +1289,7 @@ def ocultar_hilo(owner_email: str, otro_email: str, actor_user_id=None, ip=None)
         ip=ip,
     )
 
+
 def restaurar_hilo(owner_email: str, otro_email: str, actor_user_id=None, ip=None, silent: bool = False):
     """Quita el ocultamiento del hilo para 'owner_email'."""
     with _get_conn() as conn:
@@ -1224,6 +1307,7 @@ def restaurar_hilo(owner_email: str, otro_email: str, actor_user_id=None, ip=Non
             ip=ip,
         )
 
+
 def es_hilo_oculto(owner_email: str, otro_email: str):
     """Devuelve fecha de ocultamiento (str) si está oculto; None si no lo está."""
     with _get_conn() as conn:
@@ -1234,13 +1318,12 @@ def es_hilo_oculto(owner_email: str, otro_email: str):
         row = cur.fetchone()
         return row[0] if row else None
 
-# =============================================================================
-# Consultar Auditoría (últimas N acciones)
-# =============================================================================
+
+# ---- Consultar Auditoría (últimas N acciones) -------------------------------
 
 def obtener_auditoria(limit: int = 50):
-    """
-    Devuelve las últimas acciones de audit_logs, con email/nombre si existe el usuario.
+    """Devuelve las últimas acciones de audit_logs, con email/nombre si existe el usuario.
+
     Fechas en zona local (APP_TIMEZONE) y acción traducida a español.
     """
     with SessionLocal() as session:
@@ -1251,7 +1334,8 @@ def obtener_auditoria(limit: int = 50):
             .limit(limit)
             .all()
         )
-        resultado = []
+
+        resultado: List[Dict[str, Any]] = []
         for log, user in rows:
             resultado.append(
                 {
