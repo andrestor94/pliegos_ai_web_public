@@ -1008,7 +1008,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             resp.headers["X-Require-Rating"] = "1"
             return resp
     except Exception as e:
-        print(⚠️ Warning al chequear pendiente:", repr(e))
+        print("⚠️ Warning al chequear pendiente:", repr(e))
 
     if not archivos:
         return JSONResponse({"error": "Subí al menos un archivo"}, status_code=400)
