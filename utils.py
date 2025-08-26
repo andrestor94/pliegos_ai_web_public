@@ -1457,39 +1457,182 @@ def analizar_anexos(files: list) -> str:
 
     return analizar_con_openai(contenido_unico)
 
-# ==================== Chat ====================
+# ==================== Chat (mejorado con tools/RAG ligero) ====================
+# Límite de contexto para el chat (evita reventar la ventana del modelo)
+MAX_CHAT_CONTEXT_CHARS = int(os.getenv("MAX_CHAT_CONTEXT_CHARS", "38000"))
+CHAT_MAX_TOKENS        = int(os.getenv("CHAT_MAX_TOKENS", "1200"))
+CHAT_RETRIES           = int(os.getenv("CHAT_RETRIES", "2"))
+CHAT_FALLBACK_MODEL    = os.getenv("OPENAI_MODEL_CHAT_FALLBACK", "gpt-4o-mini")
+
+def _compactar_contexto_para_chat(contexto: str) -> str:
+    """
+    Recorta el contexto si es gigantesco: toma cabeza, cola y un muestreo uniforme.
+    Mantiene etiquetas [PÁGINA N] para que el bot pueda citar.
+    """
+    s = (contexto or "").strip()
+    if len(s) <= MAX_CHAT_CONTEXT_CHARS:
+        return s
+    head = s[: MAX_CHAT_CONTEXT_CHARS // 3]
+    tail = s[- MAX_CHAT_CONTEXT_CHARS // 3 :]
+    # muestreo intermedio (conserva marcas de página)
+    medio = s[len(s)//2 - MAX_CHAT_CONTEXT_CHARS//6 : len(s)//2 + MAX_CHAT_CONTEXT_CHARS//6]
+    return head + "\n\n[...] (contenido intermedio omitido por longitud) [...]\n\n" + medio + \
+           "\n\n[...] (contenido intermedio omitido por longitud) [...]\n\n" + tail
+
+def _buscar_en_historial_impl(contexto: str, query: str, k: int = 8, window: int = 280) -> dict:
+    """
+    Búsqueda literal/simple por términos dentro del 'contexto' y devuelve snippets
+    con página aproximada usando las etiquetas [PÁGINA N].
+    """
+    texto = contexto or ""
+    q = (query or "").strip()
+    if not texto or not q:
+        return {"hits": []}
+
+    low = texto.lower()
+    terms = [t for t in re.findall(r"[a-z0-9áéíóúñ/.-]{3,}", q.lower()) if t not in {"que","con","por","del","para","los","las"}]
+    if not terms:
+        terms = [q.lower()]
+
+    idx_pag = _index_paginas(texto)  # ya definido arriba en utils.py
+    seen = set()
+    hits = []
+
+    for t in terms:
+        for m in re.finditer(re.escape(t), low):
+            pos = m.start()
+            if any(abs(pos - h) < window//2 for h in seen):
+                continue
+            seen.add(pos)
+            start = max(0, pos - window)
+            end   = min(len(texto), pos + window)
+            snippet = texto[start:end].replace("\n", " ").strip()
+            p = _pagina_de_indice(idx_pag, pos) if idx_pag else None
+            hits.append({"term": t, "page": p, "snippet": ("..." + snippet + "...")})
+            if len(hits) >= k:
+                break
+        if len(hits) >= k:
+            break
+
+    return {"hits": hits}
+
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
-    descripcion_interfaz = f"""
-Sos el asistente de 'Suizo Argentina - Licitaciones IA'. Ayudas con pliegos y dudas de uso.
-Usuario actual: {usuario}
-"""
-    if not contexto:
-        contexto = "(No hay historial disponible.)"
+    """
+    Chat con:
+      - Herramienta 'buscar_en_historial' (function calling) para recuperar evidencia del material analizado.
+      - Control de longitud de contexto.
+      - Reintentos y fallback de modelo.
+    """
+    # 1) Preparar contexto compacto
+    contexto_compacto = _compactar_contexto_para_chat(contexto or "(No hay historial disponible.)")
 
-    prompt = f"""
-{descripcion_interfaz}
+    # 2) Definir herramienta para el modelo
+    tools = [{
+        "type": "function",
+        "function": {
+            "name": "buscar_en_historial",
+            "description": "Busca evidencia textual en el historial y en informes ya analizados. Devuelve snippets con página.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query":  {"type": "string", "description": "Consulta o palabras clave a buscar."},
+                    "k":      {"type": "integer", "description": "Cantidad máxima de snippets a devolver.", "default": 8}
+                },
+                "required": ["query"]
+            }
+        }
+    }]
 
-Historial de analisis previos:
-{contexto}
+    # 3) Mensajes base con reglas anti-alucinación
+    system_msg = (
+        "Eres el asistente del sistema 'Suizo Argentina – Licitaciones IA'. "
+        "Respondes con precisión, sin inventar. "
+        "Si la pregunta se refiere a pliegos/informes/archivos analizados, "
+        "PRIMERO usa la herramienta buscar_en_historial con términos concretos para traer evidencia. "
+        "Cita los datos con (p. N) cuando sea posible. "
+        "Si no hay evidencia en el material, indícalo de forma explícita. "
+        "Para preguntas generales, responde breve y claro."
+    )
 
-Pregunta del usuario:
+    user_prompt = f"""
+Usuario: {usuario}
+
+=== CONTEXTO DISPONIBLE (recortado) ===
+{contexto_compacto}
+
+=== PREGUNTA ===
 {mensaje}
 
-Responde natural y directo. Evita repetir las funciones de la plataforma.
+Instrucciones de salida:
+- Si usaste evidencia del historial, menciónala con '(p. N)' cuando tengas la página.
+- Si no encontraste nada en el historial, di: "No lo veo en los archivos/historial que tengo" y luego da orientación.
+- Nada de meta-texto tipo "parte X/Y". No inventes campos ni datos.
 """
 
-    try:
-        resp = client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL_CHAT", _pick_model("analisis")),
-            messages=[
-                {"role": "system", "content": "Asistente experto en licitaciones y soporte de plataforma."},
-                {"role": "user", "content": prompt}
-            ],
-            max_completion_tokens=1200
+    # 4) Bucle de tool-calling + retries/fallback
+    def _chat_call(model_name: str, msgs: list):
+        return client.chat.completions.create(
+            model=model_name,
+            messages=msgs,
+            tools=tools,
+            tool_choice="auto",
+            max_completion_tokens=CHAT_MAX_TOKENS,
+            temperature=0.2
         )
-        return (resp.choices[0].message.content or "").strip()
-    except Exception as e:
-        return f"Error al generar respuesta: {e}"
+
+    model_primary = os.getenv("OPENAI_MODEL_CHAT", _pick_model("analisis"))
+    messages = [
+        {"role": "system", "content": system_msg},
+        {"role": "user", "content": user_prompt}
+    ]
+
+    last_error = None
+    for model_try in [model_primary, CHAT_FALLBACK_MODEL]:
+        if not model_try:
+            continue
+        for attempt in range(CHAT_RETRIES + 1):
+            try:
+                resp = _chat_call(model_try, messages)
+                choice = resp.choices[0]
+                # Si el modelo pide usar herramientas
+                if getattr(choice.message, "tool_calls", None):
+                    for tc in choice.message.tool_calls:
+                        if tc.function.name == "buscar_en_historial":
+                            try:
+                                args = json.loads(tc.function.arguments or "{}")
+                            except Exception:
+                                args = {"query": (mensaje or "")}
+                            result = _buscar_en_historial_impl(contexto_compacto, args.get("query", ""), int(args.get("k", 8)))
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "name": "buscar_en_historial",
+                                "content": json.dumps(result, ensure_ascii=False)
+                            })
+                    # Segunda pasada: ahora el modelo ya vio los resultados de la tool
+                    resp2 = _chat_call(model_try, messages)
+                    out = (resp2.choices[0].message.content or "").strip()
+                    if out:
+                        return out
+                    # Si quedó vacío, fuerza fallback al siguiente intento/modelo
+                    raise RuntimeError("La respuesta llegó vacía tras tool-calling.")
+                else:
+                    out = (choice.message.content or "").strip()
+                    if out:
+                        return out
+                    raise RuntimeError("La respuesta llegó vacía.")
+            except Exception as e:
+                last_error = e
+                time.sleep(1.2 * (attempt + 1))
+        # si agotó retries con este modelo, pasa al siguiente (fallback)
+
+    # 5) Respuesta controlada ante fallo (evita que el frontend muestre “No recibí respuesta…”)
+    return (
+        "No pude generar respuesta en este momento. "
+        f"Detalle técnico: {last_error}"
+        if last_error else
+        "No pude generar respuesta en este momento."
+    )
 
 # ==================== PDF ====================
 def _render_pdf_bytes(resumen: str, fecha_display: Optional[str] = None) -> bytes:

@@ -731,12 +731,6 @@ async def login_form(request: Request):
     if request.query_params.get("logout") == "1":
         msg = "Sesión cerrada."
     return templates.TemplateResponse("login.html", {"request": request, "error": None, "mensaje": msg})
-
-
-# =========================
-# main.py — PARTE 2 / 5
-# (login/logout, cambiar password, rating, analizar pliego)
-# =========================
 # =========================
 # main.py — PARTE 2 / 5
 # (login/logout, cambiar password, rating, analizar pliego)
@@ -1203,7 +1197,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     # Si hay una valoración pendiente, bloquear nuevo análisis
     try:
         pr = _pr_get(usuario)
-        if pr or tiene_valoracion_pendiente(usuario):
+        if pr o tiene_valoracion_pendiente(usuario):
             payload = {"error": "Tienes una valoración pendiente. Califica el análisis anterior para continuar."}
             if pr:
                 payload["pending"] = True
@@ -1218,7 +1212,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         return JSONResponse({"error": "Subí al menos un archivo"}, status_code=400)
 
     for a in archivos:
-        if not a or not a.filename:
+        if not a o not a.filename:
             continue
         _validate_ext(a.filename)
 
@@ -1263,12 +1257,6 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         "historial_id": historial_id,
         "analisis_id": analisis_id,
     }
-
-
-# =========================
-# main.py — PARTE 3 / 5
-# (historial, usuario/avatares, diagnóstico)
-# =========================
 # =========================
 # main.py — PARTE 3 / 5
 # (historial, usuario/avatares, diagnóstico)
@@ -1463,54 +1451,70 @@ async def debug_whoami(request: Request):
         "cookie_present": ("session" in (request.cookies or {})),
         "route": str(request.url),
     }
-
-
 # =========================
 # main.py — PARTE 4 / 5
 # (chat OpenAI, chat interno, auditoría, admin + Incidencias con adjuntos)
 # =========================
-# =========================
-# main.py — PARTE 4 / 5
-# (chat OpenAI, chat interno, auditoría, admin + Incidencias con adjuntos)
-# =========================
+
+# ================== Helpers de contexto para Chat OpenAI ==================
+def _build_chat_context(historial: List[dict], usuario_actual: str, max_items: int = 8, max_chars: int = 1500) -> str:
+    """
+    Construye un contexto compacto usando el último análisis del usuario + extractos del historial.
+    Limita cantidad de items y longitud para evitar prompts gigantes.
+    """
+    if not historial:
+        return "(Sin historial todavía.)"
+
+    # último análisis del usuario
+    mine = [h for h in historial if h.get("usuario") == usuario_actual and h.get("resumen")]
+    mine.sort(key=lambda h: _parse_dt_utc(h.get("fecha")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    ultimo = mine[0] if mine else None
+    if ultimo:
+        ultimo_resumen = (
+            f"\n 📌 Último análisis del usuario actual:\n"
+            f" - Fecha: {ultimo.get('fecha')}\n"
+            f" - Archivo: {ultimo.get('nombre_archivo')}\n"
+            f" - Resumen: {ultimo.get('resumen')}\n"
+        )
+    else:
+        ultimo_resumen = "(El usuario aún no tiene análisis registrados.)"
+
+    # resto del historial (global), ordenado nuevo→viejo
+    others = [h for h in historial if h.get("resumen")]
+    others.sort(key=lambda h: _parse_dt_utc(h.get("fecha")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+
+    lines = []
+    for h in others[:max_items]:
+        resumen = str(h.get("resumen") or "").strip()
+        if len(resumen) > max_chars:
+            resumen = resumen[:max_chars] + "…"
+        lines.append(f"- [{h.get('fecha')}] {h.get('usuario')} analizó '{h.get('nombre_archivo')}' y obtuvo:\n{resumen}\n")
+
+    contexto_general = "\n".join(lines)
+    return f"{ultimo_resumen}\n\n📚 Historial breve:\n{contexto_general}"
+
+
+async def _call_chat_llm(mensaje: str, usuario_actual: str) -> str:
+    try:
+        historial = obtener_historial_completo() or []
+    except Exception:
+        historial = []
+    contexto = _build_chat_context(historial, usuario_actual)
+    # Ejecutamos el puente a OpenAI en threadpool para no bloquear el loop
+    return await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
+
 
 # ================== API puente (Chat OpenAI) ==================
 @app.post("/chat-openai")
 async def chat_openai(request: Request):
     data = await request.json()
-    mensaje = data.get("mensaje", "")
+    mensaje = (data.get("mensaje") or "").strip()
     usuario_actual = request.session.get("usuario", "Desconocido")
 
-    try:
-        historial = obtener_historial_completo()
-    except Exception:
-        historial = []
+    if not mensaje:
+        return JSONResponse({"respuesta": "Decime qué necesitás revisar del pliego 👌"})
 
-    ultimo_analisis_usuario = next(
-        (h for h in historial if h.get("usuario") == usuario_actual and h.get("resumen")),
-        None,
-    )
-
-    if ultimo_analisis_usuario:
-        ultimo_resumen = f"""
- 📌 Último análisis del usuario actual:
- - Fecha: {ultimo_analisis_usuario.get('fecha')}
- - Archivo: {ultimo_analisis_usuario.get('nombre_archivo')}
- - Resumen: {ultimo_analisis_usuario.get('resumen')}
- """
-    else:
-        ultimo_resumen = "(El usuario aún no tiene análisis registrados.)"
-
-    contexto_general = "\n".join(
-        [
-            f"- [{h.get('fecha')}] {h.get('usuario')} analizó '{h.get('nombre_archivo')}' y obtuvo:\n{h.get('resumen')}\n"
-            for h in historial
-            if h.get("resumen")
-        ]
-    )
-    contexto = f"{ultimo_resumen}\n\n📚 Historial completo:\n{contexto_general}"
-
-    respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
+    respuesta = await _call_chat_llm(mensaje, usuario_actual)
     return JSONResponse({"respuesta": respuesta})
 
 
@@ -1522,36 +1526,7 @@ async def api_chat_openai(request: Request, payload: dict = Body(...)):
     if not mensaje:
         return JSONResponse({"reply": "Decime qué necesitás revisar del pliego 👌"})
 
-    try:
-        historial = obtener_historial_completo()
-    except Exception:
-        historial = []
-
-    ultimo_analisis_usuario = next(
-        (h for h in historial if h.get("usuario") == usuario_actual and h.get("resumen")),
-        None,
-    )
-
-    if ultimo_analisis_usuario:
-        ultimo_resumen = f"""
- 📌 Último análisis del usuario actual:
- - Fecha: {ultimo_analisis_usuario.get('fecha')}
- - Archivo: {ultimo_analisis_usuario.get('nombre_archivo')}
- - Resumen: {ultimo_analisis_usuario.get('resumen')}
- """
-    else:
-        ultimo_resumen = "(El usuario aún no tiene análisis registrados.)"
-
-    contexto_general = "\n".join(
-        [
-            f"- [{h.get('fecha')}] {h.get('usuario')} analizó '{h.get('nombre_archivo')}' y obtuvo:\n{h.get('resumen')}\n"
-            for h in historial
-            if h.get("resumen")
-        ]
-    )
-    contexto = f"{ultimo_resumen}\n\n📚 Historial completo:\n{contexto_general}"
-
-    respuesta = await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
+    respuesta = await _call_chat_llm(mensaje, usuario_actual)
     return JSONResponse({"reply": respuesta})
 
 
@@ -1834,6 +1809,8 @@ async def chat_mensajes(request: Request, con: str, limit: int = 100):
     if not con:
         return JSONResponse({"error": "Falta parámetro 'con' (email del contacto)"}, status_code=400)
 
+    limit = max(1, min(int(limit or 100), 500))
+
     try:
         mensajes = obtener_mensajes_entre(yo, con, limit=limit)
         return JSONResponse({"entre": [yo, con], "mensajes": mensajes})
@@ -2039,8 +2016,7 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
     actor_user_id, ip = _actor_info(request)
 
     email = payload.email.lower()
-    # ⚠️ Antes devolvía 409 con sólo existir.
-    # Ahora sólo bloquea si EXISTE y está ACTIVO.
+    # Bloquea sólo si EXISTE y está ACTIVO. Si existe inactivo, se permitirá re-crear (restaurar).
     row = obtener_usuario_por_email(email)  # (id, nombre, email, password, rol, activo)
     if row and bool(row[5]):  # activo = 1
         return JSONResponse({"error": "El email ya existe"}, status_code=409)
@@ -2055,10 +2031,8 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
             ip=ip,
         )
         if user_id:
-            # Si había fila previa inactiva, se reactivó
             restored = bool(row and not bool(row[5]))
             return {"ok": True, "restaurado": restored}
-        # Fallback: si no devolvió id, algo raro pasó
         return JSONResponse({"error": "No se pudo crear/restaurar el usuario"}, status_code=500)
     except Exception as e:
         print("❌ admin_users_create:", repr(e))
@@ -2206,7 +2180,6 @@ async def legacy_admin_delete_post(request: Request):
     return await admin_users_delete(request, email=email, hard=hard)
 
 
-# 👇 NUEVOS endpoints legacy que tu admin.html ya usa (activar/desactivar/reset sesión)
 @app.post("/admin/desactivar-usuario", dependencies=[Depends(require_admin)])
 async def legacy_admin_disable_user(request: Request):
     data = await _json_or_form(request)
@@ -2268,10 +2241,8 @@ def _incid_list_attachments(ticket_id: int):
         if not os.path.isfile(path):
             continue
         size = os.path.getsize(path)
-        # Ruta estática real según INCID_ATTACH_DIR
         static_url = "/" + INCID_ATTACH_DIR.replace(os.sep, "/") + "/" + name
-        # Compatibilidad histórica con /static/adjuntos_incidencias/
-        compat_url = f"/static/adjuntos_incidencias/{name}"
+        compat_url = f"/static/adjuntos_incidencias/{name}"  # compat histórica
         out.append(
             {
                 "filename": name,
@@ -2303,9 +2274,14 @@ def _parse_iso_utc(s: str):
 def _infer_ticket_id(usuario: str, titulo: str, descripcion: str, tipo: str, ref_iso_utc: str) -> Optional[int]:
     """Heurística para recuperar el ID del ticket recién creado cuando crear_ticket() no lo devuelve."""
     try:
-        rows = obtener_tickets_por_usuario(usuario) or []
+        rows = obtener_todos_los_tickets() or []
+        # Si sos admin, filtrar a los tuyos igual; si no, DB puede tener muchos
+        rows = [r for r in rows if (r[1] or "").strip().lower() == (usuario or "").strip().lower()]
     except Exception:
-        rows = []
+        try:
+            rows = obtener_tickets_por_usuario(usuario) or []
+        except Exception:
+            rows = []
 
     ref = _parse_iso_utc(ref_iso_utc) or datetime.now(timezone.utc)
     best = None
@@ -2570,12 +2546,6 @@ async def incidencias_eliminar_path(id: int, request: Request):
 @app.get("/__diag/routes")
 def _diag_routes():
     return {"routes": sorted({getattr(r, "path", "") for r in app.routes})}
-
-
-# =========================
-# main.py — PARTE 5 / 5
-# (Calendario, Notificaciones, Presencia/Online, Auditoría de actividad + CSV)
-# =========================
 # =========================
 # main.py — PARTE 5 / 5
 # (Calendario, Notificaciones, Presencia/Online, Auditoría de actividad + CSV)
@@ -3091,4 +3061,3 @@ async def auditoria_actividad_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-
