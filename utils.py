@@ -1127,13 +1127,13 @@ def _llamada_openai(
     messages,
     model=None,
     temperature_str=TEMPERATURE_ANALISIS,
-    max_completion_tokens=None,   # mantenemos el nombre externo para no tocar el resto del código
+    max_completion_tokens=None,
     retries=2,
     fallback_model="gpt-5-mini",
 ):
     mdl = model or _pick_model("analisis")
 
-    # temperature opcional (evita 400 si el modelo no lo soporta)
+    # Solo calculo el valor deseado, pero NO lo envío si el modelo no lo soporta
     temp_wanted = None
     if ANALISIS_MODO == "fast":
         temp_wanted = 0.0
@@ -1147,11 +1147,9 @@ def _llamada_openai(
         kw = dict(
             model=m,
             messages=messages,
-            # >>> Chat Completions usa max_tokens <<<
-            max_tokens=(max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA),
-            # además del timeout por cliente, forzamos timeout por request
-            timeout=OPENAI_TIMEOUT,
+            max_completion_tokens=max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA,
         )
+        # Enviamos temperature sólo si se pidió; si falla, reintenta sin él
         if with_temperature and (temp_wanted is not None):
             kw["temperature"] = temp_wanted
         return kw
@@ -1163,6 +1161,7 @@ def _llamada_openai(
     last_error = None
     for m in models_to_try:
         for attempt in range(retries + 1):
+            # 1) Intento (posible) con temperature
             try:
                 resp = client.chat.completions.create(**_build_kwargs(m, with_temperature=True))
                 if not getattr(resp, "choices", None):
@@ -1173,7 +1172,7 @@ def _llamada_openai(
                 return resp
             except Exception as e:
                 msg = str(e)
-                # Si el modelo no acepta temperature, reintento inmediato sin ese parámetro
+                # Si el error es por 'temperature' no soportado, reintento INMEDIATO sin ese parámetro
                 if ("temperature" in msg) and ("unsupported" in msg or "Only the default" in msg):
                     try:
                         resp = client.chat.completions.create(**_build_kwargs(m, with_temperature=False))
