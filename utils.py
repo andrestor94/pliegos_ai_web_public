@@ -22,9 +22,11 @@ from reportlab.lib.colors import HexColor
 from zoneinfo import ZoneInfo  # fallback local AR
 
 # === NUEVO: prompts centralizados ===
-# Importamos todos los prompts y helpers desde prompts.py
-from .prompts import PROMPT_PARAMETRIZADO, PROMPT_ANALITICO, NO_RENGLONES_RULE
- (
+# Si prompts.py está en la MISMA carpeta que utils.py y main.py:
+from prompts import (
+    PROMPT_PARAMETRIZADO,
+    PROMPT_ANALITICO,
+    NO_RENGLONES_RULE,
     SINONIMOS_CANONICOS,
     prompt_andres,
     prompt_maestro,
@@ -964,8 +966,8 @@ def _llamada_openai(messages, model=None, temperature_str=TEMPERATURE_ANALISIS,
         return kw
 
     models_to_try = [mdl]
-    if fallback_model && fallback_model != mdl:
-        models_to_try.append(fallback_model)
+    if fallback_model and fallback_model != mdl:
+    models_to_try.append(fallback_model)
 
     last_error = None
     for m in models_to_try:
@@ -1127,7 +1129,7 @@ def analizar_con_openai(texto: str) -> str:
     texto_len = len(texto)
     n_anexos = _contar_anexos(texto)
     varios_anexos = n_anexos >= 2
-    prompt_maestro = _prompt_andres(varios_anexos)
+    prompt_maestro = prompt_andres(varios_anexos)
 
     # Hints regex (opcionales)
     hints = _build_regex_hints(texto) if ENABLE_REGEX_HINTS else ""
@@ -1202,7 +1204,7 @@ def analizar_con_openai(texto: str) -> str:
         {"role": "system",
          "content": "Actúa como equipo experto en derecho administrativo argentino y compras públicas. Redactor técnico-jurídico. Cero invenciones."},
         {"role": "user",
-         "content": f"""{_prompt_andres(varios_anexos)}
+         "content": f"""{prompt_andres(varios_anexos)}
 
 === NOTAS INTERMEDIAS INTEGRADAS (DEDUPE Y TRAZABILIDAD) ===
 {notas_integradas}
