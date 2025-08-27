@@ -84,55 +84,52 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
 # === Helpers robustos para Chat Completions (tokens/temperature) ===
 def _normalize_chat_kwargs(**kw):
     """
-    Normaliza kwargs para client.chat.completions.create:
-    - Usa 'max_tokens' (estándar). Si viene 'max_completion_tokens', lo mapea.
-    - Si temperature es None/"" elimina la clave (algunos modelos no lo aceptan).
+    No conviertas de max_completion_tokens -> max_tokens.
+    Preferí max_completion_tokens si aparece. Remueve temperature=None.
     """
-    if "max_tokens" not in kw:
-        mct = kw.pop("max_completion_tokens", None)
-        if mct is not None:
-            kw["max_tokens"] = int(mct)
-    if kw.get("temperature", None) in (None, ""):
+    if "max_completion_tokens" in kw and "max_tokens" in kw:
+        kw.pop("max_tokens", None)
+    if kw.get("temperature", None) is None:
         kw.pop("temperature", None)
     return kw
 
 def _chat_create_safe(**kw):
     """
-    Llama a chat.completions probando variantes seguras:
-    1) kwargs normalizados.
-    2) sin 'temperature'.
-    3) con 'max_completion_tokens' en lugar de 'max_tokens'.
-    Nunca enviamos 'temperature': null.
+    Soporta modelos que aceptan SOLO max_completion_tokens y también los legacy
+    que aceptan max_tokens. Intenta ambas variantes, sin depender del texto del error.
+    Nunca envía temperature=None.
     """
-    def _call(kwargs):
-        kwargs = _normalize_chat_kwargs(**kwargs)
-        # segunda defensa por si vino temperature=None
-        if "temperature" in kwargs and kwargs["temperature"] in (None, ""):
-            kwargs.pop("temperature", None)
-        return client.chat.completions.create(**kwargs)
+    # Limpieza común
+    if kw.get("temperature", None) is None:
+        kw.pop("temperature", None)
 
-    variants = []
-
+    # Capturamos el valor de tokens una sola vez
+    tok = kw.pop("max_tokens", kw.pop("max_completion_tokens", None))
     base = dict(kw)
-    variants.append(base)
 
-    v_no_temp = dict(base); v_no_temp.pop("temperature", None)
-    variants.append(v_no_temp)
-
-    v_mct = dict(v_no_temp)
-    tok = v_mct.pop("max_tokens", v_mct.pop("max_completion_tokens", None))
+    # Orden de prueba: primero max_completion_tokens (modelos nuevos), luego max_tokens.
+    intentos = []
     if tok is not None:
-        v_mct["max_completion_tokens"] = int(tok)
-    variants.append(v_mct)
+        intentos.append({**base, "max_completion_tokens": int(tok)})
+        intentos.append({**base, "max_tokens": int(tok)})
+    else:
+        intentos.append(base)
 
-    last_e = None
-    for v in variants:
+    last_err = None
+    for payload in intentos:
         try:
-            return _call(v)
+            return client.chat.completions.create(**payload)
         except Exception as e:
-            last_e = e
+            last_err = e
             continue
-    raise last_e
+
+    # Último intento: por si algún modelo rechaza 'temperature' igualmente
+    payload = dict(intentos[0])
+    payload.pop("temperature", None)
+    try:
+        return client.chat.completions.create(**payload)
+    except Exception as e2:
+        raise RuntimeError(f"{e2}") from e2
 
 # ========================= Modelos / Heurísticas =========================
 MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
@@ -1029,15 +1026,17 @@ def _llamada_openai(
             temp_wanted = None
 
     def _build_kwargs(m, with_temperature=True, max_tok=None):
-        kw = dict(
-            model=m,
-            messages=messages,
-            max_tokens=int(max_tok or max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA),
-        )
-        if with_temperature and (temp_wanted is not None):
-            kw["temperature"] = temp_wanted  # solo si hay valor real
-        # Nunca agregamos 'temperature': None
-        return kw
+    kw = dict(
+        model=m,
+        messages=messages,
+        # Usar max_completion_tokens por defecto (nuevo contrato).
+        max_completion_tokens=int(max_tok or max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA),
+    )
+    if with_temperature and (temp_wanted is not None):
+        kw["temperature"] = temp_wanted
+    else:
+        kw["temperature"] = None
+    return kw
 
     models_to_try = [mdl] + ([fallback_model] if fallback_model and fallback_model != mdl else [])
     last_error = None
