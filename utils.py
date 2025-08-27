@@ -750,7 +750,7 @@ def _extraer_contactos_con_paginas(texto: str) -> List[Tuple[str, str, int, Opti
     """
     Devuelve lista de (tipo, valor, p, anexo) con tipo in {"email","url"}.
     """
-    texto = texto o ""
+    texto = texto or ""
     idx_pag = _index_paginas(texto)
     idx_ax  = _index_anexos(texto)
     res: List[Tuple[str, str, int, Optional[int]]] = []
