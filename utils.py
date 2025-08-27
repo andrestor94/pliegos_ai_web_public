@@ -1,17 +1,13 @@
 # -*- coding: utf-8 -*-
-# utils.py — versión unificada (fix temperature/null + max_tokens fallback)
+# utils.py — COMPLETO
 """
 Módulo utilitario para:
 - Extracción de texto (PDF/DOCX/Imágenes + OCR selectivo con OpenAI Vision)
 - Normalizaciones y helpers varios
-- Pipeline de análisis con modelos OpenAI (single/dos etapas)
-- Chat con tool-calling y RAG ligero
-- Render de PDF con plantilla
+- Pipeline de análisis con modelos OpenAI
 
-Cambios clave:
-- Nunca se envía 'temperature': null (se omite la clave).
-- Wrapper robusto _chat_create_safe que prueba variantes: base, sin temperature, y con max_completion_tokens.
-- Se eliminaron 'temperature=None' en OCR y chat.
+Notas:
+- Variables de entorno clave: OPENAI_API_KEY, OPENAI_MODEL_ANALISIS, OPENAI_MODEL_VISION, etc.
 """
 
 from __future__ import annotations
@@ -38,7 +34,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import HexColor
 from zoneinfo import ZoneInfo  # fallback local AR
 
-# === Prompts centralizados (compatibles con tu prompts.py) ===
+# === NUEVO: prompts centralizados (compatible con tu prompts.py, sin warnings) ===
 try:
     import prompts as _prom
 except Exception:
@@ -47,6 +43,10 @@ except Exception:
 SINONIMOS_CANONICOS = getattr(_prom, "SINONIMOS_CANONICOS", "")
 
 def prompt_andres(varios_anexos: bool) -> str:
+    """
+    Devuelve el prompt maestro usando tu PROMPT_PARAMETRIZADO y reglas de citas dinámicas.
+    Si falta algo, aplica un fallback mínimo sin romper formato.
+    """
     if _prom and hasattr(_prom, "PROMPT_PARAMETRIZADO") and hasattr(_prom, "reglas_citas"):
         try:
             return _prom.PROMPT_PARAMETRIZADO.format(
@@ -58,6 +58,8 @@ def prompt_andres(varios_anexos: bool) -> str:
                 return (_prom.PROMPT_PARAMETRIZADO + "\n\n" + _prom.reglas_citas(varios_anexos)).strip()
             except Exception:
                 pass
+
+    # Fallback ultra-minimal
     return (
         "Elabora un informe técnico-jurídico estructurado con citas literales. "
         "No inventes. Cita como '(p. N)'. Si hay múltiples anexos, usa '(Anexo X, p. N)'."
@@ -84,8 +86,8 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
 # === Helpers robustos para Chat Completions (tokens/temperature) ===
 def _normalize_chat_kwargs(**kw):
     """
-    No conviertas de max_completion_tokens -> max_tokens.
     Preferí max_completion_tokens si aparece. Remueve temperature=None.
+    No conviertas max_completion_tokens -> max_tokens automáticamente.
     """
     if "max_completion_tokens" in kw and "max_tokens" in kw:
         kw.pop("max_tokens", None)
@@ -95,19 +97,16 @@ def _normalize_chat_kwargs(**kw):
 
 def _chat_create_safe(**kw):
     """
-    Soporta modelos que aceptan SOLO max_completion_tokens y también los legacy
-    que aceptan max_tokens. Intenta ambas variantes, sin depender del texto del error.
+    Intenta primero con max_completion_tokens (modelos nuevos) y luego con max_tokens (legacy).
     Nunca envía temperature=None.
     """
-    # Limpieza común
+    # limpieza común
     if kw.get("temperature", None) is None:
         kw.pop("temperature", None)
 
-    # Capturamos el valor de tokens una sola vez
     tok = kw.pop("max_tokens", kw.pop("max_completion_tokens", None))
     base = dict(kw)
 
-    # Orden de prueba: primero max_completion_tokens (modelos nuevos), luego max_tokens.
     intentos = []
     if tok is not None:
         intentos.append({**base, "max_completion_tokens": int(tok)})
@@ -123,20 +122,17 @@ def _chat_create_safe(**kw):
             last_err = e
             continue
 
-    # Último intento: por si algún modelo rechaza 'temperature' igualmente
+    # último intento sin temperature por si acaso
     payload = dict(intentos[0])
     payload.pop("temperature", None)
-    try:
-        return client.chat.completions.create(**payload)
-    except Exception as e2:
-        raise RuntimeError(f"{e2}") from e2
+    return client.chat.completions.create(**payload)
 
 # ========================= Modelos / Heurísticas =========================
 MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
 VISION_MODEL   = os.getenv("OPENAI_MODEL_VISION", "gpt-5")
 MODEL_NOTAS    = os.getenv("OPENAI_MODEL_NOTAS", MODEL_ANALISIS)
 MODEL_SINTESIS = os.getenv("OPENAI_MODEL_SINTESIS", MODEL_ANALISIS)
-FAST_FORCE_MODEL = os.getenv("FAST_FORCE_MODEL", "").strip()
+FAST_FORCE_MODEL = os.getenv("FAST_FORCE_MODEL", "").strip()  # opcional para fast
 
 MAX_SINGLE_PASS_CHARS = int(os.getenv("MAX_SINGLE_PASS_CHARS", "120000"))
 MAX_SINGLE_PASS_CHARS_MULTI = int(os.getenv("MAX_SINGLE_PASS_CHARS_MULTI", str(MAX_SINGLE_PASS_CHARS)))
@@ -152,7 +148,6 @@ ART_SNIPPET_MAX_WORDS  = int(os.getenv("ART_SNIPPET_MAX_WORDS", "18"))
 ANALISIS_CONCURRENCY = int(os.getenv("ANALISIS_CONCURRENCY", "3"))
 NOTAS_MAX_TOKENS = int(os.getenv("NOTAS_MAX_TOKENS", "1400"))
 
-# OCR
 VISION_MAX_PAGES = int(os.getenv("VISION_MAX_PAGES", "8"))
 VISION_DPI = int(os.getenv("VISION_DPI", "150"))
 OCR_TEXT_MIN_CHARS = int(os.getenv("OCR_TEXT_MIN_CHARS", "120"))
@@ -185,6 +180,7 @@ def _log_tiempo(etiqueta: str, t0: float) -> None:
 
 # ==================== OCR / Raster ====================
 def _rasterizar_pagina(page: fitz.Page, dpi: int = VISION_DPI) -> bytes:
+    """Convierte una página PDF en PNG bytes a DPI indicado."""
     mat = fitz.Matrix(dpi / 72, dpi / 72)
     pix = page.get_pixmap(matrix=mat, alpha=False)
     return pix.tobytes("png")
@@ -208,13 +204,20 @@ def _ocr_openai_imagen_b64(b64_img: str, mime: str = "image/png") -> str:
                     {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64_img}"}}
                 ]
             }],
-            max_tokens=900,  # cap de salida
+            # Capamos salida para bajar latencia/costo
+            max_tokens=900,           # _chat_create_safe intentará también max_completion_tokens
+            temperature=None,         # se remueve si es None
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception as e:
         return f"[OCR-ERROR] {e}"
 
 def _ocr_selectivo_por_pagina(doc: fitz.Document, max_pages: int) -> str:
+    """
+    Muestrea páginas a lo largo de todo el documento para no perder planillas al final.
+    - Si la página tiene suficiente texto nativo, usa ese texto.
+    - Si no, rasteriza y aplica OCR con OpenAI Vision.
+    """
     n = len(doc)
     if n == 0:
         return ""
@@ -497,20 +500,22 @@ def _anexo_en_pos(indices: List[Tuple[int, int]], pos: int) -> Optional[int]:
             break
     return last
 
-# =============== Normalización de citas ===============
+# =============== Normalización de citas según modo (multi vs único) ===============
 _CITA_ANEXO_RE = re.compile(r"\(Anexo\s+([IVXLCDM\d]+)(?:,\s*p\.\s*(\d+))?\)", re.I)
 
 def _normalize_citas_salida(texto: str, varios_anexos: bool) -> str:
     if varios_anexos:
         return texto or ""
+
     def repl(m):
         pag = m.group(2)
         if pag:
             return f"(p. {pag})"
         return "(Fuente: documento provisto)"
+
     return _CITA_ANEXO_RE.sub(repl, texto or "")
 
-# =============== Normalización para PDF (sin markdown) ===============
+# ==================== Normalización para PDF (sin markdown) ====================
 _HDR_RE = re.compile(r"^\s{0,3}(#{1,6})\s*(.+)$")
 _BULLET_RE = re.compile(r"^\s*[-*•]\s+")
 _TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
@@ -540,7 +545,8 @@ def preparar_texto_para_pdf(markdown_text: str) -> str:
         m = _HDR_RE.match(ln)
         if m:
             titulo = _title_case(m.group(2).strip(": ").strip())
-            out_lines.append(titulo); out_lines.append("")
+            out_lines.append(titulo)
+            out_lines.append("")
             continue
 
         if _TABLE_SEP_RE.match(ln):
@@ -631,7 +637,6 @@ DETECTABLE_FIELDS: Dict[str, Dict] = {
 def _count(pattern: str, text: str) -> int:
     return len(re.findall(pattern, text or "", flags=re.I))
 
-# --- Artículos ---
 _ART_HEAD_RE = re.compile(r"(?im)^\s*(art(?:[íi]culo|\.?)\s*\d+[a-zº°]?)\s*[-–—:]?\s*(.*)$")
 _ART_BLOCK_RE = re.compile(
     r"(?ims)^\s*(art(?:[íi]culo|\.?)\s*\d+[a-zº°]?)\s*[-–—:]?\s*(.+?)(?=^\s*art(?:[íi]culo|\.?)\s*\d+[a-zº°]?|\Z)"
@@ -663,7 +668,6 @@ def _extraer_articulos_con_snippets(texto: str) -> List[Tuple[str, str, int, Opt
 
     return res
 
-# --- Renglones robustos ---
 _ROW_START_RE = re.compile(r"(?im)^(?:reng(?:l[oó]n)?\.?\s*)(\d{1,4})\b")
 _CODE_RE = re.compile(r"\b[A-Z]{1,3}\d{5,8}\b")
 _QTY_RE  = re.compile(r"\b\d{1,6}\b")
@@ -829,7 +833,6 @@ def _build_section_216(texto: str, varios_anexos: bool) -> str:
         lines.append(f" - {rot_norm} — {sn} {cita}")
     return "\n".join(lines)
 
-# ====== Contactos ======
 CONTACT_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 CONTACT_URL_RE   = re.compile(r"(https?://[^\s)]+|www\.[^\s)]+)")
 
@@ -873,7 +876,6 @@ def _build_section_23(texto: str, varios_anexos: bool) -> str:
         out.append(f" - {etiqueta}: {v} {cita}")
     return "\n".join(out)
 
-# ====== Normativa aplicable ======
 NORM_TIPOS = [
     ("Ley",        r"\bLey(?:\s*N[°º])?\s*([\d\.]{1,7}(?:/\d{2,4})?)\b"),
     ("Decreto",    r"\bDecreto(?:\s*N[°º])?\s*([\d\.]{1,7}(?:/\d{2,4})?)\b"),
@@ -887,6 +889,7 @@ def _extraer_normativa(texto: str) -> List[Tuple[str, str, int, Optional[int]]]:
     idx_pag = _index_paginas(texto)
     idx_ax  = _index_anexos(texto)
     res: List[Tuple[str, str, int, Optional[int]]] = []
+
     for (tipo, cre) in NORM_PATTS:
         for m in cre.finditer(texto):
             pos = m.start()
@@ -915,7 +918,6 @@ def _build_section_215(texto: str, varios_anexos: bool) -> str:
         out.append(f" - {t} {n} {cita}")
     return "\n".join(out)
 
-# ====== Reemplazo de secciones ======
 def _find_section_bounds(text: str, header_regex: str) -> Tuple[int, int]:
     text = text or ""
     m = re.search(header_regex, text, flags=re.I)
@@ -933,12 +935,13 @@ def _replace_section(text: str, header_regex: str, replacement: str) -> str:
         return (text or "").rstrip() + "\n\n" + (replacement or "").strip() + "\n"
     return (text or "")[:s] + (replacement or "").strip() + "\n" + (text or "")[e:]
 
-# ====== Ampliación / sustitución de 2.13 y 2.16 ======
 def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
     out = informe or ""
+
     sec23 = _build_section_23(texto_fuente or "", varios_anexos)
     if sec23:
         out = _replace_section(out, r"(?im)^\s*2\.3\s+Contactos", sec23)
+
     sec215 = _build_section_215(texto_fuente or "", varios_anexos)
     if sec215:
         out = _replace_section(out, r"(?im)^\s*2\.15\s+Normativa", sec215)
@@ -960,7 +963,6 @@ def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexo
     out = re.sub(r"(?im)^\s*informe\s+original\s*$", "", out)
     return out
 
-# === Post-proceso de Ficha ===
 def _reparar_ficha(informe: str, texto_fuente: str) -> str:
     try:
         total_renglones = len(_extraer_renglones_y_especificaciones(texto_fuente or ""))
@@ -984,6 +986,7 @@ def _reparar_ficha(informe: str, texto_fuente: str) -> str:
         lambda m: f"{m.group(1)}NO ESPECIFICADO{(' ' + m.group(2) if m.group(2) else '')}",
         informe or ""
     )
+
     return (informe or "")
 
 # ==================== Llamada a OpenAI robusta ====================
@@ -1016,6 +1019,7 @@ def _llamada_openai(
 ):
     mdl = model or _pick_model("analisis")
 
+    # temperatura opcional (no enviar si no corresponde)
     temp_wanted = None
     if ANALISIS_MODO == "fast":
         temp_wanted = 0.0
@@ -1025,18 +1029,17 @@ def _llamada_openai(
         except Exception:
             temp_wanted = None
 
+    # helper INTERNO correctamente indentado
     def _build_kwargs(m, with_temperature=True, max_tok=None):
-    kw = dict(
-        model=m,
-        messages=messages,
-        # Usar max_completion_tokens por defecto (nuevo contrato).
-        max_completion_tokens=int(max_tok or max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA),
-    )
-    if with_temperature and (temp_wanted is not None):
-        kw["temperature"] = temp_wanted
-    else:
-        kw["temperature"] = None
-    return kw
+        kw = dict(
+            model=m,
+            messages=messages,
+            # usar SIEMPRE max_completion_tokens por defecto
+            max_completion_tokens=int(max_tok or max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA),
+        )
+        if with_temperature and (temp_wanted is not None):
+            kw["temperature"] = temp_wanted  # sólo si está definido
+        return kw
 
     models_to_try = [mdl] + ([fallback_model] if fallback_model and fallback_model != mdl else [])
     last_error = None
@@ -1044,13 +1047,16 @@ def _llamada_openai(
     for m in models_to_try:
         for attempt in range(retries + 1):
             try:
+                # intento principal
                 kw = _build_kwargs(m, with_temperature=True)
                 resp = _chat_create_safe(**kw)
                 content = (resp.choices[0].message.content or "").strip()
                 if content:
                     return resp
 
-                kw2 = _build_kwargs(m, with_temperature=False, max_tok=min(1024, kw["max_tokens"]))
+                # reintento corto sin temperature y con menos tokens
+                max_tok_used = int(kw.get("max_completion_tokens", MAX_COMPLETION_TOKENS_SALIDA))
+                kw2 = _build_kwargs(m, with_temperature=False, max_tok=min(1024, max_tok_used))
                 resp2 = _chat_create_safe(**kw2)
                 content2 = (resp2.choices[0].message.content or "").strip()
                 if content2:
@@ -1124,7 +1130,7 @@ def _segundo_pase_si_falta(original_report: str, texto_fuente: str, varios_anexo
 (Revision focalizada) Completa UNICAMENTE los campos marcados como "NO ESPECIFICADO" en el informe,
 usando SOLO la evidencia literal que te paso abajo. Mantiene exactamente la estructura y secciones del
 informe original, sin agregar nuevas secciones. Donde la evidencia sea ambigua, deja "NO ESPECIFICADO".
-Respeta las reglas de citas del informe original (usa (Anexo X, p. N) o (p. N) según corresponda).
+Respeta las reglas de citas del informe original (usa (Anexo X, p. N) o (p. N) segun corresponda).
 NO imprimas rótulos como 'Informe Original'.
 
 === CONTENIDO A CORREGIR ===
@@ -1202,6 +1208,7 @@ def analizar_con_openai(texto: str) -> str:
 
     force_two_stage = (varios_anexos and texto_len >= MULTI_FORCE_TWO_STAGE_MIN_CHARS)
 
+    # Single pass
     if (not varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS) or \
        (varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS_MULTI and not force_two_stage):
         t0 = _t()
@@ -1227,7 +1234,7 @@ def analizar_con_openai(texto: str) -> str:
         except Exception as e:
             return f"Error al generar el análisis: {e}"
 
-    # Dos etapas
+    # Dos etapas (chunking + concurrencia)
     chunk_size = _compute_chunk_size(texto_len)
     partes = _particionar(texto, chunk_size)
 
@@ -1255,7 +1262,7 @@ def analizar_con_openai(texto: str) -> str:
         except Exception as e:
             return f"Error al generar el análisis: {e}"
 
-    # A) Notas intermedias
+    # A) Notas intermedias (concurrente)
     notas_list = _generar_notas_concurrente(partes)
     notas_integradas = "\n".join(notas_list)
 
@@ -1329,7 +1336,7 @@ def analizar_anexos(files: list) -> str:
 
     return analizar_con_openai(contenido_unico)
 
-# ==================== Chat (tools/RAG ligero) ====================
+# ==================== Chat (mejorado con tools/RAG ligero) ====================
 MAX_CHAT_CONTEXT_CHARS = int(os.getenv("MAX_CHAT_CONTEXT_CHARS", "38000"))
 CHAT_MAX_TOKENS        = int(os.getenv("CHAT_MAX_TOKENS", "1200"))
 CHAT_RETRIES           = int(os.getenv("CHAT_RETRIES", "2"))
@@ -1427,12 +1434,14 @@ Instrucciones de salida:
 """
 
     def _chat_call(model_name: str, msgs: list):
+        # Se usa el wrapper que prueba max_completion_tokens y cae a max_tokens
         return _chat_create_safe(
             model=model_name,
             messages=msgs,
             tools=tools,
             tool_choice="auto",
-            max_tokens=CHAT_MAX_TOKENS,
+            max_tokens=CHAT_MAX_TOKENS,  # servirá como valor para max_completion_tokens primero
+            temperature=None,
         )
 
     model_primary = os.getenv("OPENAI_MODEL_CHAT", _pick_model("analisis"))
