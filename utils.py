@@ -1143,55 +1143,65 @@ def _llamada_openai(
         except Exception:
             temp_wanted = None
 
-    def _create_with_fallback(**kw):
-        """Usa max_tokens; si el SDK no lo acepta, cae a max_completion_tokens."""
-        try:
-            return client.chat.completions.create(**kw)
-        except TypeError as te:
-            # SDK viejo: intenta con 'max_completion_tokens'
-            if "max_tokens" in kw and "unexpected keyword argument" in str(te):
-                legacy = dict(kw)
-                legacy["max_completion_tokens"] = legacy.pop("max_tokens")
-                return client.chat.completions.create(**legacy)
-            raise
-
-    def _build_kwargs(m, with_temperature=True, max_tok=None):
-        kw = dict(
-            model=m,
-            messages=messages,
-            # Preferimos max_tokens para Chat Completions
-            max_tokens=int(max_tok or max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA),
-        )
+    def _cc_dual(base_kw: dict, max_tok: int, with_temperature: bool = True):
+        """
+        Llama a chat.completions intentando primero con 'max_completion_tokens'
+        y, si el backend lo rechaza, vuelve a intentar con 'max_tokens'.
+        Si ambos fallan por el parámetro, último intento sin tope (no ideal, pero evita caída dura).
+        """
+        last_err = None
+        common = dict(base_kw)
         if with_temperature and (temp_wanted is not None):
-            kw["temperature"] = temp_wanted
-        return kw
+            common["temperature"] = temp_wanted
 
+        for param in ("max_completion_tokens", "max_tokens"):
+            try:
+                kw = dict(common)
+                kw[param] = int(max_tok)
+                return client.chat.completions.create(**kw)
+            except Exception as e:
+                s = str(e)
+                # Si el problema es justamente el parámetro, probamos el otro
+                if ("Unsupported parameter" in s and ("max_tokens" in s or "max_completion_tokens" in s)) or \
+                   ("unexpected keyword argument" in s and ("max_tokens" in s or "max_completion_tokens" in s)):
+                    last_err = e
+                    continue
+                # Otro tipo de error: lo propagamos
+                raise
+        # Último recurso: sin parámetro de tokens
+        try:
+            return client.chat.completions.create(**common)
+        except Exception:
+            raise last_err or RuntimeError("No se pudo invocar chat.completions")
+
+    def _base_kw(m):
+        return {"model": m, "messages": messages}
+
+    max_tok = int(max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA)
     models_to_try = [mdl] + ([fallback_model] if fallback_model and fallback_model != mdl else [])
     last_error = None
 
     for m in models_to_try:
         for attempt in range(retries + 1):
             try:
-                # 1) intento normal (con temperature si corresponde)
-                kw = _build_kwargs(m, with_temperature=True)
-                resp = _create_with_fallback(**kw)
+                # Intento normal
+                resp = _cc_dual(_base_kw(m), max_tok, with_temperature=True)
                 content = (resp.choices[0].message.content or "").strip()
                 if content:
                     return resp
 
-                # 2) si vino vacío, reintento corto sin temperature y con menos tokens
-                kw2 = _build_kwargs(m, with_temperature=False, max_tok=min(1024, kw["max_tokens"]))
-                resp2 = _create_with_fallback(**kw2)
+                # Si vino vacío, reintento corto sin temperature y con menos tokens
+                resp2 = _cc_dual(_base_kw(m), min(1024, max_tok), with_temperature=False)
                 content2 = (resp2.choices[0].message.content or "").strip()
                 if content2:
                     return resp2
                 raise RuntimeError("La respuesta del modelo llegó vacía.")
             except Exception as e:
-                msg = str(e)
-                # Reintento inmediato sin temperature si el modelo no la soporta
-                if ("temperature" in msg) and ("unsupported" in msg or "Only the default" in msg):
+                s = str(e)
+                # Si se queja de 'temperature', reintenta sin ese argumento
+                if ("temperature" in s) and ("unsupported" in s or "Only the default" in s):
                     try:
-                        resp = _create_with_fallback(**_build_kwargs(m, with_temperature=False))
+                        resp = _cc_dual(_base_kw(m), max_tok, with_temperature=False)
                         content = (resp.choices[0].message.content or "").strip()
                         if content:
                             return resp
