@@ -954,19 +954,25 @@ def _llamada_openai(messages, model=None, temperature_str=TEMPERATURE_ANALISIS,
                     max_completion_tokens=None, retries=2, fallback_model="gpt-5-mini"):
     mdl = model or _pick_model("analisis")
 
-    def _build_kwargs(m):
+    # Solo calculo el valor deseado, pero NO lo envío si el modelo no lo soporta
+    temp_wanted = None
+    if ANALISIS_MODO == "fast":
+        temp_wanted = 0.0
+    elif temperature_str != "":
+        try:
+            temp_wanted = float(temperature_str)
+        except Exception:
+            temp_wanted = None
+
+    def _build_kwargs(m, with_temperature=True):
         kw = dict(
             model=m,
             messages=messages,
             max_completion_tokens=max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA
         )
-        if ANALISIS_MODO == "fast":
-            kw["temperature"] = 0
-        elif temperature_str != "":
-            try:
-                kw["temperature"] = float(temperature_str)
-            except Exception:
-                pass
+        # Enviamos temperature sólo si se pidió y lo intentaremos; si falla, reintentamos sin él
+        if with_temperature and (temp_wanted is not None):
+            kw["temperature"] = temp_wanted
         return kw
 
     models_to_try = [mdl]
@@ -976,8 +982,9 @@ def _llamada_openai(messages, model=None, temperature_str=TEMPERATURE_ANALISIS,
     last_error = None
     for m in models_to_try:
         for attempt in range(retries + 1):
+            # 1) Intento (posible) con temperature
             try:
-                resp = client.chat.completions.create(**_build_kwargs(m))
+                resp = client.chat.completions.create(**_build_kwargs(m, with_temperature=True))
                 if not getattr(resp, "choices", None):
                     raise RuntimeError("El modelo no devolvió 'choices'.")
                 content = (resp.choices[0].message.content or "").strip()
@@ -985,7 +992,22 @@ def _llamada_openai(messages, model=None, temperature_str=TEMPERATURE_ANALISIS,
                     raise RuntimeError("La respuesta del modelo llegó vacía.")
                 return resp
             except Exception as e:
-                last_error = e
+                # Si el error es por 'temperature' no soportado, reintento INMEDIATO sin ese parámetro
+                msg = str(e)
+                if ("temperature" in msg) and ("unsupported" in msg or "Only the default" in msg):
+                    try:
+                        resp = client.chat.completions.create(**_build_kwargs(m, with_temperature=False))
+                        if not getattr(resp, "choices", None):
+                            raise RuntimeError("El modelo no devolvió 'choices'.")
+                        content = (resp.choices[0].message.content or "").strip()
+                        if not content:
+                            raise RuntimeError("La respuesta del modelo llegó vacía.")
+                        return resp
+                    except Exception as e2:
+                        last_error = e2
+                else:
+                    last_error = e
+
                 if attempt < retries:
                     time.sleep(1.2 * (attempt + 1))
                 else:
@@ -1365,14 +1387,26 @@ Instrucciones de salida:
 """
 
     def _chat_call(model_name: str, msgs: list):
+    # No enviar temperature para evitar 400 en modelos que no lo soportan
+    try:
         return client.chat.completions.create(
             model=model_name,
             messages=msgs,
             tools=tools,
             tool_choice="auto",
             max_completion_tokens=CHAT_MAX_TOKENS,
-            temperature=0.2
         )
+    except Exception as e:
+        # Si por alguna razón quedó un temperature en kwargs (no debería), reintenta sin él
+        if "temperature" in str(e) and ("unsupported" in str(e) or "Only the default" in str(e)):
+            return client.chat.completions.create(
+                model=model_name,
+                messages=msgs,
+                tools=tools,
+                tool_choice="auto",
+                max_completion_tokens=CHAT_MAX_TOKENS,
+            )
+        raise
 
     model_primary = os.getenv("OPENAI_MODEL_CHAT", _pick_model("analisis"))
     messages = [
