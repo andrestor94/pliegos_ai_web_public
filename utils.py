@@ -880,7 +880,7 @@ def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexo
         return out
 
     # Construir 2.13 y 2.16 con topes y reemplazar
-    sec213 = _build_section_213(texto_fuente o "", varios_anexos)
+    sec213 = _build_section_213(texto_fuente or "", varios_anexos)
     if sec213:
         alt213 = sec213.replace("2.13 Planilla de cotizacion y renglones:", "9) Renglones y planilla de cotizacion:")
         out = _replace_section(out, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla", alt213)
