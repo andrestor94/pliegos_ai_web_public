@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
-# utils.py — Parte 1/5
+# utils.py — versión unificada (fix temperature/null + max_tokens fallback)
 """
 Módulo utilitario para:
 - Extracción de texto (PDF/DOCX/Imágenes + OCR selectivo con OpenAI Vision)
 - Normalizaciones y helpers varios
-- Pipeline de análisis con modelos OpenAI (se completa en Partes 2–5)
+- Pipeline de análisis con modelos OpenAI (single/dos etapas)
+- Chat con tool-calling y RAG ligero
+- Render de PDF con plantilla
 
-Notas:
-- Esta parte cubre imports, configuración, prompts fallback, timers y OCR selectivo.
-- Variables de entorno clave: OPENAI_API_KEY, OPENAI_MODEL_ANALISIS, OPENAI_MODEL_VISION, etc.
+Cambios clave:
+- Nunca se envía 'temperature': null (se omite la clave).
+- Wrapper robusto _chat_create_safe que prueba variantes: base, sin temperature, y con max_completion_tokens.
+- Se eliminaron 'temperature=None' en OCR y chat.
 """
 
 from __future__ import annotations
@@ -35,21 +38,15 @@ from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import HexColor
 from zoneinfo import ZoneInfo  # fallback local AR
 
-# === NUEVO: prompts centralizados (compatible con tu prompts.py, sin warnings) ===
-# Busca 'prompts.py' y usa sus símbolos si existen; si no, aplica fallbacks silenciosos.
+# === Prompts centralizados (compatibles con tu prompts.py) ===
 try:
     import prompts as _prom
 except Exception:
     _prom = None
 
-# Sinónimos: si no los definiste, queda vacío (no rompe nada).
 SINONIMOS_CANONICOS = getattr(_prom, "SINONIMOS_CANONICOS", "")
 
 def prompt_andres(varios_anexos: bool) -> str:
-    """
-    Devuelve el prompt maestro usando tu PROMPT_PARAMETRIZADO y reglas de citas dinámicas.
-    Si falta algo, aplica un fallback mínimo sin romper formato.
-    """
     if _prom and hasattr(_prom, "PROMPT_PARAMETRIZADO") and hasattr(_prom, "reglas_citas"):
         try:
             return _prom.PROMPT_PARAMETRIZADO.format(
@@ -61,14 +58,11 @@ def prompt_andres(varios_anexos: bool) -> str:
                 return (_prom.PROMPT_PARAMETRIZADO + "\n\n" + _prom.reglas_citas(varios_anexos)).strip()
             except Exception:
                 pass
-
-    # Fallback ultra-minimal si no hay prompts.py o falló algo arriba
     return (
         "Elabora un informe técnico-jurídico estructurado con citas literales. "
         "No inventes. Cita como '(p. N)'. Si hay múltiples anexos, usa '(Anexo X, p. N)'."
     )
 
-# Prompt para las notas intermedias: usa el tuyo si existe; si no, fallback seguro.
 CRAFT_PROMPT_NOTAS = getattr(
     _prom,
     "CRAFT_PROMPT_NOTAS",
@@ -84,7 +78,6 @@ except Exception:  # pragma: no cover
 load_dotenv()
 
 # ========================= OpenAI client =========================
-# Importante: no fijar temperature si el modelo no lo soporta (se maneja más abajo)
 OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "90"))
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
 
@@ -93,64 +86,60 @@ def _normalize_chat_kwargs(**kw):
     """
     Normaliza kwargs para client.chat.completions.create:
     - Usa 'max_tokens' (estándar). Si viene 'max_completion_tokens', lo mapea.
-    - Si temperature es None, lo remueve (algunos modelos no lo aceptan).
+    - Si temperature es None/"" elimina la clave (algunos modelos no lo aceptan).
     """
     if "max_tokens" not in kw:
         mct = kw.pop("max_completion_tokens", None)
         if mct is not None:
             kw["max_tokens"] = int(mct)
-    if kw.get("temperature", None) is None:
+    if kw.get("temperature", None) in (None, ""):
         kw.pop("temperature", None)
     return kw
 
 def _chat_create_safe(**kw):
     """
-    Crea un chat completion robusto:
-    - Primer intento con 'max_tokens'.
-    - Si el servidor rechaza 'max_tokens', reintenta con 'max_completion_tokens'.
-    - Si rechaza 'temperature', reintenta sin ese parámetro.
+    Llama a chat.completions probando variantes seguras:
+    1) kwargs normalizados.
+    2) sin 'temperature'.
+    3) con 'max_completion_tokens' en lugar de 'max_tokens'.
+    Nunca enviamos 'temperature': null.
     """
-    try:
-        return client.chat.completions.create(**_normalize_chat_kwargs(**kw))
-    except Exception as e:
-        s = str(e).lower()
+    def _call(kwargs):
+        kwargs = _normalize_chat_kwargs(**kwargs)
+        # segunda defensa por si vino temperature=None
+        if "temperature" in kwargs and kwargs["temperature"] in (None, ""):
+            kwargs.pop("temperature", None)
+        return client.chat.completions.create(**kwargs)
 
-        # Fallback por 'max_tokens' no soportado -> usar max_completion_tokens
-        if "unsupported parameter" in s and "max_tokens" in s:
-            kw2 = dict(kw)
-            # mover valor a max_completion_tokens
-            val = kw2.pop("max_tokens", kw2.pop("max_completion_tokens", None))
-            if val is not None:
-                kw2["max_completion_tokens"] = int(val)
-            # quitar temperature si también lo objeta
-            if "temperature" in s:
-                kw2.pop("temperature", None)
-            return client.chat.completions.create(**kw2)
+    variants = []
 
-        # Fallback por temperature no soportado
-        if "temperature" in s and ("unsupported" in s or "only the default" in s):
-            kw2 = dict(kw)
-            kw2.pop("temperature", None)
-            return client.chat.completions.create(**_normalize_chat_kwargs(**kw2))
+    base = dict(kw)
+    variants.append(base)
 
-        # Fallback genérico: intentar con max_completion_tokens si teníamos max_tokens
-        if "max_tokens" in kw and "max_completion_tokens" not in kw:
-            kw2 = dict(kw)
-            val = kw2.pop("max_tokens", None)
-            if val is not None:
-                kw2["max_completion_tokens"] = int(val)
-            return client.chat.completions.create(**_normalize_chat_kwargs(**kw2))
+    v_no_temp = dict(base); v_no_temp.pop("temperature", None)
+    variants.append(v_no_temp)
 
-        raise
+    v_mct = dict(v_no_temp)
+    tok = v_mct.pop("max_tokens", v_mct.pop("max_completion_tokens", None))
+    if tok is not None:
+        v_mct["max_completion_tokens"] = int(tok)
+    variants.append(v_mct)
+
+    last_e = None
+    for v in variants:
+        try:
+            return _call(v)
+        except Exception as e:
+            last_e = e
+            continue
+    raise last_e
 
 # ========================= Modelos / Heurísticas =========================
-# Sugerencia: si usas variantes específicas, setea las envs:
-# OPENAI_MODEL_ANALISIS=gpt-5   OPENAI_MODEL_VISION=gpt-5
 MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
 VISION_MODEL   = os.getenv("OPENAI_MODEL_VISION", "gpt-5")
 MODEL_NOTAS    = os.getenv("OPENAI_MODEL_NOTAS", MODEL_ANALISIS)
 MODEL_SINTESIS = os.getenv("OPENAI_MODEL_SINTESIS", MODEL_ANALISIS)
-FAST_FORCE_MODEL = os.getenv("FAST_FORCE_MODEL", "").strip()  # opcional para fast
+FAST_FORCE_MODEL = os.getenv("FAST_FORCE_MODEL", "").strip()
 
 MAX_SINGLE_PASS_CHARS = int(os.getenv("MAX_SINGLE_PASS_CHARS", "120000"))
 MAX_SINGLE_PASS_CHARS_MULTI = int(os.getenv("MAX_SINGLE_PASS_CHARS_MULTI", str(MAX_SINGLE_PASS_CHARS)))
@@ -160,11 +149,9 @@ MAX_COMPLETION_TOKENS_SALIDA = int(os.getenv("MAX_COMPLETION_TOKENS_SALIDA", "35
 TEMPERATURE_ANALISIS = os.getenv("TEMPERATURE_ANALISIS", "").strip()
 ANALISIS_MODO = os.getenv("ANALISIS_MODO", "").lower().strip()  # "fast" opcional
 
-# Granularidad / anti-copia ligera (sin perder cobertura)
 RENGLON_DESC_MAX_WORDS = int(os.getenv("RENGLON_DESC_MAX_WORDS", "24"))
 ART_SNIPPET_MAX_WORDS  = int(os.getenv("ART_SNIPPET_MAX_WORDS", "18"))
 
-# Concurrencia
 ANALISIS_CONCURRENCY = int(os.getenv("ANALISIS_CONCURRENCY", "3"))
 NOTAS_MAX_TOKENS = int(os.getenv("NOTAS_MAX_TOKENS", "1400"))
 
@@ -174,22 +161,18 @@ VISION_DPI = int(os.getenv("VISION_DPI", "150"))
 OCR_TEXT_MIN_CHARS = int(os.getenv("OCR_TEXT_MIN_CHARS", "120"))
 OCR_CONCURRENCY = int(os.getenv("OCR_CONCURRENCY", "4"))
 
-# Control de paginado en texto nativo
 PAGINAR_TEXTO_NATIVO = int(os.getenv("PAGINAR_TEXTO_NATIVO", "1"))
 
-# Calidad/recall
 MULTI_FORCE_TWO_STAGE_MIN_CHARS = int(os.getenv("MULTI_FORCE_TWO_STAGE_MIN_CHARS", "45000"))
 ENABLE_REGEX_HINTS = int(os.getenv("ENABLE_REGEX_HINTS", "1"))
 HINTS_MAX_CHARS = int(os.getenv("HINTS_MAX_CHARS", "12000"))
 HINTS_PER_FIELD = int(os.getenv("HINTS_PER_FIELD", "8"))
 ENABLE_SECOND_PASS_COMPLETION = int(os.getenv("ENABLE_SECOND_PASS_COMPLETION", "1"))
 
-# Limitar enumeraciones y desactivar expansiones automáticas
 EXPAND_SECTIONS_213_216 = int(os.getenv("EXPAND_SECTIONS_213_216", "0"))
 MAX_RENGLONES_OUT = int(os.getenv("MAX_RENGLONES_OUT", "12"))
 MAX_ARTICULOS_OUT = int(os.getenv("MAX_ARTICULOS_OUT", "12"))
 
-# Forzar reemplazo determinístico de 2.13 y 2.16 (cobertura total)
 FORCE_DETERMINISTIC_213_216 = int(os.getenv("FORCE_DETERMINISTIC_213_216", "0"))
 
 # ========================= Timers PERF =========================
@@ -205,7 +188,6 @@ def _log_tiempo(etiqueta: str, t0: float) -> None:
 
 # ==================== OCR / Raster ====================
 def _rasterizar_pagina(page: fitz.Page, dpi: int = VISION_DPI) -> bytes:
-    """Convierte una página PDF en PNG bytes a DPI indicado."""
     mat = fitz.Matrix(dpi / 72, dpi / 72)
     pix = page.get_pixmap(matrix=mat, alpha=False)
     return pix.tobytes("png")
@@ -229,20 +211,13 @@ def _ocr_openai_imagen_b64(b64_img: str, mime: str = "image/png") -> str:
                     {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64_img}"}}
                 ]
             }],
-            # Capamos salida para bajar latencia/costo
-            max_tokens=900,
-            temperature=None,  # evitar 400 en modelos que no aceptan temperature
+            max_tokens=900,  # cap de salida
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception as e:
         return f"[OCR-ERROR] {e}"
 
 def _ocr_selectivo_por_pagina(doc: fitz.Document, max_pages: int) -> str:
-    """
-    Muestrea páginas a lo largo de todo el documento para no perder planillas al final.
-    - Si la página tiene suficiente texto nativo, usa ese texto.
-    - Si no, rasteriza y aplica OCR con OpenAI Vision.
-    """
     n = len(doc)
     if n == 0:
         return ""
@@ -251,7 +226,6 @@ def _ocr_selectivo_por_pagina(doc: fitz.Document, max_pages: int) -> str:
     if to_process >= n:
         page_idxs = list(range(n))
     else:
-        # índices distribuidos a lo largo del doc
         page_idxs = sorted({
             int(round(i * (n - 1) / max(1, to_process - 1)))
             for i in range(to_process)
@@ -277,7 +251,6 @@ def _ocr_selectivo_por_pagina(doc: fitz.Document, max_pages: int) -> str:
                 i, s = fut.result()
                 resultados_map[i] = s
             except Exception:
-                # No interrumpimos todo el OCR por un fallo puntual
                 pass
 
     orden = sorted(resultados_map.keys())
@@ -288,49 +261,30 @@ def _ocr_selectivo_por_pagina(doc: fitz.Document, max_pages: int) -> str:
 
     _log_tiempo("ocr_selectivo", t0)
     return "\n\n".join([r for r in res if r]).strip()
-# utils.py — Parte 2/5
-# ==================== Extracción por tipo de archivo ====================
 
+# ==================== Extracción por tipo de archivo ====================
 def _leer_todo(file) -> bytes:
-    """
-    Lee todos los bytes de un objeto 'UploadFile' (FastAPI) o file-like.
-    Retorna b"" si no pudo leer.
-    """
     try:
-        # FastAPI UploadFile
         file.file.seek(0)
         raw = file.file.read()
     except Exception:
         try:
-            # file-like genérico
             raw = file.read()
         except Exception:
             raw = b""
     return raw or b""
 
-
 def _ext_de_archivo(file) -> str:
-    """
-    Devuelve la extensión en minúsculas, incluyendo el punto. Ej: '.pdf'
-    """
     nombre = getattr(file, "filename", "") or ""
     _, ext = os.path.splitext(nombre)
     return (ext or "").lower().strip()
 
-
 def _mime_guess(file) -> str:
-    """
-    Deducción de MIME por nombre de archivo.
-    """
     nombre = getattr(file, "filename", "") or ""
     m, _ = mimetypes.guess_type(nombre)
     return m or ""
 
-
 def _texto_nativo_etiquetado(doc: fitz.Document) -> str:
-    """
-    Construye un texto con etiquetas por página: [PÁGINA N]\n<contenido>
-    """
     partes: List[str] = []
     for i, p in enumerate(doc, 1):
         t = (p.get_text() or "").strip()
@@ -340,12 +294,7 @@ def _texto_nativo_etiquetado(doc: fitz.Document) -> str:
             partes.append(f"[PÁGINA {i}] (sin texto)")
     return "\n\n".join(partes).strip()
 
-
 def extraer_texto_de_pdf(file) -> str:
-    """
-    Extrae texto de PDF. Si el texto nativo total es muy escaso (<500 chars),
-    aplica OCR selectivo distribuido.
-    """
     t0 = _t()
     raw = _leer_todo(file)
     if not raw:
@@ -358,7 +307,6 @@ def extraer_texto_de_pdf(file) -> str:
             for p in doc:
                 suma += len((p.get_text() or "").strip())
 
-            # Si hay poco texto nativo, usar OCR selectivo
             if suma < 500:
                 ocr_t0 = _t()
                 ocr_text = _ocr_selectivo_por_pagina(doc, VISION_MAX_PAGES)
@@ -374,7 +322,6 @@ def extraer_texto_de_pdf(file) -> str:
             _log_tiempo("extraccion_pdf_total", t0)
             return (out or "").strip()
     except Exception:
-        # Fallback: intentar decodificar como texto plano (evita vacío)
         try:
             out = raw.decode("utf-8", errors="ignore")
             _log_tiempo("extraccion_pdf_decode", t0)
@@ -383,12 +330,7 @@ def extraer_texto_de_pdf(file) -> str:
             _log_tiempo("extraccion_pdf_error", t0)
             return ""
 
-
 def extraer_texto_de_docx(file) -> str:
-    """
-    Extrae texto de un DOCX: párrafos + tablas (filas ' | ').
-    Si no hay python-docx disponible, intenta decode('utf-8').
-    """
     t0 = _t()
     raw = _leer_todo(file)
     if not raw:
@@ -408,13 +350,11 @@ def extraer_texto_de_docx(file) -> str:
         document = docx.Document(io.BytesIO(raw))
         partes: List[str] = []
 
-        # Párrafos
         for p in document.paragraphs:
             txt = (p.text or "").strip()
             if txt:
                 partes.append(txt)
 
-        # Tablas
         for tbl in document.tables:
             for row in tbl.rows:
                 celdas = [(cell.text or "").strip() for cell in row.cells]
@@ -434,12 +374,7 @@ def extraer_texto_de_docx(file) -> str:
             _log_tiempo("extraccion_docx_error", t0)
             return ""
 
-
 def extraer_texto_de_imagen(file) -> str:
-    """
-    Extrae texto de una imagen usando OCR con OpenAI Vision.
-    Acepta PNG/JPG/JPEG/WEBP. Normaliza a PNG cuando sea posible.
-    """
     t0 = _t()
     raw = _leer_todo(file)
     if not raw:
@@ -450,14 +385,12 @@ def extraer_texto_de_imagen(file) -> str:
     ext = _ext_de_archivo(file)
 
     try:
-        # Intentar abrir con PyMuPDF y normalizar a PNG consistente
         img_doc = fitz.open(stream=raw, filetype=ext.lstrip(".") or None)
         page = img_doc.load_page(0)
         png = page.get_pixmap(alpha=False).tobytes("png")
         b64 = base64.b64encode(png).decode("utf-8")
         mime = "image/png"
     except Exception:
-        # Fallback: mandar binario original con MIME correcto
         b64 = base64.b64encode(raw).decode("utf-8")
         if mime_guess.startswith("image/"):
             mime = mime_guess
@@ -468,38 +401,26 @@ def extraer_texto_de_imagen(file) -> str:
     _log_tiempo("extraccion_imagen_ocr", t0)
     return out
 
-
 def extraer_texto_universal(file) -> str:
-    """
-    Enruta por tipo de archivo:
-    - PDF -> extraer_texto_de_pdf
-    - DOCX -> extraer_texto_de_docx
-    - Imagen -> extraer_texto_de_imagen
-    - Otro -> decode UTF-8 (con limpieza RTF si corresponde)
-    """
     t0 = _t()
     ext = _ext_de_archivo(file)
     mime = _mime_guess(file)
 
-    # PDF
     if ext == ".pdf" or (mime == "application/pdf"):
         out = extraer_texto_de_pdf(file)
         _log_tiempo("extraer_texto_universal_pdf", t0)
         return out
 
-    # DOCX
     if ext == ".docx" or (mime in ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"]):
         out = extraer_texto_de_docx(file)
         _log_tiempo("extraer_texto_universal_docx", t0)
         return out
 
-    # Imagen
     if ext in [".png", ".jpg", ".jpeg", ".webp"] or (mime.startswith("image/") if mime else False):
         out = extraer_texto_de_imagen(file)
         _log_tiempo("extraer_texto_universal_imagen", t0)
         return out
 
-    # Texto plano / otros contenedores
     raw = _leer_todo(file)
     if not raw:
         _log_tiempo("extraer_texto_universal_sin_bytes", t0)
@@ -510,7 +431,6 @@ def extraer_texto_universal(file) -> str:
     except Exception:
         text = ""
 
-    # Limpieza simple de RTF si corresponde
     if ext == ".rtf":
         text = re.sub(r"{\\rtf1.*?\\viewkind4\\uc1", "", text, flags=re.S)
         text = re.sub(r"\\[a-z]+-?\d* ?", "", text)
@@ -520,21 +440,15 @@ def extraer_texto_universal(file) -> str:
     _log_tiempo("extraer_texto_universal_texto_plano", t0)
     return out
 
-
 # ==================== Pre-limpieza ====================
 def _limpieza_basica_preanalisis(s: str) -> str:
-    """
-    Quita cabeceras/pies repetitivos, separadores y espacios excesivos.
-    No elimina contenido sustantivo.
-    """
-    s = re.sub(r"\n?P[aá]gina\s+\d+\s+de\s+\d+\s*\n", "\n", s, flags=re.I)  # 'Página X de Y'
-    s = re.sub(r"\n[-_]{3,}\n", "\n", s)                                    # líneas ----/____
-    s = re.sub(r"[ \t]+\n", "\n", s)                                        # espacios antes de salto
-    s = re.sub(r"\n{3,}", "\n\n", s)                                        # múltiples saltos
+    s = re.sub(r"\n?P[aá]gina\s+\d+\s+de\s+\d+\s*\n", "\n", s, flags=re.I)
+    s = re.sub(r"\n[-_]{3,}\n", "\n", s)
+    s = re.sub(r"[ \t]+\n", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
     return (s or "").strip()
-# utils.py — Parte 3/5
-# ==================== Filtrado de meta-frases y utilidades ====================
 
+# ==================== Filtrado de meta-frases y utilidades ====================
 _META_PATTERNS = [
     re.compile(r"(?i)\bparte\s+\d+\s+de\s+\d+"),
     re.compile(r"(?i)informe\s+basado\s+en\s+la\s+parte"),
@@ -555,9 +469,7 @@ def _limpiar_meta(texto: str) -> str:
 def _particionar(texto: str, max_chars: int) -> List[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto or ""), max_chars)]
 
-
 # =============== Índices de anexos y páginas ===============
-
 _ANEXO_RE = re.compile(r"(?im)^===\s*ANEXO\s+(\d+)")
 _PAG_TAG_RE = re.compile(r"\[PÁGINA\s+(\d+)\]")
 
@@ -588,27 +500,20 @@ def _anexo_en_pos(indices: List[Tuple[int, int]], pos: int) -> Optional[int]:
             break
     return last
 
-
-# =============== Normalización de citas según modo (multi vs único) ===============
-
+# =============== Normalización de citas ===============
 _CITA_ANEXO_RE = re.compile(r"\(Anexo\s+([IVXLCDM\d]+)(?:,\s*p\.\s*(\d+))?\)", re.I)
 
 def _normalize_citas_salida(texto: str, varios_anexos: bool) -> str:
     if varios_anexos:
         return texto or ""
-
-    # Si es documento único, convertir "(Anexo X, p. N)" en "(p. N)" o fuente genérica
     def repl(m):
         pag = m.group(2)
         if pag:
             return f"(p. {pag})"
         return "(Fuente: documento provisto)"
-
     return _CITA_ANEXO_RE.sub(repl, texto or "")
 
-
-# ==================== Normalización para PDF (sin markdown) ====================
-
+# =============== Normalización para PDF (sin markdown) ===============
 _HDR_RE = re.compile(r"^\s{0,3}(#{1,6})\s*(.+)$")
 _BULLET_RE = re.compile(r"^\s*[-*•]\s+")
 _TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
@@ -620,27 +525,16 @@ def _title_case(s: str) -> str:
     return " ".join(w.capitalize() if w else w for w in re.split(r"(\s+)", s or ""))
 
 def preparar_texto_para_pdf(markdown_text: str) -> str:
-    """
-    Limpia markdown ligero para un renderizador de texto plano en PDF:
-    - Quita fences de código y separadores de tablas.
-    - Convierte bullets '-'/'*'/'•' a '• '.
-    - Normaliza encabezados '# Titulo' a 'Titulo' + línea en blanco.
-    - Quita links dejando 'texto (url)'.
-    - Elimina negritas/cursivas de markdown.
-    - Normaliza posibles '0) Ficha…' a título sin prefijo.
-    """
     out_lines: List[str] = []
     for raw_ln in (markdown_text or "").splitlines():
         ln = raw_ln.rstrip()
 
-        # Normaliza encabezado de Ficha si el modelo lo numeró como "0)"
         if re.match(r"^\s*0\)\s*Ficha\s+estandarizada\s+del\s+procedimiento\b", ln, flags=re.I):
             ln = "Ficha estandarizada del procedimiento (campos estandarizados)"
 
         if _CODE_FENCE_RE.match(ln):
             continue
 
-        # Filtra títulos indeseados
         if re.match(r"(?i)^\s*informe\s+completo\s*$", ln):
             continue
         if re.match(r"(?i)^\s*informe\s+original\s*$", ln):
@@ -649,8 +543,7 @@ def preparar_texto_para_pdf(markdown_text: str) -> str:
         m = _HDR_RE.match(ln)
         if m:
             titulo = _title_case(m.group(2).strip(": ").strip())
-            out_lines.append(titulo)
-            out_lines.append("")  # espacio tras título
+            out_lines.append(titulo); out_lines.append("")
             continue
 
         if _TABLE_SEP_RE.match(ln):
@@ -664,7 +557,6 @@ def preparar_texto_para_pdf(markdown_text: str) -> str:
 
         out_lines.append(ln)
 
-        # Espacio extra tras líneas que actúan como subtítulos
         if ln.strip().endswith(":"):
             out_lines.append("")
 
@@ -672,9 +564,7 @@ def preparar_texto_para_pdf(markdown_text: str) -> str:
     texto = re.sub(r"\n{3,}", "\n\n", texto).strip()
     return texto
 
-
 # ==================== Hints regex (recall) ====================
-
 def _buscar_candidatos(texto: str, pats: List[str], idx_pag: List[Tuple[int, int]], limit: int) -> List[str]:
     hits: List[str] = []
     for pat in pats:
@@ -703,13 +593,10 @@ def _build_regex_hints(texto: str, limit_per_field: Optional[int] = None, max_ch
         hits = _buscar_candidatos(texto, meta["pats"], idx_pag, limit_per_field)
         if hits:
             secciones.append(f"[{meta['label']}]\n" + "\n".join(hits))
-        # Límite suave de caracteres para evitar salidas enormes
         if sum(len(s) for s in secciones) > max_chars:
             break
     return "\n\n".join(secciones[:])
 
-
-# Campos detectables (ampliados y adaptados a AR)
 DETECTABLE_FIELDS: Dict[str, Dict] = {
     "mant_oferta": {"label": "Mantenimiento de oferta", "pats": [r"mantenim[ií]ento de la oferta", r"validez de la oferta"]},
     "gar_mant":    {"label": "Garantía de mantenimiento", "pats": [r"garant[ií]a.*manten", r"\b5 ?%"]},
@@ -742,22 +629,18 @@ DETECTABLE_FIELDS: Dict[str, Dict] = {
     "obj_gasto":   {"label": "Objeto del gasto", "pats": [r"objeto\s+del\s+gasto", r"partida\s+presupuestaria", r"clasificador"]},
     "ofertas_perm":{"label": "Ofertas permitidas", "pats": [r"m[aá]s\s+de\s+una\s+oferta", r"ofertas?\s+alternativas", r"una\s+sola\s+oferta"]},
 }
-# utils.py — Parte 4/5
 
 # ==================== Utilidades de conteo y evidencia ====================
 def _count(pattern: str, text: str) -> int:
     return len(re.findall(pattern, text or "", flags=re.I))
 
-# --- Artículos (títulos y bloques) ---
+# --- Artículos ---
 _ART_HEAD_RE = re.compile(r"(?im)^\s*(art(?:[íi]culo|\.?)\s*\d+[a-zº°]?)\s*[-–—:]?\s*(.*)$")
 _ART_BLOCK_RE = re.compile(
     r"(?ims)^\s*(art(?:[íi]culo|\.?)\s*\d+[a-zº°]?)\s*[-–—:]?\s*(.+?)(?=^\s*art(?:[íi]culo|\.?)\s*\d+[a-zº°]?|\Z)"
 )
 
 def _extraer_articulos_con_snippets(texto: str) -> List[Tuple[str, str, int, Optional[int]]]:
-    """
-    Devuelve lista de (rotulo_articulo, snippet_200c, pagina_aprox, anexo_num).
-    """
     texto = texto or ""
     idx = _index_paginas(texto)
     idx_ax = _index_anexos(texto)
@@ -773,7 +656,6 @@ def _extraer_articulos_con_snippets(texto: str) -> List[Tuple[str, str, int, Opt
         res.append((rotulo, snippet, p, ax))
 
     if not res:
-        # Fallback: encabezados sueltos
         for m in _ART_HEAD_RE.finditer(texto):
             start = m.start()
             p = _pagina_de_indice(idx, start)
@@ -784,18 +666,12 @@ def _extraer_articulos_con_snippets(texto: str) -> List[Tuple[str, str, int, Opt
 
     return res
 
-
-# --- Renglones robustos (requiere "Renglón" o variantes) ---
+# --- Renglones robustos ---
 _ROW_START_RE = re.compile(r"(?im)^(?:reng(?:l[oó]n)?\.?\s*)(\d{1,4})\b")
-_CODE_RE = re.compile(r"\b[A-Z]{1,3}\d{5,8}\b")  # ej: D0330113, GB079001, E5001253
+_CODE_RE = re.compile(r"\b[A-Z]{1,3}\d{5,8}\b")
 _QTY_RE  = re.compile(r"\b\d{1,6}\b")
 
 def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[int, Optional[int], Optional[str], str, int, Optional[int]]]:
-    """
-    Devuelve lista: (num_renglon, cantidad, codigo, descripcion_full, pagina_aprox, anexo_num)
-    - Reconoce filas numeradas que empiezan con "Renglón".
-    - Agrega líneas subsiguientes hasta el siguiente comienzo de fila.
-    """
     texto = texto or ""
     idx = _index_paginas(texto)
     idx_ax = _index_anexos(texto)
@@ -803,7 +679,7 @@ def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[int, Optiona
 
     lines = texto.splitlines()
     pos = 0
-    starts: List[Tuple[int, int]] = []  # (line_index, abs_pos)
+    starts: List[Tuple[int, int]] = []
     for i, ln in enumerate(lines):
         m = _ROW_START_RE.match(ln)
         if m:
@@ -813,7 +689,6 @@ def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[int, Optiona
     if not starts:
         return res
 
-    # Sentinel
     starts.append((len(lines), len(texto)))
 
     for k in range(len(starts) - 1):
@@ -822,14 +697,12 @@ def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[int, Optiona
         block_lines = lines[i_line:j_line]
         block_text = " ".join([re.sub(r"\s+", " ", x).strip() for x in block_lines if x.strip()])
 
-        # número de renglón
         mnum = _ROW_START_RE.match(lines[i_line])
         try:
             num_r = int(mnum.group(1)) if mnum else None
         except Exception:
             num_r = None
 
-        # cantidad (primer entero de la línea tras el número)
         qty = None
         if mnum:
             tail = lines[i_line][mnum.end():]
@@ -840,11 +713,9 @@ def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[int, Optiona
                 except Exception:
                     qty = None
 
-        # código (en todo el bloque)
         mcode = _CODE_RE.search(block_text)
         code = mcode.group(0) if mcode else None
 
-        # descripción y especificaciones
         desc = block_text
         if code:
             desc = re.sub(re.escape(code), "", desc)
@@ -863,12 +734,7 @@ def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[int, Optiona
     res.sort(key=lambda t: t[0])
     return res
 
-
 def _construir_evidencia_ampliacion(texto: str) -> Tuple[str, int, int]:
-    """
-    Arma evidencias literales con páginas/anexos para renglones y artículos.
-    Devuelve: (bloque_evidencia, cant_renglones, cant_articulos).
-    """
     texto = texto or ""
     renglones = _extraer_renglones_y_especificaciones(texto)
     articulos = _extraer_articulos_con_snippets(texto)
@@ -896,11 +762,9 @@ def _construir_evidencia_ampliacion(texto: str) -> Tuple[str, int, int]:
 
     return ("\n\n".join(ev_parts) if ev_parts else ""), len(renglones), len(articulos)
 
-
 def _conteo_en_informe(informe: str) -> Tuple[int, int]:
     informe = informe or ""
     return _count(r"(?im)\brengl[oó]n\s*\d+", informe), _count(r"(?im)\bart(?:[íi]culo|\.?)\s*\d+", informe)
-
 
 def _max_out_for_text(texto: str) -> int:
     texto = texto or ""
@@ -919,8 +783,6 @@ def _max_out_for_text(texto: str) -> int:
             base = max(base, 3500)
     return int(base)
 
-
-# ====== Utilidad de compresión no literal ======
 def _truncate_words(s: str, max_words: int) -> str:
     try:
         words = re.findall(r"\S+", s or "")
@@ -930,20 +792,17 @@ def _truncate_words(s: str, max_words: int) -> str:
     except Exception:
         return (s or "").strip()
 
-
-# Palabras-clave para filtrar artículos realmente útiles
 _ART_KEYS = re.compile(
     r"(objeto|tipolog|modalidad|mantenim|pr[oó]rroga|oferta|apertura|evaluaci[oó]n|empate|mejora|adjudicaci[oó]n|"
     r"garant[ií]a|entrega|plazo|pago|factura|sanci[oó]n|penalidad|rescis[ií]n|perfeccionamiento|subsanaci[oó]n)",
     re.I
 )
 
-# ====== Generadores determinísticos de 2.13 y 2.16 ======
 def _build_section_213(texto: str, varios_anexos: bool) -> str:
     rows = _extraer_renglones_y_especificaciones(texto or "")
     if not rows:
         return ""
-    rows = rows[:max(1, MAX_RENGLONES_OUT)]  # tope
+    rows = rows[:max(1, MAX_RENGLONES_OUT)]
     lines = ["2.13 Planilla de cotización y renglones:"]
     for (num, qty, code, desc, p, ax) in rows:
         desc_corta = _truncate_words(desc, RENGLON_DESC_MAX_WORDS)
@@ -961,11 +820,10 @@ def _build_section_216(texto: str, varios_anexos: bool) -> str:
     arts = _extraer_articulos_con_snippets(texto or "")
     if not arts:
         return ""
-    # filtrar por relevancia práctica
     arts = [(rot, sn, p, ax) for (rot, sn, p, ax) in arts if _ART_KEYS.search(sn or "") or _ART_KEYS.search(rot or "")]
     if not arts:
         return ""
-    arts = arts[:max(1, MAX_ARTICULOS_OUT)]  # tope
+    arts = arts[:max(1, MAX_ARTICULOS_OUT)]
     lines = ["2.16 Catálogo de artículos citados:"]
     for (rot, sn, p, ax) in arts:
         rot_norm = re.sub(r"(?i)art(?:[íi]culo|\.)\s*", "Art. ", rot or "").strip()
@@ -974,15 +832,11 @@ def _build_section_216(texto: str, varios_anexos: bool) -> str:
         lines.append(f" - {rot_norm} — {sn} {cita}")
     return "\n".join(lines)
 
-
-# ====== Contactos (emails/URLs) con página/anexo ======
+# ====== Contactos ======
 CONTACT_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 CONTACT_URL_RE   = re.compile(r"(https?://[^\s)]+|www\.[^\s)]+)")
 
 def _extraer_contactos_con_paginas(texto: str) -> List[Tuple[str, str, int, Optional[int]]]:
-    """
-    Devuelve lista de (tipo, valor, p, anexo) con tipo in {"email","url"}.
-    """
     texto = texto or ""
     idx_pag = _index_paginas(texto)
     idx_ax  = _index_anexos(texto)
@@ -1001,7 +855,6 @@ def _extraer_contactos_con_paginas(texto: str) -> List[Tuple[str, str, int, Opti
         v = (m.group(0) or "").rstrip(").,;")
         res.append(("url", v, p, ax))
 
-    # dedupe preservando orden
     seen = set()
     dedup: List[Tuple[str, str, int, Optional[int]]] = []
     for t, v, p, ax in res:
@@ -1023,7 +876,6 @@ def _build_section_23(texto: str, varios_anexos: bool) -> str:
         out.append(f" - {etiqueta}: {v} {cita}")
     return "\n".join(out)
 
-
 # ====== Normativa aplicable ======
 NORM_TIPOS = [
     ("Ley",        r"\bLey(?:\s*N[°º])?\s*([\d\.]{1,7}(?:/\d{2,4})?)\b"),
@@ -1034,14 +886,10 @@ NORM_TIPOS = [
 NORM_PATTS = [(tipo, re.compile(patt, re.I)) for (tipo, patt) in NORM_TIPOS]
 
 def _extraer_normativa(texto: str) -> List[Tuple[str, str, int, Optional[int]]]:
-    """
-    Devuelve lista de (tipo, numero, p, anexo).
-    """
     texto = texto or ""
     idx_pag = _index_paginas(texto)
     idx_ax  = _index_anexos(texto)
     res: List[Tuple[str, str, int, Optional[int]]] = []
-
     for (tipo, cre) in NORM_PATTS:
         for m in cre.finditer(texto):
             pos = m.start()
@@ -1050,7 +898,6 @@ def _extraer_normativa(texto: str) -> List[Tuple[str, str, int, Optional[int]]]:
             numero = (m.group(1) or "").strip()
             res.append((tipo, numero, p, ax))
 
-    # dedupe preservando orden
     seen = set()
     dedup: List[Tuple[str, str, int, Optional[int]]] = []
     for t, n, p, ax in res:
@@ -1071,12 +918,8 @@ def _build_section_215(texto: str, varios_anexos: bool) -> str:
         out.append(f" - {t} {n} {cita}")
     return "\n".join(out)
 
-
-# ====== Reemplazo de secciones en el informe ======
+# ====== Reemplazo de secciones ======
 def _find_section_bounds(text: str, header_regex: str) -> Tuple[int, int]:
-    """
-    Devuelve (start, end) del bloque que inicia en header_regex hasta el próximo encabezado 2.X o fin.
-    """
     text = text or ""
     m = re.search(header_regex, text, flags=re.I)
     if not m:
@@ -1093,29 +936,19 @@ def _replace_section(text: str, header_regex: str, replacement: str) -> str:
         return (text or "").rstrip() + "\n\n" + (replacement or "").strip() + "\n"
     return (text or "")[:s] + (replacement or "").strip() + "\n" + (text or "")[e:]
 
-
-# ==================== Ampliación / sustitución de 2.13 y 2.16 ====================
+# ====== Ampliación / sustitución de 2.13 y 2.16 ======
 def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
-    """
-    Por defecto (EXPAND_SECTIONS_213_216=0) NO toca 2.13 ni 2.16.
-    Siempre normaliza 2.3 Contactos y 2.15 Normativa a partir de extracción determinística.
-    """
     out = informe or ""
-
-    # Actualizar determinístico 2.3 y 2.15
     sec23 = _build_section_23(texto_fuente or "", varios_anexos)
     if sec23:
         out = _replace_section(out, r"(?im)^\s*2\.3\s+Contactos", sec23)
-
     sec215 = _build_section_215(texto_fuente or "", varios_anexos)
     if sec215:
         out = _replace_section(out, r"(?im)^\s*2\.15\s+Normativa", sec215)
 
-    # Si no se solicita expansión de renglones/artículos, retornar
     if not EXPAND_SECTIONS_213_216:
         return out
 
-    # Construir 2.13 y 2.16 con topes y reemplazar
     sec213 = _build_section_213(texto_fuente or "", varios_anexos)
     if sec213:
         alt213 = sec213.replace("2.13 Planilla de cotización y renglones:", "9) Renglones y planilla de cotización:")
@@ -1130,42 +963,31 @@ def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexo
     out = re.sub(r"(?im)^\s*informe\s+original\s*$", "", out)
     return out
 
-
-# === Post-proceso de Ficha (reparaciones determinísticas) ===
+# === Post-proceso de Ficha ===
 def _reparar_ficha(informe: str, texto_fuente: str) -> str:
-    """
-    Corrige campos de la Ficha que a veces quedan como placeholders:
-    - 'Total de renglones: N' -> cuenta real de renglones detectados
-    - 'Monto: $...'          -> 'NO ESPECIFICADO' (si el modelo dejó puntos/suspensivos)
-    """
     try:
         total_renglones = len(_extraer_renglones_y_especificaciones(texto_fuente or ""))
     except Exception:
         total_renglones = 0
 
     if total_renglones:
-        # Reemplaza cualquier línea de 'Número de renglón' por el total real
         informe = re.sub(
             r"(?im)^(\s*•\s*(?:N[uú]mero\s+de\s+rengl[oó]n|Numero\s+de\s+renglon)\s*:\s*)[^\n]*$",
             lambda m: f"{m.group(1)}Total de renglones: {total_renglones}; ver Sección 9 para el detalle completo",
             informe or ""
         )
-        # Si en otro lado quedó 'Total de renglones: N', reemplaza la N
         informe = re.sub(
             r"(?im)\bTotal de renglones:\s*N\b",
             f"Total de renglones: {total_renglones}",
             informe or ""
         )
 
-    # Normaliza placeholder de monto tipo '$...' a 'NO ESPECIFICADO' (preservando cita si existe)
     informe = re.sub(
         r"(?im)^(\s*•\s*Monto:\s*)(?:\$+\s*\.{0,3}|[$…]+)\s*(\(.*?\))?\s*$",
         lambda m: f"{m.group(1)}NO ESPECIFICADO{(' ' + m.group(2) if m.group(2) else '')}",
         informe or ""
     )
-
     return (informe or "")
-# utils.py — Parte 5/5
 
 # ==================== Llamada a OpenAI robusta ====================
 def _max_tokens_salida_adaptivo(longitud_chars: int) -> int:
@@ -1197,7 +1019,6 @@ def _llamada_openai(
 ):
     mdl = model or _pick_model("analisis")
 
-    # Calcula temperatura pero solo la envía si aplica
     temp_wanted = None
     if ANALISIS_MODO == "fast":
         temp_wanted = 0.0
@@ -1211,13 +1032,11 @@ def _llamada_openai(
         kw = dict(
             model=m,
             messages=messages,
-            # Usar 'max_tokens' (estándar). _chat_create_safe ya mapea si hace falta.
             max_tokens=int(max_tok or max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA),
         )
         if with_temperature and (temp_wanted is not None):
-            kw["temperature"] = temp_wanted
-        else:
-            kw["temperature"] = None
+            kw["temperature"] = temp_wanted  # solo si hay valor real
+        # Nunca agregamos 'temperature': None
         return kw
 
     models_to_try = [mdl] + ([fallback_model] if fallback_model and fallback_model != mdl else [])
@@ -1226,14 +1045,12 @@ def _llamada_openai(
     for m in models_to_try:
         for attempt in range(retries + 1):
             try:
-                # 1) intento normal (con temperature si corresponde)
                 kw = _build_kwargs(m, with_temperature=True)
                 resp = _chat_create_safe(**kw)
                 content = (resp.choices[0].message.content or "").strip()
                 if content:
                     return resp
 
-                # 2) si vino vacío, reintento corto sin temperature y con menos tokens
                 kw2 = _build_kwargs(m, with_temperature=False, max_tok=min(1024, kw["max_tokens"]))
                 resp2 = _chat_create_safe(**kw2)
                 content2 = (resp2.choices[0].message.content or "").strip()
@@ -1241,26 +1058,13 @@ def _llamada_openai(
                     return resp2
                 raise RuntimeError("La respuesta del modelo llegó vacía.")
             except Exception as e:
-                msg = str(e)
-                # Reintento inmediato sin temperature si el modelo no la soporta
-                if ("temperature" in msg) and ("unsupported" in msg or "Only the default" in msg):
-                    try:
-                        resp = _chat_create_safe(**_build_kwargs(m, with_temperature=False))
-                        content = (resp.choices[0].message.content or "").strip()
-                        if content:
-                            return resp
-                    except Exception as e2:
-                        last_error = e2
-                else:
-                    last_error = e
-
+                last_error = e
                 if attempt < retries:
                     time.sleep(1.2 * (attempt + 1))
                 else:
                     break
 
     raise RuntimeError(str(last_error) if last_error else "Fallo en _llamada_openai")
-
 
 # ==================== Concurrencia para NOTAS ====================
 def _compute_chunk_size(total_chars: int) -> int:
@@ -1296,7 +1100,6 @@ def _generar_notas_concurrente(partes: List[str]) -> List[str]:
     _log_tiempo(f"notas_intermedias_{len(partes)}_partes_concurrente", t0)
     return [r or "" for r in resultados]
 
-
 # ==================== Segundo pase (focalizado) ====================
 _NOESP_RE = re.compile(r"(?i)\bNO ESPECIFICADO\b")
 
@@ -1322,7 +1125,7 @@ def _segundo_pase_si_falta(original_report: str, texto_fuente: str, varios_anexo
 (Revision focalizada) Completa UNICAMENTE los campos marcados como "NO ESPECIFICADO" en el informe,
 usando SOLO la evidencia literal que te paso abajo. Mantiene exactamente la estructura y secciones del
 informe original, sin agregar nuevas secciones. Donde la evidencia sea ambigua, deja "NO ESPECIFICADO".
-Respeta las reglas de citas del informe original (usa (Anexo X, p. N) o (p. N) segun corresponda).
+Respeta las reglas de citas del informe original (usa (Anexo X, p. N) o (p. N) según corresponda).
 NO imprimas rótulos como 'Informe Original'.
 
 === CONTENIDO A CORREGIR ===
@@ -1345,13 +1148,8 @@ NO imprimas rótulos como 'Informe Original'.
     except Exception:
         return original_report
 
-
 # ==================== Normalizaciones finales de salida ====================
 def _normalizar_encabezados_salida(informe: str) -> str:
-    """
-    - Elimina el prefijo '0) ' en la Ficha estandarizada.
-    - Limpia duplicados o espacios errantes.
-    """
     s = informe or ""
     s = re.sub(
         r"(?im)^\s*0\)\s*Ficha\s+estandarizada\s+del\s+procedimiento\s*\(campos\s+estandarizados\)\s*$",
@@ -1364,10 +1162,6 @@ def _normalizar_encabezados_salida(informe: str) -> str:
     return s.strip()
 
 def _corregir_seccion_9_si_vacia(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
-    """
-    Si la sección 9) quedó vacía, genérica o sin renglones, la reemplaza
-    por una versión determinística construida desde el texto fuente.
-    """
     s = informe or ""
     start, end = _find_section_bounds(s, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla")
     needs_fix = False
@@ -1394,7 +1188,6 @@ def _corregir_seccion_9_si_vacia(informe: str, texto_fuente: str, varios_anexos:
     else:
         return _replace_section(s, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla", sec9)
 
-
 # ==================== Analizador principal ====================
 def analizar_con_openai(texto: str) -> str:
     if not texto or not texto.strip():
@@ -1410,7 +1203,6 @@ def analizar_con_openai(texto: str) -> str:
 
     force_two_stage = (varios_anexos and texto_len >= MULTI_FORCE_TWO_STAGE_MIN_CHARS)
 
-    # Single pass
     if (not varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS) or \
        (varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS_MULTI and not force_two_stage):
         t0 = _t()
@@ -1436,7 +1228,7 @@ def analizar_con_openai(texto: str) -> str:
         except Exception as e:
             return f"Error al generar el análisis: {e}"
 
-    # Dos etapas (chunking + concurrencia)
+    # Dos etapas
     chunk_size = _compute_chunk_size(texto_len)
     partes = _particionar(texto, chunk_size)
 
@@ -1464,7 +1256,7 @@ def analizar_con_openai(texto: str) -> str:
         except Exception as e:
             return f"Error al generar el análisis: {e}"
 
-    # A) Notas intermedias (concurrente)
+    # A) Notas intermedias
     notas_list = _generar_notas_concurrente(partes)
     notas_integradas = "\n".join(notas_list)
 
@@ -1501,14 +1293,8 @@ Devuelve SOLO el informe final en texto.
     except Exception as e:
         return f"Error en la síntesis final: {e}\n\nNotas intermedias:\n{_limpiar_meta(notas_integradas)}"
 
-
 # ==================== Multi-anexo ====================
 def analizar_anexos(files: list) -> str:
-    """
-    Combina anexos y ejecuta análisis.
-    - 1 archivo: NO marca '=== ANEXO ... ===' para habilitar single-pass y citas (p. N).
-    - >=2: marca ANEXOS para trazabilidad.
-    """
     if not files:
         return "No se recibieron anexos para analizar."
 
@@ -1544,8 +1330,7 @@ def analizar_anexos(files: list) -> str:
 
     return analizar_con_openai(contenido_unico)
 
-
-# ==================== Chat (mejorado con tools/RAG ligero) ====================
+# ==================== Chat (tools/RAG ligero) ====================
 MAX_CHAT_CONTEXT_CHARS = int(os.getenv("MAX_CHAT_CONTEXT_CHARS", "38000"))
 CHAT_MAX_TOKENS        = int(os.getenv("CHAT_MAX_TOKENS", "1200"))
 CHAT_RETRIES           = int(os.getenv("CHAT_RETRIES", "2"))
@@ -1599,9 +1384,6 @@ def _buscar_en_historial_impl(contexto: str, query: str, k: int = 8, window: int
     return {"hits": hits}
 
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
-    """
-    Chat con búsqueda ligera en el historial mediante tool-calling.
-    """
     contexto_compacto = _compactar_contexto_para_chat(contexto or "(No hay historial disponible.)")
 
     tools = [{
@@ -1646,14 +1428,12 @@ Instrucciones de salida:
 """
 
     def _chat_call(model_name: str, msgs: list):
-        # No enviar temperature explícito salvo que lo configuremos
         return _chat_create_safe(
             model=model_name,
             messages=msgs,
             tools=tools,
             tool_choice="auto",
             max_tokens=CHAT_MAX_TOKENS,
-            temperature=None,
         )
 
     model_primary = os.getenv("OPENAI_MODEL_CHAT", _pick_model("analisis"))
@@ -1670,7 +1450,6 @@ Instrucciones de salida:
             try:
                 resp = _chat_call(model_try, messages)
                 choice = resp.choices[0]
-                # Si el modelo pidió usar la tool, ejecutamos y respondemos de nuevo
                 if getattr(choice.message, "tool_calls", None):
                     for tc in choice.message.tool_calls:
                         if tc.function.name == "buscar_en_historial":
@@ -1689,7 +1468,6 @@ Instrucciones de salida:
                                 "name": "buscar_en_historial",
                                 "content": json.dumps(result, ensure_ascii=False)
                             })
-                    # Segunda llamada con el resultado de la tool
                     resp2 = _chat_call(model_try, messages)
                     out = (resp2.choices[0].message.content or "").strip()
                     if out:
@@ -1711,13 +1489,8 @@ Instrucciones de salida:
         "No pude generar respuesta en este momento."
     )
 
-
 # ==================== PDF ====================
 def _render_pdf_bytes(resumen: str, fecha_display: Optional[str] = None) -> bytes:
-    """
-    Renderiza el PDF. Si 'fecha_display' viene informada (ej: '31/05/2025 14:03'),
-    la usa tal cual. Si no, usa hora local de AR.
-    """
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
 
@@ -1778,9 +1551,6 @@ def _render_pdf_bytes(resumen: str, fecha_display: Optional[str] = None) -> byte
     return buffer.getvalue()
 
 def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str, fecha_display: Optional[str] = None):
-    """
-    Genera el PDF en generated_pdfs/{nombre_archivo}
-    """
     output_dir = os.path.join("generated_pdfs")
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, nombre_archivo)
