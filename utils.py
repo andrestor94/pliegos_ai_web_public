@@ -35,24 +35,47 @@ from reportlab.lib.colors import HexColor
 from zoneinfo import ZoneInfo  # fallback local AR
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# === NUEVO: prompts centralizados ===
-# Solo importamos lo que realmente usamos; con fallbacks si no existe en prompts.py
+# === NUEVO: prompts centralizados (compatible con tu prompts.py, sin warnings) ===
+# Busca 'prompts.py' y usa sus símbolos si existen; si no, aplica fallbacks silenciosos.
 try:
-    # prompts.py debe estar en la MISMA carpeta que utils.py y main.py
-    from prompts import SINONIMOS_CANONICOS, prompt_andres, CRAFT_PROMPT_NOTAS
-except Exception as e:  # pragma: no cover
-    print(f"[WARN] prompts.py faltante o sin símbolos esperados: {e}")
-    SINONIMOS_CANONICOS = ""  # fallback: guía vacía
+    import prompts as _prom
+except Exception:
+    _prom = None
 
-    def prompt_andres(varios_anexos: bool) -> str:  # fallback mínimo
-        return (
-            "Elabora un informe técnico-jurídico estructurado con citas literales. "
-            "No inventes. Cita como '(p. N)'. Si hay múltiples anexos, usa '(Anexo X, p. N)'."
-        )
+# Sinónimos: si no los definiste, queda vacío (no rompe nada).
+SINONIMOS_CANONICOS = getattr(_prom, "SINONIMOS_CANONICOS", "")
 
-    CRAFT_PROMPT_NOTAS = (
-        "Extrae bullets técnicos y concisos con citas literales; cero invenciones."
+def prompt_andres(varios_anexos: bool) -> str:
+    """
+    Devuelve el prompt maestro usando tu PROMPT_PARAMETRIZADO y reglas de citas dinámicas.
+    Si falta algo, aplica un fallback mínimo sin romper formato.
+    """
+    if _prom and hasattr(_prom, "PROMPT_PARAMETRIZADO") and hasattr(_prom, "reglas_citas"):
+        # Intenta formatear con placeholders {REGLAS_CITAS} y {NO_RENGLONES_RULE} si existen
+        try:
+            return _prom.PROMPT_PARAMETRIZADO.format(
+                REGLAS_CITAS=_prom.reglas_citas(varios_anexos),
+                NO_RENGLONES_RULE=getattr(_prom, "NO_RENGLONES_RULE", "")
+            )
+        except Exception:
+            # Si el template no tuviera alguno de los placeholders, al menos agrega las reglas de citas al final
+            try:
+                return (_prom.PROMPT_PARAMETRIZADO + "\n\n" + _prom.reglas_citas(varios_anexos)).strip()
+            except Exception:
+                pass
+
+    # Fallback ultra-minimal si no hay prompts.py o falló algo arriba
+    return (
+        "Elabora un informe técnico-jurídico estructurado con citas literales. "
+        "No inventes. Cita como '(p. N)'. Si hay múltiples anexos, usa '(Anexo X, p. N)'."
     )
+
+# Prompt para las notas intermedias: usa el tuyo si existe; si no, fallback seguro.
+CRAFT_PROMPT_NOTAS = getattr(
+    _prom,
+    "CRAFT_PROMPT_NOTAS",
+    "Extrae bullets técnicos y concisos con citas literales; cero invenciones."
+)
 
 # ========================= Opcionales (DOCX) =========================
 try:
