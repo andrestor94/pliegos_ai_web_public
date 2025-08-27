@@ -22,8 +22,16 @@ from reportlab.lib.colors import HexColor
 from zoneinfo import ZoneInfo  # fallback local AR
 
 # === NUEVO: prompts centralizados ===
-# (por ahora solo importamos; los usaremos en las partes siguientes)
-from prompts import PROMPT_PARAMETRIZADO, PROMPT_ANALITICO, NO_RENGLONES_RULE
+# Importamos todos los prompts y helpers desde prompts.py
+from .prompts import PROMPT_PARAMETRIZADO, PROMPT_ANALITICO, NO_RENGLONES_RULE
+ (
+    SINONIMOS_CANONICOS,
+    prompt_andres,
+    prompt_maestro,
+    CRAFT_PROMPT_NOTAS,
+    get_chat_system_prompt,
+    build_chat_user_prompt,
+)
 
 # ========================= Opcionales (DOCX) =========================
 try:
@@ -38,8 +46,10 @@ OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "90"))
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
 
 # ========================= Modelos / Heurísticas =========================
-MODEL_ANALISIS  = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-4o-mini")
-VISION_MODEL    = os.getenv("OPENAI_MODEL_VISION", "gpt-4o-mini")
+# Sugerencia: si usas variantes específicas, setea las envs:
+# OPENAI_MODEL_ANALISIS=gpt-5.1   OPENAI_MODEL_VISION=gpt-5.1
+MODEL_ANALISIS  = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
+VISION_MODEL    = os.getenv("OPENAI_MODEL_VISION", "gpt-5")
 MODEL_NOTAS     = os.getenv("OPENAI_MODEL_NOTAS", MODEL_ANALISIS)
 MODEL_SINTESIS  = os.getenv("OPENAI_MODEL_SINTESIS", MODEL_ANALISIS)
 FAST_FORCE_MODEL = os.getenv("FAST_FORCE_MODEL", "").strip()  # opcional para fast
@@ -318,211 +328,7 @@ def _limpieza_basica_preanalisis(s: str) -> str:
     s = re.sub(r"\n{3,}", "\n\n", s)
     return s.strip()
 
-# ==================== Prompts y limpieza ====================
-SINONIMOS_CANONICOS = r"""
-[Guia de mapeo semantico - Argentina (nacional, provincial, municipal)]
-- "Numero de proceso" ~ "Expediente", "N° de procedimiento", "N° de tramite", "EX-...", "IF-...".
-- "Nombre de proceso" ~ "Denominacion del procedimiento", "Titulo del llamado".
-- "Objeto de la contratacion" ~ "Objeto", "Adquisicion/Contratacion de", "Finalidad".
-- "Procedimiento de seleccion" ~ "Tipo de procedimiento", "Modalidad", "Clase del llamado" (Licitacion Publica/Privada, Contratacion Directa, Compra Menor, Subasta, etc.).
-- "Tipo de cotizacion" ~ "Forma de cotizacion", "Modo de cotizar", "Planilla de precios", "Item por item", "Global/Total", "Por renglon/lote".
-- "Tipo de adjudicacion" ~ "Criterio de adjudicacion", "Adjudicacion por renglon/lote/total".
-- "Cantidad de ofertas permitidas" ~ "Numero de propuestas por oferente", "Ofertas alternativas/adicionales".
-- "Estado" ~ "Situacion del tramite" (vigente, abierto, cerrado, desierto, fracasado, adjudicado), si el documento lo consigna.
-- "Plazo de mantenimiento de la oferta" ~ "Validez de la oferta".
-- "Numero de renglon" ~ "Renglon", "Item (numero)".
-- "Objeto del gasto" ~ "Partida presupuestaria", "Clasificador/Objeto del gasto", "Estructura programatica".
-- "Codigo del item" ~ "Codigo interno", "Codigo catalogo", "SKU".
-- "Descripcion" ~ "Descripcion del item", "Especificaciones tecnicas".
-- "Cantidad" ~ "Cantidad solicitada/Requerida".
-- "Inicio y final de consultas" ~ "Plazo de consultas/aclaraciones", "Recepcion de consultas", "Preguntas y respuestas".
-- "Fecha y hora del acto de apertura" ~ "Apertura", "Acto de apertura de ofertas".
-- "Monto" ~ "Presupuesto oficial/referencial", "Monto estimado", "Credito disponible".
-- "Moneda" ~ "Moneda de cotizacion" (ARS, USD, etc.), "Tipo de cambio".
-- "Duracion del contrato" ~ "Plazo contractual", "Vigencia", "Por el termino de".
-- "Presentacion de ofertas" ~ "Acto de presentacion", "Limite de recepcion".
-- "Garantia de mantenimiento" ~ "Garantia de oferta".
-- "Garantia de cumplimiento" ~ "Garantia contractual".
-- "Planilla de cotizacion" ~ "Formulario de oferta", "Cuadro comparativo", "Planilla de precios".
-- "Tipo de cambio BNA" ~ "Banco Nacion vendedor del dia anterior".
-
-Usa esta guia: si un campo aparece con sinonimos/variantes, NO lo marques como "NO ESPECIFICADO".
-No menciones nombres de portales/sistemas salvo que esten explicitamente en los documentos analizados.
-"""
-
-# ======= PROMPT MAESTRO ESTILO ANDRES (Ficha SIN numeración '0)') =======
-_BASE_PROMPT_ANDRES = r"""
-# (Instrucciones internas: NO imprimir este encabezado ni estas reglas en la salida)
-
-Objetivo
-- Generar un informe de analisis de licitacion en Argentina (ambitos nacional, provincial o municipal), exhaustivo y sin invenciones.
-- La salida debe comenzar con el titulo EXACTO: "Ficha estandarizada del procedimiento" (sin numeracion, NO escribir "0)").
-- Dentro de esa Ficha, incluir los campos con estos rotulos exactos (cada uno debe ir con su valor):
-  • N° de proceso
-  • Nombre de proceso
-  • Objeto de la contratacion
-  • Procedimiento de seleccion
-  • Tipo de cotizacion
-  • Tipo de adjudicacion
-  • Cantidad de ofertas permitidas
-  • Estado
-  • Plazo de mantenimiento de la oferta
-  • Numero de renglon (escribir: "Total de renglones: <cantidad>; ver Seccion 9 para el detalle completo"; JAMAS usar el placeholder "N")
-  • Objeto del gasto
-  • Codigo del item (si corresponde a nivel renglon, dejar referencia a Seccion 9)
-  • Descripcion   (si corresponde a nivel renglon, dejar referencia a Seccion 9)
-  • Cantidad      (si corresponde a nivel renglon, dejar referencia a Seccion 9)
-  • Inicio y final de consultas
-  • Fecha y hora del acto de apertura
-  • Monto
-  • Moneda
-  • Duracion del contrato
-- Si algo NO figura en los archivos, escribir "NO ESPECIFICADO" y no inventar ni inferir. Nunca usar marcadores como "N".
-- Cada linea con dato critico debe terminar con cita de fuente, segun Reglas de Citas.
-- Ademas de la Ficha, incluir las secciones 1–12 para no perder nada del informe ampliado.
-
-{REGLAS_CITAS}
-
-Estilo
-- Encabezados y listas claras; sin meta-texto ("parte X de Y", "revise el resto", etc.).
-- Deduplicar, fusionar y no repetir informacion.
-- Mantener terminologia del pliego. Usar 2 decimales si el pliego lo exige para precios.
-- No mencionar nombres de portales/sistemas salvo que figuren explicitamente en los documentos.
-
-Estructura de salida EXACTA (usar estos titulos tal cual)
-Ficha estandarizada del procedimiento (campos estandarizados)
-1) Resumen ejecutivo (<=200 palabras)
-2) Datos clave del llamado
-3) Alcance contractual y vigencias
-4) Entregas y logistica
-5) Presentacion y contenido de la oferta
-6) Evaluacion, empate y mejora de oferta
-7) Garantias
-8) Muestras, envases, etiquetado y caducidad (si aplica)
-9) Renglones y planilla de cotizacion
-10) Checklist operativo
-11) Fechas y plazos criticos
-12) Observaciones finales
-
-Cobertura obligatoria por seccion (segun aplique)
-- 2) Datos clave: Organismo, Expediente/N° proceso, Tipo/Modalidad/Etapa, Objeto, Rubro, Lugar/area; contactos/portales (mails/URLs) si figuran.
-- 3) Alcance/vigencias: mantenimiento de oferta y prorroga; perfeccionamiento; ampliaciones/topes; duracion/termino del contrato.
-- 4) Entregas: lugar/horarios; forma (unica/parcelada); plazos; flete/descarga.
-- 5) Presentacion: sobre/caja, duplicado, firma, rotulado; documentacion fiscal/registral; costo/valor del pliego si existe.
-- 6) Evaluacion: cuadro comparativo; tipo de cambio; criterios cuali/cuantitativos; empates; mejora de precio.
-- 7) Garantias: umbrales por UC si aplica; % mantenimiento y % cumplimiento con plazos/condiciones; contragarantias.
-- 8) Muestras/envases/etiquetado/caducidad: ANMAT/BPM; cadena de frio; rotulados; vigencia minima.
-- 9) Renglones/planilla: incluir TODOS los renglones (si existe planilla). Por renglon: Cantidad, Codigo (si hay), Descripcion y especificaciones tecnicas relevantes en 1 linea. Si hay demasiados, mantener listado completo aunque la descripcion se acote.
-- 10) Checklist: acciones para el oferente.
-- 11) Fechas criticas: presentacion, apertura, mantenimiento, entregas, consultas, etc.
-- 12) Observaciones finales: alertas y condicionantes.
-
-Guia de sinonimos:
-{SINONIMOS}
-"""
-
-def _prompt_andres(varios_anexos: bool) -> str:
-    if varios_anexos:
-        reglas = (
-            "Reglas de Citas:\n"
-            "- Documento MULTI-ANEXO: al final de cada linea con dato, usar (Anexo X, p. N).\n"
-            "- Deducir N tomando la etiqueta [PÁGINA N] mas cercana dentro del texto del ANEXO correspondiente.\n"
-            "- Si no hay paginacion: (Fuente: documento provisto)."
-        )
-    else:
-        reglas = (
-            "Reglas de Citas:\n"
-            "- Documento UNICO: al final de cada linea con dato, usar (p. N) a partir de la etiqueta [PÁGINA N] mas cercana.\n"
-            "- Si no hay paginacion: (Fuente: documento provisto)."
-        )
-    return _BASE_PROMPT_ANDRES.format(
-        REGLAS_CITAS=reglas,
-        SINONIMOS=SINONIMOS_CANONICOS
-    )
-
-# Prompt alternativo (compatibilidad)
-_BASE_PROMPT_MAESTRO = r"""
-# (Instrucciones internas: NO imprimir este encabezado ni estas reglas en la salida)
-Reglas clave:
-- Cero invenciones; si falta o es ambiguo: escribir "NO ESPECIFICADO" y explicarlo en la misma seccion.
-- Cada dato critico debe terminar con su fuente entre parentesis, segun las Reglas de Citas.
-- Cobertura completa (oferta -> ejecucion), con normativa citada.
-- Deduplicar, fusionar, no repetir; un unico informe integrado.
-- Prohibido meta texto tipo "parte X de Y" o "revise el resto".
-- No imprimir etiquetas internas como [PÁGINA N].
-- No usar los titulos literales "Informe Completo" ni "Informe Original".
-
-Formato de salida:
-1) RESUMEN DE PLIEGO (<=200 palabras)
-2) INFORME DETALLADO CON TRAZABILIDAD
-   2.1 Identificacion del llamado
-   2.2 Calendario y lugares
-   2.3 Contactos y portales (listar TODOS los e-mails y URLs detectados)
-   2.4 Alcance y plazo contractual
-   2.5 Tipologia / modalidad (citar norma/articulos)
-   2.6 Mantenimiento de oferta y prorroga
-   2.7 Garantias (umbral UC, %, plazos, formas)
-   2.8 Presentacion de ofertas (soporte, firmas, docs obligatorias) e incluir costo/valor del pliego y mecanismo de adquisicion/pago
-   2.9 Apertura, evaluacion y adjudicacion (tipo de cambio BNA, comision, criterios, preferencias)
-   2.10 Subsanacion (que si/no)
-   2.11 Perfeccionamiento y modificaciones
-   2.12 Entrega, lugares y plazos
-   2.13 Planilla de cotizacion y renglones (enumerar TODOS los renglones; por renglon incluir cantidades, UM, descripcion y especificaciones tecnicas relevantes)
-   2.14 Muestras
-   2.15 Normativa aplicable (todas las leyes/decretos/resoluciones/disposiciones citadas, con numero/ano y fuente)
-   2.16 Catalogo de articulos citados (Art. N — sintesis literal 1–2 lineas del contenido; una linea por articulo; con cita)
-
-Estilo:
-- Titulos con mayusculas iniciales, listas claras, tablas simples. Sin "#".
-- Aplicar la Guia de sinonimos.
-"""
-
-def _prompt_maestro(varios_anexos: bool) -> str:
-    if varios_anexos:
-        regla_citas = (
-            "Reglas de Citas:\n"
-            "- Al final de cada linea con dato, usar (Anexo X, p. N).\n"
-            "- Para deducir p. N, usa la etiqueta [PÁGINA N] mas cercana al dato dentro del texto provisto de ese ANEXO.\n"
-            "- Si NO consta paginacion pero si el anexo, usar (Anexo X).\n"
-            "- Si el campo es NO ESPECIFICADO, usar (Fuente: documento provisto)."
-        )
-    else:
-        regla_citas = (
-            "Reglas de Citas:\n"
-            "- Documento unico: al final de cada linea con dato, usar (p. N).\n"
-            "- Para deducir p. N, usa la etiqueta [PÁGINA N] mas cercana al dato dentro del texto provisto.\n"
-            "- Prohibido escribir 'Anexo I' u otros anexos en las citas.\n"
-            "- Si el campo es NO ESPECIFICADO, usar (Fuente: documento provisto)."
-        )
-    extras = (
-        "\nCriterios anti-omision:\n"
-        "- En 'Contactos y portales': incluir absolutamente todos los e-mails/dominos/URLs detectados.\n"
-        "- En 'Planilla de cotizacion y renglones': enumerar todos los renglones y sumar especificaciones tecnicas por renglon.\n"
-        "- En 'Normativa aplicable': listar todas las normas mencionadas (Ley/Decreto/Resolucion/Disposicion, numero y ano).\n"
-        "- En 'Catalogo de articulos citados': incluir cada articulo que figure, con sintesis literal 1–2 lineas.\n"
-    )
-    return f"{_BASE_PROMPT_MAESTRO}\n{regla_citas}{extras}\nGuia de sinonimos:\n{SINONIMOS_CANONICOS}"
-
-CRAFT_PROMPT_NOTAS = r"""
-Genera NOTAS INTERMEDIAS en bullets, ultra concisas, con cita al final de cada bullet.
-- SOLO bullets (sin encabezados, sin "parte x/y", sin conclusiones).
-- Etiqueta tema + cita en parentesis.
-- Si NO hay paginacion: (Fuente: documento provisto).
-- Usa la Guia de sinonimos y conserva la terminologia encontrada.
-Ejemplos:
-- [IDENTIFICACION] Organismo: ... (p. 1)
-- [CALENDARIO] Presentacion: DD/MM/AAAA HH:MM — Lugar: ... (p. 2)
-- [GARANTIAS] Mant. 5%; Cumpl. >=10% <=7 dias habiles (p. 4)
-- [CONTACTO] Email ... / Portal ... (p. 2)
-- [COSTO PLIEGO] Valor $... — medio de pago: ... (p. N)
-- [PRESUPUESTO] Monto: $... (p. N)
-- [PLANILLA/RENGLONES] Renglon X: ... (p. N)
-- [ESPEC TECNICAS] Renglon X: requisito ... (p. N)
-- [NORMATIVA] Ley/Decreto/Resolucion ... (p. N)
-- [ARTICULO] Art. 17 — sintesis ... (p. N)
-- [FALTA] campo X — NO ESPECIFICADO. (Fuente: documento provisto)
-"""
-
+# (Nota) SINONIMOS_CANONICOS se importa desde prompts.py
 # utils.py — Parte 3/5
 # utils.py — Parte 3/5
 
@@ -709,7 +515,6 @@ DETECTABLE_FIELDS: Dict[str, Dict] = {
     "obj_gasto":   {"label": "Objeto del gasto", "pats": [r"objeto\s+del\s+gasto", r"partida\s+presupuestaria", r"clasificador"]},
     "ofertas_perm":{"label": "Ofertas permitidas", "pats": [r"m[aá]s\s+de\s+una\s+oferta", r"ofertas?\s+alternativas", r"una\s+sola\s+oferta"]},
 }
-# utils.py — Parte 4/5
 # utils.py — Parte 4/5
 
 # ==================== Utilidades de conteo y evidencia ====================
@@ -1115,12 +920,11 @@ def _reparar_ficha(informe: str, texto_fuente: str) -> str:
     # Normaliza placeholder de monto tipo '$...' a 'NO ESPECIFICADO' (preservando cita si existe)
     informe = re.sub(
         r"(?im)^(\s*•\s*Monto:\s*)(?:\$+\s*\.{0,3}|[$…]+)\s*(\(.*?\))?\s*$",
-        lambda m: f"{m.group(1)}NO ESPECIFICADO{(' ' + m.group(2)) if m.group(2) else ''}",
+        lambda m: f"{m.group(1)}NO ESPECIFICADO{(' ' + m.group(2) if m.group(2) else '')}",
         informe or ""
     )
 
     return (informe or "")
-# utils.py — Parte 5/5
 # utils.py — Parte 5/5
 
 # ==================== Llamada a OpenAI robusta ====================
@@ -1144,7 +948,7 @@ def _pick_model(stage_default: str) -> str:
     return MODEL_ANALISIS
 
 def _llamada_openai(messages, model=None, temperature_str=TEMPERATURE_ANALISIS,
-                    max_completion_tokens=None, retries=2, fallback_model="gpt-4o-mini"):
+                    max_completion_tokens=None, retries=2, fallback_model="gpt-5-mini"):
     mdl = model or _pick_model("analisis")
 
     def _build_kwargs(m):
@@ -1160,7 +964,7 @@ def _llamada_openai(messages, model=None, temperature_str=TEMPERATURE_ANALISIS,
         return kw
 
     models_to_try = [mdl]
-    if fallback_model and fallback_model != mdl:
+    if fallback_model && fallback_model != mdl:
         models_to_try.append(fallback_model)
 
     last_error = None
@@ -1169,10 +973,10 @@ def _llamada_openai(messages, model=None, temperature_str=TEMPERATURE_ANALISIS,
             try:
                 resp = client.chat.completions.create(**_build_kwargs(m))
                 if not getattr(resp, "choices", None):
-                    raise RuntimeError("El modelo no devolvio 'choices'.")
+                    raise RuntimeError("El modelo no devolvió 'choices'.")
                 content = (resp.choices[0].message.content or "").strip()
                 if not content:
-                    raise RuntimeError("La respuesta del modelo llego vacia.")
+                    raise RuntimeError("La respuesta del modelo llegó vacía.")
                 return resp
             except Exception as e:
                 last_error = e
@@ -1196,9 +1000,9 @@ def _generar_notas_concurrente(partes: List[str]) -> List[str]:
     def worker(idx: int, parte: str):
         msg = [
             {"role": "system",
-             "content": "Eres un analista juridico que extrae bullets tecnicos con citas; cero invenciones; maxima concision."},
+             "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
             {"role": "user",
-             "content": f"{CRAFT_PROMPT_NOTAS}\n\n## Guia de sinonimos/normalizacion\n{SINONIMOS_CANONICOS}\n\n=== FRAGMENTO {idx+1}/{len(partes)} ===\n{parte}"}
+             "content": f"{CRAFT_PROMPT_NOTAS}\n\n## Guía de sinónimos/normalización\n{SINONIMOS_CANONICOS}\n\n=== FRAGMENTO {idx+1}/{len(partes)} ===\n{parte}"}
         ]
         r = _llamada_openai(msg, max_completion_tokens=NOTAS_MAX_TOKENS, model=_pick_model("notas"))
         return idx, (r.choices[0].message.content or "").strip()
@@ -1251,7 +1055,7 @@ NO imprimas rotulos como 'Informe Original'.
 """
     try:
         resp = _llamada_openai(
-            [{"role": "system", "content": "Redactor tecnico-juridico. Cero invenciones."},
+            [{"role": "system", "content": "Redactor técnico-jurídico. Cero invenciones."},
              {"role": "user", "content": prompt_corr}],
             model=_pick_model("sintesis"),
             max_completion_tokens=MAX_COMPLETION_TOKENS_SALIDA
@@ -1318,7 +1122,7 @@ def _corregir_seccion_9_si_vacia(informe: str, texto_fuente: str, varios_anexos:
 # ==================== Analizador principal ====================
 def analizar_con_openai(texto: str) -> str:
     if not texto or not texto.strip():
-        return "No se recibio contenido para analizar."
+        return "No se recibió contenido para analizar."
 
     texto_len = len(texto)
     n_anexos = _contar_anexos(texto)
@@ -1339,9 +1143,9 @@ def analizar_con_openai(texto: str) -> str:
         max_out = _max_out_for_text(texto)
         messages = [
             {"role": "system",
-             "content": "Actua como equipo experto en derecho administrativo argentino y compras publicas. Redactor tecnico-juridico. Cero invenciones."},
+             "content": "Actúa como equipo experto en derecho administrativo argentino y compras públicas. Redactor técnico-jurídico. Cero invenciones."},
             {"role": "user",
-             "content": f"{prompt_maestro}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\nDevuelve SOLO el informe final, sin preambulos."}
+             "content": f"{prompt_maestro}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\nDevuelve SOLO el informe final, sin preámbulos."}
         ]
         try:
             resp = _llamada_openai(messages, max_completion_tokens=max_out, model=_pick_model("analisis"))
@@ -1356,21 +1160,21 @@ def analizar_con_openai(texto: str) -> str:
             _log_tiempo("analizar_single_pass" + ("_multi" if varios_anexos else ""), t0)
             return out
         except Exception as e:
-            return f"Error al generar el analisis: {e}"
+            return f"Error al generar el análisis: {e}"
 
     # Dos etapas (chunking + concurrencia)
     chunk_size = _compute_chunk_size(texto_len)
     partes = _particionar(texto, chunk_size)
 
-    # Seguridad: si por tamano quedo 1 parte, reintenta single-pass
+    # Seguridad: si por tamaño quedó 1 parte, reintenta single-pass
     if len(partes) == 1:
         t0 = _t()
         max_out = _max_out_for_text(texto)
         messages = [
             {"role": "system",
-             "content": "Actua como equipo experto en derecho administrativo argentino y compras publicas. Redactor tecnico-juridico. Cero invenciones."},
+             "content": "Actúa como equipo experto en derecho administrativo argentino y compras públicas. Redactor técnico-jurídico. Cero invenciones."},
             {"role": "user",
-             "content": f"{prompt_maestro}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\nDevuelve SOLO el informe final, sin preambulos."}
+             "content": f"{prompt_maestro}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\nDevuelve SOLO el informe final, sin preámbulos."}
         ]
         try:
             resp = _llamada_openai(messages, max_completion_tokens=max_out, model=_pick_model("analisis"))
@@ -1385,18 +1189,18 @@ def analizar_con_openai(texto: str) -> str:
             _log_tiempo("analizar_single_pass_len1", t0)
             return out
         except Exception as e:
-            return f"Error al generar el analisis: {e}"
+            return f"Error al generar el análisis: {e}"
 
     # A) Notas intermedias (concurrente)
     notas_list = _generar_notas_concurrente(partes)
     notas_integradas = "\n".join(notas_list)
 
-    # B) Sintesis final
+    # B) Síntesis final
     t0_sint = _t()
     max_out = _max_out_for_text(texto)
     messages_final = [
         {"role": "system",
-         "content": "Actua como equipo experto en derecho administrativo argentino y compras publicas. Redactor tecnico-juridico. Cero invenciones."},
+         "content": "Actúa como equipo experto en derecho administrativo argentino y compras públicas. Redactor técnico-jurídico. Cero invenciones."},
         {"role": "user",
          "content": f"""{_prompt_andres(varios_anexos)}
 
@@ -1422,12 +1226,12 @@ Devuelve SOLO el informe final en texto.
         _log_tiempo("sintesis_final", t0_sint)
         return out
     except Exception as e:
-        return f"Error en la sintesis final: {e}\n\nNotas intermedias:\n{_limpiar_meta(notas_integradas)}"
+        return f"Error en la síntesis final: {e}\n\nNotas intermedias:\n{_limpiar_meta(notas_integradas)}"
 
 # ==================== Multi-anexo ====================
 def analizar_anexos(files: list) -> str:
     """
-    Combina anexos y ejecuta analisis.
+    Combina anexos y ejecuta análisis.
     - 1 archivo: NO marca '=== ANEXO ... ===' para habilitar single-pass y citas (p. N).
     - >=2: marca ANEXOS para trazabilidad.
     """
@@ -1457,9 +1261,9 @@ def analizar_anexos(files: list) -> str:
     contenido_unico = "\n".join(bloques).strip()
     if len(contenido_unico) < 100:
         _log_tiempo("anexos_armado_vacio", t0)
-        return ("No se pudo extraer texto util de los anexos. "
-                "Verifica si los documentos estan escaneados y eleva VISION_MAX_PAGES/DPI, "
-                "o subi archivos en texto nativo.")
+        return ("No se pudo extraer texto útil de los anexos. "
+                "Verifica si los documentos están escaneados y eleva VISION_MAX_PAGES/DPI, "
+                "o subí archivos en texto nativo.")
 
     contenido_unico = _limpieza_basica_preanalisis(contenido_unico)
     _log_tiempo("anexos_armado_y_limpieza", t0)
@@ -1471,7 +1275,7 @@ def analizar_anexos(files: list) -> str:
 MAX_CHAT_CONTEXT_CHARS = int(os.getenv("MAX_CHAT_CONTEXT_CHARS", "38000"))
 CHAT_MAX_TOKENS        = int(os.getenv("CHAT_MAX_TOKENS", "1200"))
 CHAT_RETRIES           = int(os.getenv("CHAT_RETRIES", "2"))
-CHAT_FALLBACK_MODEL    = os.getenv("OPENAI_MODEL_CHAT_FALLBACK", "gpt-4o-mini")
+CHAT_FALLBACK_MODEL    = os.getenv("OPENAI_MODEL_CHAT_FALLBACK", "gpt-5-mini")
 
 def _compactar_contexto_para_chat(contexto: str) -> str:
     """
@@ -1635,7 +1439,7 @@ Instrucciones de salida:
                 time.sleep(1.2 * (attempt + 1))
         # si agotó retries con este modelo, pasa al siguiente (fallback)
 
-    # 5) Respuesta controlada ante fallo (evita que el frontend muestre “No recibí respuesta…”)
+    # 5) Respuesta controlada ante fallo
     return (
         "No pude generar respuesta en este momento. "
         f"Detalle técnico: {last_error}"
@@ -1660,7 +1464,7 @@ def _render_pdf_bytes(resumen: str, fecha_display: Optional[str] = None) -> byte
     azul = HexColor("#044369")
     c.setFillColor(azul)
     c.setFont("Helvetica-Bold", 16)
-    c.drawCentredString(A4[0] / 2, A4[1] - 30 * mm, "Resumen Analitico de Licitacion")
+    c.drawCentredString(A4[0] / 2, A4[1] - 30 * mm, "Resumen Analítico de Licitación")
     c.setFont("Helvetica", 10)
     c.drawCentredString(A4[0] / 2, A4[1] - 36 * mm, "Inteligencia Comercial")
     c.setFillColor("black")
@@ -1691,7 +1495,7 @@ def _render_pdf_bytes(resumen: str, fecha_display: Optional[str] = None) -> byte
         if not parrafo.strip():
             y -= alto_linea
             continue
-        # Heuristica de titulos
+        # Heurística de títulos
         if parrafo.strip().endswith(":") or parrafo.isupper() or re.match(r"^\d+(\.\d+)*\s", parrafo):
             c.setFont("Helvetica-Bold", 12); c.setFillColor(azul)
         else:
