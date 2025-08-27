@@ -21,6 +21,10 @@ from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import HexColor
 from zoneinfo import ZoneInfo  # fallback local AR
 
+# === NUEVO: prompts centralizados ===
+# (por ahora solo importamos; los usaremos en las partes siguientes)
+from prompts import PROMPT_PARAMETRIZADO, PROMPT_ANALITICO, NO_RENGLONES_RULE
+
 # ========================= Opcionales (DOCX) =========================
 try:
     import docx  # python-docx
@@ -165,6 +169,8 @@ def _ocr_selectivo_por_pagina(doc: fitz.Document, max_pages: int) -> str:
     if n > to_process:
         res.append(f"\n[AVISO] OCR muestreó {to_process}/{n} páginas distribuidas.")
     return "\n\n".join([r for r in res if r]).strip()
+
+# utils.py — Parte 2/5
 # utils.py — Parte 2/5
 
 # ==================== Extracción por tipo de archivo ====================
@@ -516,6 +522,7 @@ Ejemplos:
 - [ARTICULO] Art. 17 — sintesis ... (p. N)
 - [FALTA] campo X — NO ESPECIFICADO. (Fuente: documento provisto)
 """
+
 # utils.py — Parte 3/5
 # utils.py — Parte 3/5
 
