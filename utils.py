@@ -23,6 +23,7 @@ import json  # necesario para tool-calling en el chat
 from datetime import datetime
 from typing import List, Tuple, Dict, Optional
 from tempfile import NamedTemporaryFile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import fitz  # PyMuPDF
 from dotenv import load_dotenv
@@ -33,7 +34,6 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import HexColor
 from zoneinfo import ZoneInfo  # fallback local AR
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # === NUEVO: prompts centralizados (compatible con tu prompts.py, sin warnings) ===
 # Busca 'prompts.py' y usa sus símbolos si existen; si no, aplica fallbacks silenciosos.
@@ -51,14 +51,12 @@ def prompt_andres(varios_anexos: bool) -> str:
     Si falta algo, aplica un fallback mínimo sin romper formato.
     """
     if _prom and hasattr(_prom, "PROMPT_PARAMETRIZADO") and hasattr(_prom, "reglas_citas"):
-        # Intenta formatear con placeholders {REGLAS_CITAS} y {NO_RENGLONES_RULE} si existen
         try:
             return _prom.PROMPT_PARAMETRIZADO.format(
                 REGLAS_CITAS=_prom.reglas_citas(varios_anexos),
                 NO_RENGLONES_RULE=getattr(_prom, "NO_RENGLONES_RULE", "")
             )
         except Exception:
-            # Si el template no tuviera alguno de los placeholders, al menos agrega las reglas de citas al final
             try:
                 return (_prom.PROMPT_PARAMETRIZADO + "\n\n" + _prom.reglas_citas(varios_anexos)).strip()
             except Exception:
@@ -90,12 +88,42 @@ load_dotenv()
 OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "90"))
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
 
+# === Helpers robustos para Chat Completions (tokens/temperature) ===
+def _normalize_chat_kwargs(**kw):
+    """
+    Normaliza kwargs para client.chat.completions.create:
+    - Usa 'max_tokens' (estándar). Si viene 'max_completion_tokens', lo mapea.
+    - Si temperature es None, lo remueve (algunos modelos no lo aceptan).
+    """
+    if "max_tokens" not in kw:
+        mct = kw.pop("max_completion_tokens", None)
+        if mct is not None:
+            kw["max_tokens"] = int(mct)
+    if kw.get("temperature", None) is None:
+        kw.pop("temperature", None)
+    return kw
+
+def _chat_create_safe(**kw):
+    """
+    Crea un chat completion robusto:
+    - Primer intento con 'max_tokens'.
+    - Si el SDK es viejo y falla por kwargs, reintenta con 'max_completion_tokens'.
+    """
+    try:
+        return client.chat.completions.create(**_normalize_chat_kwargs(**kw))
+    except TypeError:
+        kw2 = dict(kw)
+        tok = kw2.pop("max_tokens", kw2.pop("max_completion_tokens", None))
+        if tok is not None:
+            kw2["max_completion_tokens"] = int(tok)
+        return client.chat.completions.create(**kw2)
+
 # ========================= Modelos / Heurísticas =========================
 # Sugerencia: si usas variantes específicas, setea las envs:
 # OPENAI_MODEL_ANALISIS=gpt-5   OPENAI_MODEL_VISION=gpt-5
 MODEL_ANALISIS = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-5")
-VISION_MODEL = os.getenv("OPENAI_MODEL_VISION", "gpt-5")
-MODEL_NOTAS = os.getenv("OPENAI_MODEL_NOTAS", MODEL_ANALISIS)
+VISION_MODEL   = os.getenv("OPENAI_MODEL_VISION", "gpt-5")
+MODEL_NOTAS    = os.getenv("OPENAI_MODEL_NOTAS", MODEL_ANALISIS)
 MODEL_SINTESIS = os.getenv("OPENAI_MODEL_SINTESIS", MODEL_ANALISIS)
 FAST_FORCE_MODEL = os.getenv("FAST_FORCE_MODEL", "").strip()  # opcional para fast
 
@@ -109,7 +137,7 @@ ANALISIS_MODO = os.getenv("ANALISIS_MODO", "").lower().strip()  # "fast" opciona
 
 # Granularidad / anti-copia ligera (sin perder cobertura)
 RENGLON_DESC_MAX_WORDS = int(os.getenv("RENGLON_DESC_MAX_WORDS", "24"))
-ART_SNIPPET_MAX_WORDS = int(os.getenv("ART_SNIPPET_MAX_WORDS", "18"))
+ART_SNIPPET_MAX_WORDS  = int(os.getenv("ART_SNIPPET_MAX_WORDS", "18"))
 
 # Concurrencia
 ANALISIS_CONCURRENCY = int(os.getenv("ANALISIS_CONCURRENCY", "3"))
@@ -157,27 +185,28 @@ def _rasterizar_pagina(page: fitz.Page, dpi: int = VISION_DPI) -> bytes:
     pix = page.get_pixmap(matrix=mat, alpha=False)
     return pix.tobytes("png")
 
-def _ocr_openai_imagen_b64(b64_png: str) -> str:
+def _ocr_openai_imagen_b64(b64_img: str, mime: str = "image/png") -> str:
     """
-    OCR con modelo de visión de OpenAI sobre una imagen en base64 (PNG).
-    Devuelve el texto literal (sin resumir ni interpretar).
+    OCR con modelo de visión (Chat Completions) sobre una imagen base64.
+    Devuelve TEXTO literal (no resumen).
     """
     prompt = (
         "Extraé el TEXTO literal de esta imagen escaneada de un pliego. "
         "Conservá títulos, tablas como líneas con separadores, listas y números. No resumas ni interpretes."
     )
     try:
-        resp = client.chat.completions.create(
+        resp = _chat_create_safe(
             model=VISION_MODEL,
             messages=[{
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_png}"}}
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64_img}"}}
                 ]
             }],
-            # Chat Completions usa 'max_tokens' (no 'max_completion_tokens')
-            max_completion_tokens=2400,
+            # Capamos salida para bajar latencia/costo (antes pedías ~2400)
+            max_tokens=900,
+            temperature=None,  # evitar 400 en modelos que no aceptan temperature
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception as e:
@@ -212,7 +241,7 @@ def _ocr_selectivo_por_pagina(doc: fitz.Document, max_pages: int) -> str:
             return i, f"[PÁGINA {i+1}]\n{txt_nat}"
         png_bytes = _rasterizar_pagina(p)
         b64 = base64.b64encode(png_bytes).decode("utf-8")
-        txt = _ocr_openai_imagen_b64(b64)
+        txt = _ocr_openai_imagen_b64(b64, mime="image/png")
         return i, (f"[PÁGINA {i+1}]\n{txt}" if txt else f"[PÁGINA {i+1}] (sin texto OCR)")
 
     t0 = _t()
@@ -320,7 +349,7 @@ def extraer_texto_de_pdf(file) -> str:
             _log_tiempo("extraccion_pdf_total", t0)
             return (out or "").strip()
     except Exception:
-        # Fallback: intentar decodificar como texto plano (poco probable, pero evita vacío)
+        # Fallback: intentar decodificar como texto plano (evita vacío)
         try:
             out = raw.decode("utf-8", errors="ignore")
             _log_tiempo("extraccion_pdf_decode", t0)
@@ -384,7 +413,7 @@ def extraer_texto_de_docx(file) -> str:
 def extraer_texto_de_imagen(file) -> str:
     """
     Extrae texto de una imagen usando OCR con OpenAI Vision.
-    Acepta PNG/JPG/JPEG/WEBP.
+    Acepta PNG/JPG/JPEG/WEBP. Normaliza a PNG cuando sea posible.
     """
     t0 = _t()
     raw = _leer_todo(file)
@@ -392,17 +421,25 @@ def extraer_texto_de_imagen(file) -> str:
         _log_tiempo("extraccion_imagen_sin_bytes", t0)
         return ""
 
+    mime_guess = _mime_guess(file) or ""
+    ext = _ext_de_archivo(file)
+
     try:
-        # Intentar abrir con PyMuPDF en caso de TIFF/otros soportados
-        img_doc = fitz.open(stream=raw, filetype=_ext_de_archivo(file).lstrip(".") or None)
+        # Intentar abrir con PyMuPDF y normalizar a PNG consistente
+        img_doc = fitz.open(stream=raw, filetype=ext.lstrip(".") or None)
         page = img_doc.load_page(0)
         png = page.get_pixmap(alpha=False).tobytes("png")
         b64 = base64.b64encode(png).decode("utf-8")
+        mime = "image/png"
     except Exception:
-        # Si no, mandar el binario original como PNG base64 (algunos modelos igual lo leen)
+        # Fallback: mandar binario original con MIME correcto
         b64 = base64.b64encode(raw).decode("utf-8")
+        if mime_guess.startswith("image/"):
+            mime = mime_guess
+        else:
+            mime = "image/png" if ext == ".png" else "image/jpeg"
 
-    out = _ocr_openai_imagen_b64(b64)
+    out = _ocr_openai_imagen_b64(b64, mime=mime)
     _log_tiempo("extraccion_imagen_ocr", t0)
     return out
 
@@ -490,7 +527,7 @@ def _limpiar_meta(texto: str) -> str:
         lineas.append(ln)
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lineas)).strip()
 
-def _particionar(texto: str, max_chars: int) -> list[str]:
+def _particionar(texto: str, max_chars: int) -> List[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto or ""), max_chars)]
 
 
@@ -627,7 +664,7 @@ def _buscar_candidatos(texto: str, pats: List[str], idx_pag: List[Tuple[int, int
                 return hits
     return hits[:limit]
 
-def _build_regex_hints(texto: str, limit_per_field: int | None = None, max_chars: int | None = None) -> str:
+def _build_regex_hints(texto: str, limit_per_field: Optional[int] = None, max_chars: Optional[int] = None) -> str:
     if not texto:
         return ""
     if limit_per_field is None:
@@ -674,7 +711,7 @@ DETECTABLE_FIELDS: Dict[str, Dict] = {
     "estado":      {"label": "Estado del trámite", "pats": [r"\bestado\b", r"\bvigente\b", r"\b(adjudicado|desierto|fracasado|cerrado)\b"]},
     "consultas":   {"label": "Inicio y final de consultas", "pats": [r"\bconsultas\b", r"aclaraciones", r"preguntas"]},
     "apertura":    {"label": "Acto de apertura", "pats": [r"acto\s+de\s+apertura", r"\bapertura\b"]},
-    "tipo_cotiz":  {"label": "Tipo de cotización", "pats": [r"forma\s+de\s+cotizaci[oó]n", r"tipo\s+de\s+cotizaci[oó]n", r"cotizaci[oó]n\s+por"]},
+    "tipo_cotiz":  {"label": "Tipo de cotización", "pats": [r"forma\s de\s cotizaci[oó]n", r"tipo\s+de\s+cotizaci[oó]n", r"cotizaci[oó]n\s+por"]},
     "tipo_adj":    {"label": "Tipo de adjudicación", "pats": [r"adjudicaci[oó]n\s+por\s+(rengl[oó]n|lote|total)"]},
     "moneda":      {"label": "Moneda", "pats": [r"\bmoneda\b", r"\bARS\b", r"\bUSD\b"]},
     "obj_gasto":   {"label": "Objeto del gasto", "pats": [r"objeto\s+del\s+gasto", r"partida\s+presupuestaria", r"clasificador"]},
@@ -686,6 +723,7 @@ DETECTABLE_FIELDS: Dict[str, Dict] = {
 def _count(pattern: str, text: str) -> int:
     return len(re.findall(pattern, text or "", flags=re.I))
 
+# --- Artículos (títulos y bloques) ---
 _ART_HEAD_RE = re.compile(r"(?im)^\s*(art(?:[íi]culo|\.?)\s*\d+[a-zº°]?)\s*[-–—:]?\s*(.*)$")
 _ART_BLOCK_RE = re.compile(
     r"(?ims)^\s*(art(?:[íi]culo|\.?)\s*\d+[a-zº°]?)\s*[-–—:]?\s*(.+?)(?=^\s*art(?:[íi]culo|\.?)\s*\d+[a-zº°]?|\Z)"
@@ -710,6 +748,7 @@ def _extraer_articulos_con_snippets(texto: str) -> List[Tuple[str, str, int, Opt
         res.append((rotulo, snippet, p, ax))
 
     if not res:
+        # Fallback: encabezados sueltos
         for m in _ART_HEAD_RE.finditer(texto):
             start = m.start()
             p = _pagina_de_indice(idx, start)
@@ -721,7 +760,7 @@ def _extraer_articulos_con_snippets(texto: str) -> List[Tuple[str, str, int, Opt
     return res
 
 
-# --- Renglones robustos (exigir literalmente "Renglón" o variantes) ---
+# --- Renglones robustos (requiere "Renglón" o variantes) ---
 _ROW_START_RE = re.compile(r"(?im)^(?:reng(?:l[oó]n)?\.?\s*)(\d{1,4})\b")
 _CODE_RE = re.compile(r"\b[A-Z]{1,3}\d{5,8}\b")  # ej: D0330113, GB079001, E5001253
 _QTY_RE  = re.compile(r"\b\d{1,6}\b")
@@ -1143,27 +1182,17 @@ def _llamada_openai(
         except Exception:
             temp_wanted = None
 
-    def _create_with_fallback(**kw):
-        """Usa max_tokens; si el SDK no lo acepta, cae a max_completion_tokens."""
-        try:
-            return client.chat.completions.create(**kw)
-        except TypeError as te:
-            # SDK viejo: intenta con 'max_completion_tokens'
-            if "max_tokens" in kw and "unexpected keyword argument" in str(te):
-                legacy = dict(kw)
-                legacy["max_completion_tokens"] = legacy.pop("max_tokens")
-                return client.chat.completions.create(**legacy)
-            raise
-
     def _build_kwargs(m, with_temperature=True, max_tok=None):
         kw = dict(
             model=m,
             messages=messages,
-            # Preferimos max_tokens para Chat Completions
-            max_completion_tokens=int(max_tok or max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA),
+            # Usar 'max_tokens' (estándar). _chat_create_safe ya mapea si hace falta.
+            max_tokens=int(max_tok or max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA),
         )
         if with_temperature and (temp_wanted is not None):
             kw["temperature"] = temp_wanted
+        else:
+            kw["temperature"] = None
         return kw
 
     models_to_try = [mdl] + ([fallback_model] if fallback_model and fallback_model != mdl else [])
@@ -1174,14 +1203,14 @@ def _llamada_openai(
             try:
                 # 1) intento normal (con temperature si corresponde)
                 kw = _build_kwargs(m, with_temperature=True)
-                resp = _create_with_fallback(**kw)
+                resp = _chat_create_safe(**kw)
                 content = (resp.choices[0].message.content or "").strip()
                 if content:
                     return resp
 
                 # 2) si vino vacío, reintento corto sin temperature y con menos tokens
-                kw2 = _build_kwargs(m, with_temperature=False, max_tok=min(1024, kw["max_completion_tokens"]))
-                resp2 = _create_with_fallback(**kw2)
+                kw2 = _build_kwargs(m, with_temperature=False, max_tok=min(1024, kw["max_tokens"]))
+                resp2 = _chat_create_safe(**kw2)
                 content2 = (resp2.choices[0].message.content or "").strip()
                 if content2:
                     return resp2
@@ -1191,7 +1220,7 @@ def _llamada_openai(
                 # Reintento inmediato sin temperature si el modelo no la soporta
                 if ("temperature" in msg) and ("unsupported" in msg or "Only the default" in msg):
                     try:
-                        resp = _create_with_fallback(**_build_kwargs(m, with_temperature=False))
+                        resp = _chat_create_safe(**_build_kwargs(m, with_temperature=False))
                         content = (resp.choices[0].message.content or "").strip()
                         if content:
                             return resp
@@ -1592,26 +1621,15 @@ Instrucciones de salida:
 """
 
     def _chat_call(model_name: str, msgs: list):
-        # No enviar temperature para evitar 400 en modelos que no lo soportan
-        try:
-            return client.chat.completions.create(
-                model=model_name,
-                messages=msgs,
-                tools=tools,
-                tool_choice="auto",
-                max_completion_tokens=CHAT_MAX_TOKENS,
-            )
-        except Exception as e:
-            # Si por alguna razón quedó un temperature en kwargs (no debería), reintenta sin él
-            if "temperature" in str(e) and ("unsupported" in str(e) or "Only the default" in str(e)):
-                return client.chat.completions.create(
-                    model=model_name,
-                    messages=msgs,
-                    tools=tools,
-                    tool_choice="auto",
-                    max_completion_tokens=CHAT_MAX_TOKENS,
-                )
-            raise
+        # No enviar temperature explícito salvo que lo configuremos
+        return _chat_create_safe(
+            model=model_name,
+            messages=msgs,
+            tools=tools,
+            tool_choice="auto",
+            max_tokens=CHAT_MAX_TOKENS,
+            temperature=None,
+        )
 
     model_primary = os.getenv("OPENAI_MODEL_CHAT", _pick_model("analisis"))
     messages = [
