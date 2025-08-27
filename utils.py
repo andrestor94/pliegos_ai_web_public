@@ -107,16 +107,41 @@ def _chat_create_safe(**kw):
     """
     Crea un chat completion robusto:
     - Primer intento con 'max_tokens'.
-    - Si el SDK es viejo y falla por kwargs, reintenta con 'max_completion_tokens'.
+    - Si el servidor rechaza 'max_tokens', reintenta con 'max_completion_tokens'.
+    - Si rechaza 'temperature', reintenta sin ese parámetro.
     """
     try:
         return client.chat.completions.create(**_normalize_chat_kwargs(**kw))
-    except TypeError:
-        kw2 = dict(kw)
-        tok = kw2.pop("max_tokens", kw2.pop("max_completion_tokens", None))
-        if tok is not None:
-            kw2["max_completion_tokens"] = int(tok)
-        return client.chat.completions.create(**kw2)
+    except Exception as e:
+        s = str(e).lower()
+
+        # Fallback por 'max_tokens' no soportado -> usar max_completion_tokens
+        if "unsupported parameter" in s and "max_tokens" in s:
+            kw2 = dict(kw)
+            # mover valor a max_completion_tokens
+            val = kw2.pop("max_tokens", kw2.pop("max_completion_tokens", None))
+            if val is not None:
+                kw2["max_completion_tokens"] = int(val)
+            # quitar temperature si también lo objeta
+            if "temperature" in s:
+                kw2.pop("temperature", None)
+            return client.chat.completions.create(**kw2)
+
+        # Fallback por temperature no soportado
+        if "temperature" in s and ("unsupported" in s or "only the default" in s):
+            kw2 = dict(kw)
+            kw2.pop("temperature", None)
+            return client.chat.completions.create(**_normalize_chat_kwargs(**kw2))
+
+        # Fallback genérico: intentar con max_completion_tokens si teníamos max_tokens
+        if "max_tokens" in kw and "max_completion_tokens" not in kw:
+            kw2 = dict(kw)
+            val = kw2.pop("max_tokens", None)
+            if val is not None:
+                kw2["max_completion_tokens"] = int(val)
+            return client.chat.completions.create(**_normalize_chat_kwargs(**kw2))
+
+        raise
 
 # ========================= Modelos / Heurísticas =========================
 # Sugerencia: si usas variantes específicas, setea las envs:
@@ -204,7 +229,7 @@ def _ocr_openai_imagen_b64(b64_img: str, mime: str = "image/png") -> str:
                     {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64_img}"}}
                 ]
             }],
-            # Capamos salida para bajar latencia/costo (antes pedías ~2400)
+            # Capamos salida para bajar latencia/costo
             max_tokens=900,
             temperature=None,  # evitar 400 en modelos que no aceptan temperature
         )
@@ -304,7 +329,7 @@ def _mime_guess(file) -> str:
 
 def _texto_nativo_etiquetado(doc: fitz.Document) -> str:
     """
-    Construye un texto con etiquetas por página: [PÁGINA N]\\n<contenido>
+    Construye un texto con etiquetas por página: [PÁGINA N]\n<contenido>
     """
     partes: List[str] = []
     for i, p in enumerate(doc, 1):
@@ -711,7 +736,7 @@ DETECTABLE_FIELDS: Dict[str, Dict] = {
     "estado":      {"label": "Estado del trámite", "pats": [r"\bestado\b", r"\bvigente\b", r"\b(adjudicado|desierto|fracasado|cerrado)\b"]},
     "consultas":   {"label": "Inicio y final de consultas", "pats": [r"\bconsultas\b", r"aclaraciones", r"preguntas"]},
     "apertura":    {"label": "Acto de apertura", "pats": [r"acto\s+de\s+apertura", r"\bapertura\b"]},
-    "tipo_cotiz":  {"label": "Tipo de cotización", "pats": [r"forma\s de\s cotizaci[oó]n", r"tipo\s+de\s+cotizaci[oó]n", r"cotizaci[oó]n\s+por"]},
+    "tipo_cotiz":  {"label": "Tipo de cotización", "pats": [r"forma\s+de\s+cotizaci[oó]n", r"tipo\s+de\s+cotizaci[oó]n", r"cotizaci[oó]n\s+por"]},
     "tipo_adj":    {"label": "Tipo de adjudicación", "pats": [r"adjudicaci[oó]n\s+por\s+(rengl[oó]n|lote|total)"]},
     "moneda":      {"label": "Moneda", "pats": [r"\bmoneda\b", r"\bARS\b", r"\bUSD\b"]},
     "obj_gasto":   {"label": "Objeto del gasto", "pats": [r"objeto\s+del\s+gasto", r"partida\s+presupuestaria", r"clasificador"]},
