@@ -1133,7 +1133,7 @@ def _llamada_openai(
 ):
     mdl = model or _pick_model("analisis")
 
-    # Solo calculo el valor deseado, pero NO lo envío si el modelo no lo soporta
+    # Calcula temperatura pero solo la envía si aplica
     temp_wanted = None
     if ANALISIS_MODO == "fast":
         temp_wanted = 0.0
@@ -1143,45 +1143,58 @@ def _llamada_openai(
         except Exception:
             temp_wanted = None
 
-    def _build_kwargs(m, with_temperature=True):
+    def _create_with_fallback(**kw):
+        """Usa max_tokens; si el SDK no lo acepta, cae a max_completion_tokens."""
+        try:
+            return client.chat.completions.create(**kw)
+        except TypeError as te:
+            # SDK viejo: intenta con 'max_completion_tokens'
+            if "max_tokens" in kw and "unexpected keyword argument" in str(te):
+                legacy = dict(kw)
+                legacy["max_completion_tokens"] = legacy.pop("max_tokens")
+                return client.chat.completions.create(**legacy)
+            raise
+
+    def _build_kwargs(m, with_temperature=True, max_tok=None):
         kw = dict(
             model=m,
             messages=messages,
-            max_completion_tokens=max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA,
+            # Preferimos max_tokens para Chat Completions
+            max_tokens=int(max_tok or max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA),
         )
-        # Enviamos temperature sólo si se pidió; si falla, reintenta sin él
         if with_temperature and (temp_wanted is not None):
             kw["temperature"] = temp_wanted
         return kw
 
-    models_to_try = [mdl]
-    if fallback_model and fallback_model != mdl:
-        models_to_try.append(fallback_model)
-
+    models_to_try = [mdl] + ([fallback_model] if fallback_model and fallback_model != mdl else [])
     last_error = None
+
     for m in models_to_try:
         for attempt in range(retries + 1):
-            # 1) Intento (posible) con temperature
             try:
-                resp = client.chat.completions.create(**_build_kwargs(m, with_temperature=True))
-                if not getattr(resp, "choices", None):
-                    raise RuntimeError("El modelo no devolvió 'choices'.")
+                # 1) intento normal (con temperature si corresponde)
+                kw = _build_kwargs(m, with_temperature=True)
+                resp = _create_with_fallback(**kw)
                 content = (resp.choices[0].message.content or "").strip()
-                if not content:
-                    raise RuntimeError("La respuesta del modelo llegó vacía.")
-                return resp
+                if content:
+                    return resp
+
+                # 2) si vino vacío, reintento corto sin temperature y con menos tokens
+                kw2 = _build_kwargs(m, with_temperature=False, max_tok=min(1024, kw["max_tokens"]))
+                resp2 = _create_with_fallback(**kw2)
+                content2 = (resp2.choices[0].message.content or "").strip()
+                if content2:
+                    return resp2
+                raise RuntimeError("La respuesta del modelo llegó vacía.")
             except Exception as e:
                 msg = str(e)
-                # Si el error es por 'temperature' no soportado, reintento INMEDIATO sin ese parámetro
+                # Reintento inmediato sin temperature si el modelo no la soporta
                 if ("temperature" in msg) and ("unsupported" in msg or "Only the default" in msg):
                     try:
-                        resp = client.chat.completions.create(**_build_kwargs(m, with_temperature=False))
-                        if not getattr(resp, "choices", None):
-                            raise RuntimeError("El modelo no devolvió 'choices'.")
+                        resp = _create_with_fallback(**_build_kwargs(m, with_temperature=False))
                         content = (resp.choices[0].message.content or "").strip()
-                        if not content:
-                            raise RuntimeError("La respuesta del modelo llegó vacía.")
-                        return resp
+                        if content:
+                            return resp
                     except Exception as e2:
                         last_error = e2
                 else:
@@ -1191,6 +1204,7 @@ def _llamada_openai(
                     time.sleep(1.2 * (attempt + 1))
                 else:
                     break
+
     raise RuntimeError(str(last_error) if last_error else "Fallo en _llamada_openai")
 
 
