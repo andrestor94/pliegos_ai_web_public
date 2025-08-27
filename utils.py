@@ -954,8 +954,11 @@ def _llamada_openai(messages, model=None, temperature_str=TEMPERATURE_ANALISIS,
     mdl = model or _pick_model("analisis")
 
     def _build_kwargs(m):
-        kw = dict(model=m, messages=messages,
-                  max_completion_tokens=max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA)
+        kw = dict(
+            model=m,
+            messages=messages,
+            max_completion_tokens=max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA
+        )
         if ANALISIS_MODO == "fast":
             kw["temperature"] = 0
         elif temperature_str != "":
@@ -967,7 +970,7 @@ def _llamada_openai(messages, model=None, temperature_str=TEMPERATURE_ANALISIS,
 
     models_to_try = [mdl]
     if fallback_model and fallback_model != mdl:
-    models_to_try.append(fallback_model)
+        models_to_try.append(fallback_model)
 
     last_error = None
     for m in models_to_try:
