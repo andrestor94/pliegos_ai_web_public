@@ -1216,13 +1216,14 @@ def _generar_notas_concurrente(partes: List[str]) -> List[str]:
         return idx, (r.choices[0].message.content or "").strip()
 
     with ThreadPoolExecutor(max_workers=max(1, ANALISIS_CONCURRENCY)) as ex:
-        futs = [ex.submit(worker, i, p) for i, p in enumerate(partes)]
-        for fut in as_completed(futs):
+        future_to_idx = {ex.submit(worker, i, p): i for i, p in enumerate(partes)}
+        for fut in as_completed(future_to_idx):
+            idx = future_to_idx[fut]
             try:
-                i, content = fut.result()
-                resultados[i] = content
+                _i, content = fut.result()
+                resultados[idx] = content
             except Exception as e:
-                resultados[i] = f"[ERROR] No se pudieron generar notas de la parte {i+1}: {e}"
+                resultados[idx] = f"[ERROR] No se pudieron generar notas de la parte {idx+1}: {e}"
 
     _log_tiempo(f"notas_intermedias_{len(partes)}_partes_concurrente", t0)
     return [r or "" for r in resultados]
