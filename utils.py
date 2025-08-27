@@ -22,18 +22,22 @@ from reportlab.lib.colors import HexColor
 from zoneinfo import ZoneInfo  # fallback local AR
 
 # === NUEVO: prompts centralizados ===
-# Si prompts.py está en la MISMA carpeta que utils.py y main.py:
-from prompts import (
-    PROMPT_PARAMETRIZADO,
-    PROMPT_ANALITICO,
-    NO_RENGLONES_RULE,
-    SINONIMOS_CANONICOS,
-    prompt_andres,
-    prompt_maestro,
-    CRAFT_PROMPT_NOTAS,
-    get_chat_system_prompt,
-    build_chat_user_prompt,
-)
+# Solo importamos lo que realmente usamos; con fallbacks si no existe en prompts.py
+try:
+    # prompts.py debe estar en la MISMA carpeta que utils.py y main.py
+    from prompts import SINONIMOS_CANONICOS, prompt_andres, CRAFT_PROMPT_NOTAS
+except Exception as e:
+    print(f"[WARN] prompts.py faltante o sin símbolos esperados: {e}")
+    SINONIMOS_CANONICOS = ""  # fallback: guía vacía
+    def prompt_andres(varios_anexos: bool) -> str:
+        # fallback mínimo para no romper si prompts.py no define esta función
+        return (
+            "Elabora un informe técnico-jurídico estructurado con citas literales. "
+            "No inventes. Cita como '(p. N)'. Si hay múltiples anexos, usa '(Anexo X, p. N)'."
+        )
+    CRAFT_PROMPT_NOTAS = (
+        "Extrae bullets técnicos y concisos con citas literales; cero invenciones."
+    )
 
 # ========================= Opcionales (DOCX) =========================
 try:
@@ -127,7 +131,8 @@ def _ocr_openai_imagen_b64(b64_png: str) -> str:
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_png}"}}
                 ]
             }],
-            max_completion_tokens=2400
+            # Chat Completions usa 'max_tokens' (no 'max_completion_tokens')
+            max_tokens=2400,
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception as e:
@@ -181,8 +186,6 @@ def _ocr_selectivo_por_pagina(doc: fitz.Document, max_pages: int) -> str:
     if n > to_process:
         res.append(f"\n[AVISO] OCR muestreó {to_process}/{n} páginas distribuidas.")
     return "\n\n".join([r for r in res if r]).strip()
-
-# utils.py — Parte 2/5
 # utils.py — Parte 2/5
 
 # ==================== Extracción por tipo de archivo ====================
@@ -262,7 +265,8 @@ def extraer_texto_de_docx(file) -> str:
         partes: List[str] = []
         for p in document.paragraphs:
             txt = (p.text or "").strip()
-            if txt: partes.append(txt)
+            if txt:
+                partes.append(txt)
         for tbl in document.tables:
             for row in tbl.rows:
                 celdas = [(cell.text or "").strip() for cell in row.cells]
@@ -329,9 +333,6 @@ def _limpieza_basica_preanalisis(s: str) -> str:
     s = re.sub(r"[ \t]+\n", "\n", s)
     s = re.sub(r"\n{3,}", "\n\n", s)
     return s.strip()
-
-# (Nota) SINONIMOS_CANONICOS se importa desde prompts.py
-# utils.py — Parte 3/5
 # utils.py — Parte 3/5
 
 # ==================== Filtrado de meta-frases y utilidades ====================
@@ -749,7 +750,7 @@ def _extraer_contactos_con_paginas(texto: str) -> List[Tuple[str, str, int, Opti
     """
     Devuelve lista de (tipo, valor, p, anexo) con tipo in {"email","url"}.
     """
-    texto = texto or ""
+    texto = texto o ""
     idx_pag = _index_paginas(texto)
     idx_ax  = _index_anexos(texto)
     res: List[Tuple[str, str, int, Optional[int]]] = []
@@ -879,7 +880,7 @@ def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexo
         return out
 
     # Construir 2.13 y 2.16 con topes y reemplazar
-    sec213 = _build_section_213(texto_fuente or "", varios_anexos)
+    sec213 = _build_section_213(texto_fuente o "", varios_anexos)
     if sec213:
         alt213 = sec213.replace("2.13 Planilla de cotizacion y renglones:", "9) Renglones y planilla de cotizacion:")
         out = _replace_section(out, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla", alt213)
@@ -1095,7 +1096,6 @@ def _corregir_seccion_9_si_vacia(informe: str, texto_fuente: str, varios_anexos:
     por una versión determinística construida desde el texto fuente.
     """
     s = informe or ""
-    # Buscar límites de la sección 9)
     start, end = _find_section_bounds(s, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla")
     needs_fix = False
 
@@ -1103,7 +1103,6 @@ def _corregir_seccion_9_si_vacia(informe: str, texto_fuente: str, varios_anexos:
         needs_fix = True
     else:
         bloque = s[start:end]
-        # Señales de sección incompleta
         if (_count(r"(?im)\bRengl[oó]n\s+\d+", bloque) == 0) or \
            (_NOESP_RE.search(bloque) is not None) or \
            (len(bloque.strip()) < 80):
@@ -1114,14 +1113,12 @@ def _corregir_seccion_9_si_vacia(informe: str, texto_fuente: str, varios_anexos:
 
     sec213 = _build_section_213(texto_fuente or "", varios_anexos)
     if not sec213:
-        return s  # no hay renglones detectados; no se toca
+        return s
 
     sec9 = sec213.replace("2.13 Planilla de cotizacion y renglones:", "9) Renglones y planilla de cotizacion:")
     if start == -1:
-        # No existía la sección, la agregamos al final
         return (s.rstrip() + "\n\n" + sec9.strip() + "\n")
     else:
-        # La sustituimos
         return _replace_section(s, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla", sec9)
 
 # ==================== Analizador principal ====================
@@ -1132,16 +1129,13 @@ def analizar_con_openai(texto: str) -> str:
     texto_len = len(texto)
     n_anexos = _contar_anexos(texto)
     varios_anexos = n_anexos >= 2
-    prompt_maestro = prompt_andres(varios_anexos)
+    prompt_maestro_local = prompt_andres(varios_anexos)
 
-    # Hints regex (opcionales)
     hints = _build_regex_hints(texto) if ENABLE_REGEX_HINTS else ""
     hints_block = f"\n\n=== HALLAZGOS AUTOMATICOS (snippets literales para verificacion) ===\n{hints}\n" if hints else ""
 
-    # Dos etapas solo si multi-anexo muy grande
     force_two_stage = (varios_anexos and texto_len >= MULTI_FORCE_TWO_STAGE_MIN_CHARS)
 
-    # Single-pass cuando aplica
     if (not varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS) or \
        (varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS_MULTI and not force_two_stage):
         t0 = _t()
@@ -1150,7 +1144,7 @@ def analizar_con_openai(texto: str) -> str:
             {"role": "system",
              "content": "Actúa como equipo experto en derecho administrativo argentino y compras públicas. Redactor técnico-jurídico. Cero invenciones."},
             {"role": "user",
-             "content": f"{prompt_maestro}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\nDevuelve SOLO el informe final, sin preámbulos."}
+             "content": f"{prompt_maestro_local}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\nDevuelve SOLO el informe final, sin preámbulos."}
         ]
         try:
             resp = _llamada_openai(messages, max_completion_tokens=max_out, model=_pick_model("analisis"))
@@ -1171,7 +1165,6 @@ def analizar_con_openai(texto: str) -> str:
     chunk_size = _compute_chunk_size(texto_len)
     partes = _particionar(texto, chunk_size)
 
-    # Seguridad: si por tamaño quedó 1 parte, reintenta single-pass
     if len(partes) == 1:
         t0 = _t()
         max_out = _max_out_for_text(texto)
@@ -1179,7 +1172,7 @@ def analizar_con_openai(texto: str) -> str:
             {"role": "system",
              "content": "Actúa como equipo experto en derecho administrativo argentino y compras públicas. Redactor técnico-jurídico. Cero invenciones."},
             {"role": "user",
-             "content": f"{prompt_maestro}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\nDevuelve SOLO el informe final, sin preámbulos."}
+             "content": f"{prompt_maestro_local}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\nDevuelve SOLO el informe final, sin preámbulos."}
         ]
         try:
             resp = _llamada_openai(messages, max_completion_tokens=max_out, model=_pick_model("analisis"))
@@ -1276,32 +1269,22 @@ def analizar_anexos(files: list) -> str:
     return analizar_con_openai(contenido_unico)
 
 # ==================== Chat (mejorado con tools/RAG ligero) ====================
-# Límite de contexto para el chat (evita reventar la ventana del modelo)
 MAX_CHAT_CONTEXT_CHARS = int(os.getenv("MAX_CHAT_CONTEXT_CHARS", "38000"))
 CHAT_MAX_TOKENS        = int(os.getenv("CHAT_MAX_TOKENS", "1200"))
 CHAT_RETRIES           = int(os.getenv("CHAT_RETRIES", "2"))
 CHAT_FALLBACK_MODEL    = os.getenv("OPENAI_MODEL_CHAT_FALLBACK", "gpt-5-mini")
 
 def _compactar_contexto_para_chat(contexto: str) -> str:
-    """
-    Recorta el contexto si es gigantesco: toma cabeza, cola y un muestreo uniforme.
-    Mantiene etiquetas [PÁGINA N] para que el bot pueda citar.
-    """
     s = (contexto or "").strip()
     if len(s) <= MAX_CHAT_CONTEXT_CHARS:
         return s
     head = s[: MAX_CHAT_CONTEXT_CHARS // 3]
     tail = s[- MAX_CHAT_CONTEXT_CHARS // 3 :]
-    # muestreo intermedio (conserva marcas de página)
     medio = s[len(s)//2 - MAX_CHAT_CONTEXT_CHARS//6 : len(s)//2 + MAX_CHAT_CONTEXT_CHARS//6]
     return head + "\n\n[...] (contenido intermedio omitido por longitud) [...]\n\n" + medio + \
            "\n\n[...] (contenido intermedio omitido por longitud) [...]\n\n" + tail
 
 def _buscar_en_historial_impl(contexto: str, query: str, k: int = 8, window: int = 280) -> dict:
-    """
-    Búsqueda literal/simple por términos dentro del 'contexto' y devuelve snippets
-    con página aproximada usando las etiquetas [PÁGINA N].
-    """
     texto = contexto or ""
     q = (query or "").strip()
     if not texto or not q:
@@ -1312,7 +1295,7 @@ def _buscar_en_historial_impl(contexto: str, query: str, k: int = 8, window: int
     if not terms:
         terms = [q.lower()]
 
-    idx_pag = _index_paginas(texto)  # ya definido arriba en utils.py
+    idx_pag = _index_paginas(texto)
     seen = set()
     hits = []
 
@@ -1336,15 +1319,10 @@ def _buscar_en_historial_impl(contexto: str, query: str, k: int = 8, window: int
 
 def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
     """
-    Chat con:
-      - Herramienta 'buscar_en_historial' (function calling) para recuperar evidencia del material analizado.
-      - Control de longitud de contexto.
-      - Reintentos y fallback de modelo.
+    Chat con búsqueda ligera en el historial mediante tool-calling.
     """
-    # 1) Preparar contexto compacto
     contexto_compacto = _compactar_contexto_para_chat(contexto or "(No hay historial disponible.)")
 
-    # 2) Definir herramienta para el modelo
     tools = [{
         "type": "function",
         "function": {
@@ -1361,14 +1339,13 @@ def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usua
         }
     }]
 
-    # 3) Mensajes base con reglas anti-alucinación
     system_msg = (
         "Eres el asistente del sistema 'Suizo Argentina – Licitaciones IA'. "
         "Respondes con precisión, sin inventar. "
         "Si la pregunta se refiere a pliegos/informes/archivos analizados, "
         "PRIMERO usa la herramienta buscar_en_historial con términos concretos para traer evidencia. "
         "Cita los datos con (p. N) cuando sea posible. "
-        "Si no hay evidencia en el material, indícalo de forma explícita. "
+        "Si no hay evidencia en el material, indícalo explícitamente. "
         "Para preguntas generales, responde breve y claro."
     )
 
@@ -1387,7 +1364,6 @@ Instrucciones de salida:
 - Nada de meta-texto tipo "parte X/Y". No inventes campos ni datos.
 """
 
-    # 4) Bucle de tool-calling + retries/fallback
     def _chat_call(model_name: str, msgs: list):
         return client.chat.completions.create(
             model=model_name,
@@ -1412,7 +1388,6 @@ Instrucciones de salida:
             try:
                 resp = _chat_call(model_try, messages)
                 choice = resp.choices[0]
-                # Si el modelo pide usar herramientas
                 if getattr(choice.message, "tool_calls", None):
                     for tc in choice.message.tool_calls:
                         if tc.function.name == "buscar_en_historial":
@@ -1427,12 +1402,10 @@ Instrucciones de salida:
                                 "name": "buscar_en_historial",
                                 "content": json.dumps(result, ensure_ascii=False)
                             })
-                    # Segunda pasada: ahora el modelo ya vio los resultados de la tool
                     resp2 = _chat_call(model_try, messages)
                     out = (resp2.choices[0].message.content or "").strip()
                     if out:
                         return out
-                    # Si quedó vacío, fuerza fallback al siguiente intento/modelo
                     raise RuntimeError("La respuesta llegó vacía tras tool-calling.")
                 else:
                     out = (choice.message.content or "").strip()
@@ -1442,9 +1415,7 @@ Instrucciones de salida:
             except Exception as e:
                 last_error = e
                 time.sleep(1.2 * (attempt + 1))
-        # si agotó retries con este modelo, pasa al siguiente (fallback)
 
-    # 5) Respuesta controlada ante fallo
     return (
         "No pude generar respuesta en este momento. "
         f"Detalle técnico: {last_error}"
@@ -1475,7 +1446,6 @@ def _render_pdf_bytes(resumen: str, fecha_display: Optional[str] = None) -> byte
     c.setFillColor("black")
     c.setFont("Helvetica", 10)
 
-    # Fecha en encabezado
     if not fecha_display:
         try:
             fecha_display = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).strftime("%d/%m/%Y %H:%M")
@@ -1483,7 +1453,6 @@ def _render_pdf_bytes(resumen: str, fecha_display: Optional[str] = None) -> byte
             fecha_display = datetime.now().strftime("%d/%m/%Y %H:%M")
     c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_display}")
 
-    # Limpieza de texto
     resumen = (resumen or "").replace("**", "")
     resumen = re.sub(r"(?im)^\s*informe\s+completo\s*$", "", resumen)
     resumen = re.sub(r"(?im)^\s*informe\s+original\s*$", "", resumen)
@@ -1500,7 +1469,6 @@ def _render_pdf_bytes(resumen: str, fecha_display: Optional[str] = None) -> byte
         if not parrafo.strip():
             y -= alto_linea
             continue
-        # Heurística de títulos
         if parrafo.strip().endswith(":") or parrafo.isupper() or re.match(r"^\d+(\.\d+)*\s", parrafo):
             c.setFont("Helvetica-Bold", 12); c.setFillColor(azul)
         else:
