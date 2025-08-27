@@ -50,7 +50,7 @@ Eres un asistente experto en análisis de licitaciones. Extraé de este document
                 {"role": "user", "content": prompt}
             ],
             temperature=0.2,
-            max_tokens=1800
+            max_completion_tokens=1800
         )
 
         result = response.choices[0].message.content.strip()

@@ -177,7 +177,7 @@ def _ocr_openai_imagen_b64(b64_png: str) -> str:
                 ]
             }],
             # Chat Completions usa 'max_tokens' (no 'max_completion_tokens')
-            max_tokens=2400,
+            max_completion_tokens=2400,
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception as e:
@@ -1160,7 +1160,7 @@ def _llamada_openai(
             model=m,
             messages=messages,
             # Preferimos max_tokens para Chat Completions
-            max_tokens=int(max_tok or max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA),
+            max_completion_tokens=int(max_tok or max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA),
         )
         if with_temperature and (temp_wanted is not None):
             kw["temperature"] = temp_wanted
@@ -1180,7 +1180,7 @@ def _llamada_openai(
                     return resp
 
                 # 2) si vino vacío, reintento corto sin temperature y con menos tokens
-                kw2 = _build_kwargs(m, with_temperature=False, max_tok=min(1024, kw["max_tokens"]))
+                kw2 = _build_kwargs(m, with_temperature=False, max_tok=min(1024, kw["max_completion_tokens"]))
                 resp2 = _create_with_fallback(**kw2)
                 content2 = (resp2.choices[0].message.content or "").strip()
                 if content2:
