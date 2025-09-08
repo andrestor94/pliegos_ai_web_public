@@ -477,6 +477,15 @@ def buscar_usuarios(term: str, limit: int = 8):
             (like, like, like, like, limit),
         )
         return [dict(r) for r in cur.fetchall()]
+# Back-compat por typo histórico:
+try:
+    buscar_usarios
+except NameError:
+    buscar_usarios = buscar_usuarios  # alias seguro
+try:
+    __all__.append("buscar_usarios")
+except Exception:
+    pass
 
 
 def agregar_usuario(

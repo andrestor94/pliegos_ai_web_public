@@ -103,7 +103,7 @@ from database import (
     cambiar_estado_usuario,
     borrar_usuario,
     cambiar_rol,
-    buscar_usarios,
+    buscar_usuarios,
     guardar_en_historial,
     obtener_historial,
     eliminar_del_historial,
