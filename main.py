@@ -674,171 +674,6 @@ def _extraer_ts_de_nombre(nombre_pdf: str) -> str:
         return ""
     m = _TS_RE.search(nombre_pdf)
     return m.group(1) if m else ""
-
-
-def _buscar_historial_usuario(
-    user: str,
-    timestamp: Optional[str] = None,
-    nombre_pdf: Optional[str] = None,
-) -> Optional[dict]:
-    try:
-        items = obtener_historial_completo()
-    except Exception:
-        items = []
-
-    user_items = [h for h in items if (h.get("usuario") == user)]
-
-    nombre_pdf = (nombre_pdf or "").strip()
-    timestamp = (timestamp or "").strip()
-
-    if timestamp:
-        for h in user_items:
-            if str(h.get("timestamp") or "") == timestamp:
-                return h
-
-    if nombre_pdf:
-        for h in user_items:
-            if (h.get("nombre_archivo") or "") == nombre_pdf:
-                return h
-
-    if timestamp:
-        for h in user_items:
-            ts_h = _extraer_ts_de_nombre(h.get("nombre_archivo") or "")
-            if ts_h == timestamp:
-                return h
-
-    if user_items:
-        try:
-            user_items.sort(key=lambda x: x.get("fecha", ""), reverse=True)
-        except Exception:
-            pass
-        return user_items[0]
-
-    return None
-
-
-# --- Config pública para el front (límites de adjuntos) ---
-@app.get("/chat/config")
-async def chat_config():
-    return {
-        "allowed_ext": sorted(list({e.lstrip(".").lower() for e in CHAT_ALLOWED_EXT})),
-        "max_files": CHAT_MAX_FILES,
-        "max_total_mb": CHAT_MAX_TOTAL_MB,
-        "kb_allowed_ext": sorted(list({e.lstrip('.').lower() for e in KB_ALLOWED_EXT})),  # ? agregado
-    }
-
-
-# ========= Helpers para HISTORIAL en home (paginado) =========
-def _paginate(items: List[dict], page: int, per_page: int):
-    per_page = max(1, min(int(per_page or 10), 100))
-    page = max(1, int(page or 1))
-    total = len(items)
-    total_pages = max(1, ceil(total / per_page))
-    if page > total_pages:
-        page = total_pages
-    start = (page - 1) * per_page
-    return items[start : start + per_page], page, per_page, total_pages, total
-
-
-def _historial_para_home(email: str, rol: str, q: str = "") -> List[dict]:
-    """
-    Devuelve el historial (dicts) filtrado para el usuario/rol y ordenado DESC por fecha/timestamp.
-    """
-    try:
-        data = obtener_historial_completo() or []
-    except Exception:
-        data = []
-
-    # Filtrar por rol: admin ve todo, usuario solo lo suyo
-    if (rol or "").lower() != "admin" and not es_admin(email):
-        data = [h for h in data if (h.get("usuario") or "").lower() == (email or "").lower()]
-
-    # Normalizar y ordenar
-    def _sort_key(h):
-        # intenta por 'fecha' (ISO) y si no por 'timestamp' (YYYYMMDDHHMMSS)
-        dt = _parse_dt_utc(h.get("fecha"))
-        if not dt:
-            ts = (h.get("timestamp") or "")[:14]
-            try:
-                dt = datetime.strptime(ts, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
-            except Exception:
-                dt = datetime.min.replace(tzinfo=timezone.utc)
-        return dt
-
-    data.sort(key=_sort_key, reverse=True)
-
-    # Búsqueda simple
-    ql = (q or "").strip().lower()
-    if ql:
-
-        def _match(h):
-            corpus = " ".join(
-                [
-                    str(h.get("nombre_archivo") or ""),
-                    str(h.get("usuario") or ""),
-                    str(h.get("resumen") or ""),
-                    str(h.get("ruta_pdf") or ""),
-                ]
-            ).lower()
-            return ql in corpus
-
-        data = [h for h in data if _match(h)]
-
-    # Añadir 'fecha_legible' para comodidad del template
-    for h in data:
-        try:
-            h["fecha_legible"] = iso_utc_to_ar_str(h.get("fecha"))
-        except Exception:
-            pass
-
-    return data
-
-
-# ================== Rutas base ==================
-@app.get("/", response_class=HTMLResponse)
-async def home(
-    request: Request,
-    page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=10, ge=1, le=100),
-    q: str = Query(default=""),
-):
-    if not request.session.get("usuario"):
-        return RedirectResponse("/login")
-
-    email = request.session.get("usuario")
-    rol = request.session.get("rol", "usuario")
-
-    # Historial con filtros del querystring
-    hist = _historial_para_home(email=email, rol=rol, q=q)
-    items, page, per_page, total_pages, total_items = _paginate(hist, page, per_page)
-
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "rol": rol,
-            # ?? variables nuevas para la paginación del historial
-            "historial_items": items,
-            "page": page,
-            "per_page": per_page,
-            "total_pages": total_pages,
-            "total_items": total_items,
-            "q": q,
-        },
-    )
-
-
-@app.get("/login", response_class=HTMLResponse)
-async def login_form(request: Request):
-    # Si ya estás logueado, te llevo al home.
-    if request.session.get("usuario"):
-        return RedirectResponse("/", status_code=303)
-
-    # Permite mostrar estado por query (opcional)
-    msg = None
-    if request.query_params.get("logout") == "1":
-        msg = "Sesión cerrada."
-    return templates.TemplateResponse("login.html", {"request": request, "error": None, "mensaje": msg})
 # =========================
 # main.py — PARTE 2 / 6
 # (login/logout, cambiar password, rating, analizar pliego)
@@ -1383,7 +1218,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             src_name = f"default:{_email_safe(usuario)}"
             try:
                 with kb_session() as db:
-                    # create_or_get_source puede diferir por proyecto ? lo hacemos tolerante
+                    # create_or_get_source puede diferir por proyecto → tolerante
                     try:
                         source_ref = fns["create_or_get_source"](db, src_name)
                     except TypeError:
@@ -1670,7 +1505,7 @@ def _build_chat_context(historial: List[dict], usuario_actual: str, max_items: i
     else:
         ultimo_resumen = "(El usuario aún no tiene análisis registrados.)"
 
-    # resto del historial (global), ordenado nuevo?viejo
+    # resto del historial (global), ordenado nuevo→viejo
     others = [h for h in historial if h.get("resumen")]
     others.sort(key=lambda h: _parse_dt_utc(h.get("fecha")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
 
@@ -1741,7 +1576,7 @@ async def chat_openai_embed(request: Request):
   const log = document.getElementById('log');
   const ta = document.getElementById('t');
   const btn = document.getElementById('send');
-  function esc(s){ return (sor'').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+  function esc(s){ return (s||'').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
   function add(b){ const p=document.createElement('div'); p.innerHTML=b; log.appendChild(p); log.scrollTop=log.scrollHeight; }
   function autosize(){ ta.style.height='auto'; ta.style.height = Math.min(ta.scrollHeight, 150) + 'px'; }
   ta.addEventListener('input', autosize); autosize();
@@ -1760,7 +1595,7 @@ async def chat_openai_embed(request: Request):
         body: JSON.stringify({mensaje:v})
       });
       const j = await r.json().catch(()=>({}));
-      add('<div class="mt-1"><b>IA:</b> '+(j.respuestaor'')+'</div>');
+      add('<div class="mt-1"><b>IA:</b> '+(j.respuesta||'')+'</div>');
     }catch(_){
       add('<div class="text-danger mt-1"><b>Error:</b> No se pudo enviar.</div>');
     } finally{
@@ -1768,7 +1603,7 @@ async def chat_openai_embed(request: Request):
     }
   }
   ta.addEventListener('keydown', (e)=>{
-    if(e.key==='Enter' and !e.shiftKey){ e.preventDefault(); send(); }
+    if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); }
   });
   btn.addEventListener('click', (e)=>{ e.preventDefault(); send(); });
  </script>
@@ -1928,7 +1763,7 @@ async def chat_enviar_archivos(
         written = await _save_upload_stream(archivo, path)
         total_bytes += written
 
-        # ? Límite correcto del chat
+        # Límite correcto del chat
         if (total_bytes / (1024 * 1024)) > CHAT_MAX_TOTAL_MB:
             try:
                 os.remove(path)
@@ -2450,7 +2285,7 @@ async def legacy_admin_reset_session(request: Request):
         return JSONResponse({"error": "No se pudo reiniciar la sesión"}, status_code=500)
 # =========================
 # main.py — PARTE 6 / 6
-# (Calendario, Notificaciones, Presencia/Online, Auditoría de actividad + CSV, diag rutas)
+# (Calendario, Notificaciones, Presencia/Online, Auditoría de actividad + CSV, diag rutas + KB UI/APIs)
 # =========================
 
 # =====================================================================
@@ -2507,7 +2342,7 @@ async def cal_create(request: Request):
             (evt_id, title, desc, start, end, all_day, color, created_by, now, now),
         )
 
-    await notify_async(created_by, "Evento creado", f"{title} • {start}{(' ? '+end) if end else ''}")
+    await notify_async(created_by, "Evento creado", f"{title} • {start}{(' – '+end) if end else ''}")
 
     return {
         "id": evt_id,
@@ -2657,7 +2492,7 @@ async def notificaciones_vista(request: Request):
     return templates.TemplateResponse("notificaciones.html", {"request": request})
 
 
-# ?? Aliases/redirects para que la campana y "Ver todas" SIEMPRE abran la vista HTML
+# Aliases/redirects para que la campana y "Ver todas" SIEMPRE abran la vista HTML
 @app.get("/notificaciones/panel")
 @app.get("/notificaciones/todas")
 @app.get("/notificaciones/")
@@ -3103,6 +2938,7 @@ class KBPriorityIn(BaseModel):
 async def kb_priorities_upsert(payload: KBPriorityIn):
     """
     Upsert de prioridad/ponderación de término (si utils.kb_upsert_priority existe).
+    Acepta JSON con: {"term": "...", "weight": 1, "source": "slug" (opcional)}
     """
     f = _kb_funcs()
     if not callable(f["upsert_priority"]):
@@ -3118,4 +2954,3 @@ async def kb_priorities_upsert(payload: KBPriorityIn):
 @app.get("/__diag/routes")
 def _diag_routes():
     return {"routes": sorted({getattr(r, "path", "") for r in app.routes})}
-
