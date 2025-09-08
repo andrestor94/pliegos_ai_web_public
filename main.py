@@ -1,5 +1,5 @@
-# =========================
-# main.py ó PARTE 1 / 6
+Ôªø# =========================
+# main.py ‚Äî PARTE 1 / 6
 # (imports, helpers base, app init, WS, utils, + KB bootstrap)
 # =========================
 
@@ -9,7 +9,7 @@ import uuid
 import asyncio
 import re
 import json
-import importlib  # ? nuevo (utils din·mico para KB)
+import importlib  # ? nuevo (utils din√°mico para KB)
 from math import ceil
 from typing import List, Optional, Dict, Set
 from contextlib import contextmanager  # ? nuevo (para kb_session)
@@ -52,9 +52,9 @@ from utils import (
     analizar_con_openai,
     generar_pdf_con_plantilla,
     responder_chat_openai,
-    # analizar_anexos  # ?? lo reemplazamos con un fallback robusto m·s abajo
+    # analizar_anexos  # ?? lo reemplazamos con un fallback robusto m√°s abajo
 )
-import utils as U  # ? nuevo: acceso din·mico a helpers KB si existen
+import utils as U  # ? nuevo: acceso din√°mico a helpers KB si existen
 
 # ? Fallback robusto para evitar ImportError: utils.analizar_anexos
 try:
@@ -64,7 +64,7 @@ except Exception:
 
 def analizar_anexos(archivos: List[UploadFile]) -> str:
     """
-    SÌncrona (para run_in_threadpool). Si utils.analizar_anexos existe, delega.
+    S√≠ncrona (para run_in_threadpool). Si utils.analizar_anexos existe, delega.
     Si no, extrae texto con utils.extraer_texto_universal y llama al pipeline
     utils.analizar_y_generar_informe, preservando '=== ANEXO N' para citas.
     """
@@ -92,7 +92,7 @@ def analizar_anexos(archivos: List[UploadFile]) -> str:
     try:
         return U.analizar_y_generar_informe(corpus, varios_anexos=varios)
     except Exception as e:
-        return f"[Error de an·lisis] {e}"
+        return f"[Error de an√°lisis] {e}"
 
 from database import (
     DB_PATH,
@@ -127,7 +127,7 @@ from database import (
     iniciar_analisis_historial,
     marcar_valoracion_historial,
     tiene_valoracion_pendiente,
-    # ?? importamos para usarlo en la secciÛn Admin (PARTE 4+)
+    # ?? importamos para usarlo en la secci√≥n Admin (PARTE 4+)
     crear_o_restaurar_usuario,
 )
 # ORM (audit_logs)
@@ -136,20 +136,20 @@ from db_orm import inicializar_bd_orm, SessionLocal, AuditLog
 # ---------- ? KB ORM bootstrap (usa el mismo engine de SessionLocal) ----------
 def _kb_init_orm():
     """
-    Garantiza que las tablas de la KB existan si est· el mÛdulo models.py
+    Garantiza que las tablas de la KB existan si est√° el m√≥dulo models.py
     con declarativos (KBSource/KBFile/KBChunk/KBPriority).
     No detiene la app si no existe.
     """
     try:
         import models as KBM  # debe exponer Base + clases KB*
-        # obtener engine desde una sesiÛn viva
+        # obtener engine desde una sesi√≥n viva
         with SessionLocal() as s:
             engine = s.get_bind()
         if engine is not None and hasattr(KBM, "Base"):
             KBM.Base.metadata.create_all(bind=engine)
             print("? KB: tablas verificadas/creadas")
     except Exception as e:
-        # si no est· models.py o falla algo, no frenamos la app
+        # si no est√° models.py o falla algo, no frenamos la app
         print("?? KB init omitido:", repr(e))
 
 @contextmanager
@@ -236,12 +236,12 @@ SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-in-prod")
 
 app = FastAPI(
     middleware=[
-        # Cookie de sesiÛn m·s robusta y persistente
+        # Cookie de sesi√≥n m√°s robusta y persistente
         Middleware(
             SessionMiddleware,
             secret_key=SESSION_SECRET,
             same_site="lax",
-            max_age=60 * 60 * 24 * 30,  # 30 dÌas
+            max_age=60 * 60 * 24 * 30,  # 30 d√≠as
         )
     ]
 )
@@ -310,7 +310,7 @@ def ensure_chat_tables():
 
 # Inicializa BD SQLite (usuarios, historial, tickets, mensajes, hilos_ocultos, adjuntos)
 inicializar_bd()
-# Asegurar explÌcitamente las tablas de chat (por si el mÛdulo de DB venÌa sin creadoras)
+# Asegurar expl√≠citamente las tablas de chat (por si el m√≥dulo de DB ven√≠a sin creadoras)
 ensure_chat_tables()
 # Inicializa ORM (audit_logs)
 inicializar_bd_orm()
@@ -318,7 +318,7 @@ inicializar_bd_orm()
 _kb_init_orm()
 
 
-# ---------- Bootstrap de admin si DB est· vacÌa ----------
+# ---------- Bootstrap de admin si DB est√° vac√≠a ----------
 def ensure_default_admin():
     """
     Si no hay usuarios en la DB, crea un admin inicial.
@@ -430,7 +430,7 @@ def require_admin(request: Request):
 # ================== Preferencias de respuesta (HTML/JSON) ==================
 def wants_json(request: Request) -> bool:
     """
-    True si el cliente espera JSON (˙til para que /incidencias/cerrar|eliminar respondan {ok:true}
+    True si el cliente espera JSON (√∫til para que /incidencias/cerrar|eliminar respondan {ok:true}
     cuando vienen por fetch).
     """
     acc = (request.headers.get("accept") or "").lower()
@@ -555,11 +555,11 @@ CHAT_MAX_TOTAL_MB = 50
 
 
 # ================== Adjuntos de incidencias (?? NUEVO) ==================
-# Definimos el directorio y lÌmites de adjuntos de incidencias aquÌ (PARTE 1)
+# Definimos el directorio y l√≠mites de adjuntos de incidencias aqu√≠ (PARTE 1)
 # para que el endpoint /incidencias/crear no falle con NameError.
 INCID_ATTACH_DIR = os.path.join("static", "incid_adjuntos")
 os.makedirs(INCID_ATTACH_DIR, exist_ok=True)
-# Reusamos whitelist y seteamos lÌmites especÌficos
+# Reusamos whitelist y seteamos l√≠mites espec√≠ficos
 INCID_ALLOWED_EXT = CHAT_ALLOWED_EXT
 INCID_MAX_FILES = 10
 INCID_MAX_TOTAL_MB = 25
@@ -577,7 +577,7 @@ AVATAR_MAX_MB = 2  # MB
 KB_STORAGE_DIR = os.path.join("storage", "kb")
 os.makedirs(KB_STORAGE_DIR, exist_ok=True)
 
-# Extensiones permitidas para KB (reusa y amplÌa)
+# Extensiones permitidas para KB (reusa y ampl√≠a)
 KB_ALLOWED_EXT = set(CHAT_ALLOWED_EXT) | {".md", ".json", ".yaml", ".yml"}
 
 def _kb_slugify(name: str) -> str:
@@ -586,7 +586,7 @@ def _kb_slugify(name: str) -> str:
     return s.strip("-") or "rubro"
 
 def _kb_funcs():
-    """Descubre funciones KB en utils.py sin romper si no est·n todavÌa."""
+    """Descubre funciones KB en utils.py sin romper si no est√°n todav√≠a."""
     return {
         "create_or_get_source": getattr(U, "kb_create_or_get_source", None),
         "ingest_file": getattr(U, "kb_ingest_file", None),
@@ -665,7 +665,7 @@ def _build_audit_filters(q, filtros):
     return q
 
 
-# --- helpers extra para rating/identificaciÛn por timestamp/nombre ---
+# --- helpers extra para rating/identificaci√≥n por timestamp/nombre ---
 _TS_RE = re.compile(r"(\d{14})")
 
 
@@ -717,7 +717,7 @@ def _buscar_historial_usuario(
     return None
 
 
-# --- Config p˙blica para el front (lÌmites de adjuntos) ---
+# --- Config p√∫blica para el front (l√≠mites de adjuntos) ---
 @app.get("/chat/config")
 async def chat_config():
     return {
@@ -767,7 +767,7 @@ def _historial_para_home(email: str, rol: str, q: str = "") -> List[dict]:
 
     data.sort(key=_sort_key, reverse=True)
 
-    # B˙squeda simple
+    # B√∫squeda simple
     ql = (q or "").strip().lower()
     if ql:
 
@@ -784,7 +784,7 @@ def _historial_para_home(email: str, rol: str, q: str = "") -> List[dict]:
 
         data = [h for h in data if _match(h)]
 
-    # AÒadir 'fecha_legible' para comodidad del template
+    # A√±adir 'fecha_legible' para comodidad del template
     for h in data:
         try:
             h["fecha_legible"] = iso_utc_to_ar_str(h.get("fecha"))
@@ -817,7 +817,7 @@ async def home(
         {
             "request": request,
             "rol": rol,
-            # ?? variables nuevas para la paginaciÛn del historial
+            # ?? variables nuevas para la paginaci√≥n del historial
             "historial_items": items,
             "page": page,
             "per_page": per_page,
@@ -830,17 +830,17 @@ async def home(
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_form(request: Request):
-    # Si ya est·s logueado, te llevo al home.
+    # Si ya est√°s logueado, te llevo al home.
     if request.session.get("usuario"):
         return RedirectResponse("/", status_code=303)
 
     # Permite mostrar estado por query (opcional)
     msg = None
     if request.query_params.get("logout") == "1":
-        msg = "SesiÛn cerrada."
+        msg = "Sesi√≥n cerrada."
     return templates.TemplateResponse("login.html", {"request": request, "error": None, "mensaje": msg})
 # =========================
-# main.py ó PARTE 2 / 6
+# main.py ‚Äî PARTE 2 / 6
 # (login/logout, cambiar password, rating, analizar pliego)
 # =========================
 
@@ -990,7 +990,7 @@ async def login(
     remember: Optional[str] = Form(default=None)  # "on" si tildan Recordarme
 ):
     """
-    NormalizaciÛn:
+    Normalizaci√≥n:
     - recorta espacios y pasa a lower
     - si no trae '@', agrega dominio por defecto (LOGIN_DEFAULT_DOMAIN, por defecto suizo.com)
     """
@@ -1006,7 +1006,7 @@ async def login(
     if isinstance(usuario, (list, tuple)) and len(usuario) >= 6:
         is_active = bool(usuario[5])
 
-    # Limpiar la sesiÛn previa para evitar fijaciÛn de sesiÛn
+    # Limpiar la sesi√≥n previa para evitar fijaci√≥n de sesi√≥n
     try:
         request.session.clear()
     except Exception:
@@ -1019,7 +1019,7 @@ async def login(
         request.session["nombre"] = usuario[1] or usuario[2]
         request.session["remember"] = bool(remember)
 
-        # Registrar sesiÛn en tabla local (calendar.sqlite3)
+        # Registrar sesi√≥n en tabla local (calendar.sqlite3)
         sid = uuid.uuid4().hex
         request.session["sid"] = sid
         nombre_s = request.session.get("nombre") or usuario[1] or usuario[2]
@@ -1053,9 +1053,9 @@ async def login(
 
         return RedirectResponse("/", status_code=303)
 
-    # Mensajes de error m·s claros
+    # Mensajes de error m√°s claros
     if usuario and not is_active:
-        err = "Tu usuario est· desactivado. Consult· con un administrador."
+        err = "Tu usuario est√° desactivado. Consult√° con un administrador."
     else:
         err = "Credenciales incorrectas"
 
@@ -1087,7 +1087,7 @@ async def logout_get(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
-# ================== Cambiar contraseÒa (vista + alias + post) ==================
+# ================== Cambiar contrase√±a (vista + alias + post) ==================
 
 @app.get("/cambiar-password", response_class=HTMLResponse)
 async def cambiar_password_view(request: Request):
@@ -1097,7 +1097,7 @@ async def cambiar_password_view(request: Request):
     return templates.TemplateResponse("cambiar_password.html", {"request": request, "error": None, "ok": ok})
 
 
-# Alias con guion_bajo -> redirige a la ruta canÛnica con guion (GET)
+# Alias con guion_bajo -> redirige a la ruta can√≥nica con guion (GET)
 @app.get("/cambiar_password", response_class=HTMLResponse)
 async def cambiar_password_alias():
     return RedirectResponse("/cambiar-password", status_code=307)
@@ -1109,7 +1109,7 @@ async def cambiar_password_trailing_get():
     return RedirectResponse("/cambiar-password", status_code=307)
 
 
-# POST canÛnico
+# POST can√≥nico
 @app.post("/cambiar-password")
 async def cambiar_password_post(
     request: Request,
@@ -1124,7 +1124,7 @@ async def cambiar_password_post(
     if (not nueva) or (nueva != confirmar):
         return templates.TemplateResponse(
             "cambiar_password.html",
-            {"request": request, "error": "Las contraseÒas no coinciden."},
+            {"request": request, "error": "Las contrase√±as no coinciden."},
             status_code=400,
         )
 
@@ -1134,10 +1134,10 @@ async def cambiar_password_post(
             "cambiar_password.html", {"request": request, "error": "Usuario no encontrado."}, status_code=404
         )
 
-    # ValidaciÛn de contraseÒa actual (seg˙n tu esquema plano)
+    # Validaci√≥n de contrase√±a actual (seg√∫n tu esquema plano)
     if str(row[3]) != str(actual):
         return templates.TemplateResponse(
-            "cambiar_password.html", {"request": request, "error": "La contraseÒa actual es incorrecta."}, status_code=400
+            "cambiar_password.html", {"request": request, "error": "La contrase√±a actual es incorrecta."}, status_code=400
         )
 
     actor_user_id, ip = _actor_info(request)
@@ -1147,19 +1147,19 @@ async def cambiar_password_post(
         print("? cambiar_password_post:", repr(e))
         return templates.TemplateResponse(
             "cambiar_password.html",
-            {"request": request, "error": "No se pudo actualizar la contraseÒa."},
+            {"request": request, "error": "No se pudo actualizar la contrase√±a."},
             status_code=500,
         )
 
     try:
-        await notify_async(email, "ContraseÒa actualizada", "Tu contraseÒa fue actualizada correctamente.")
+        await notify_async(email, "Contrase√±a actualizada", "Tu contrase√±a fue actualizada correctamente.")
     except Exception:
         pass
 
     return RedirectResponse("/cambiar-password?ok=1", status_code=303)
 
 
-# NUEVO: aceptar barra final en POST (reusa la lÛgica canÛnica)
+# NUEVO: aceptar barra final en POST (reusa la l√≥gica can√≥nica)
 @app.post("/cambiar-password/")
 async def cambiar_password_trailing_post(
     request: Request,
@@ -1192,7 +1192,7 @@ async def cambiar_password_underscore_post_slash(
     return await cambiar_password_post(request, actual=actual, nueva=nueva, confirmar=confirmar)
 
 
-# ================== Rating/An·lisis ==================
+# ================== Rating/An√°lisis ==================
 
 class RatingIn(BaseModel):
     historial_id: Optional[int] = None
@@ -1260,7 +1260,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
         rating = payload.rating
 
     if not rating or rating < 1 or rating > 5:
-        return JSONResponse({"error": "Rating inv·lido. Use un entero 1..5."}, status_code=400)
+        return JSONResponse({"error": "Rating inv√°lido. Use un entero 1..5."}, status_code=400)
 
     historial_id = payload.historial_id
     if not historial_id:
@@ -1271,7 +1271,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
                 historial_id = hid
 
     if not historial_id:
-        return JSONResponse({"error": "No pude identificar el an·lisis a valorar."}, status_code=400)
+        return JSONResponse({"error": "No pude identificar el an√°lisis a valorar."}, status_code=400)
 
     actor_user_id, ip = _actor_info(request)
     try:
@@ -1280,7 +1280,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         print("? Error enviar_rating:", repr(e))
-        return JSONResponse({"error": "No se pudo registrar la valoraciÛn"}, status_code=500)
+        return JSONResponse({"error": "No se pudo registrar la valoraci√≥n"}, status_code=500)
 
     try:
         _pr_clear(user)
@@ -1289,24 +1289,24 @@ async def enviar_rating(request: Request, payload: RatingIn):
 
     try:
         if payload.comentario:
-            await notify_async(user, "°Gracias por tu valoraciÛn!", f"Dejaste {rating}/5: {payload.comentario[:140]}")
+            await notify_async(user, "¬°Gracias por tu valoraci√≥n!", f"Dejaste {rating}/5: {payload.comentario[:140]}")
         else:
-            await notify_async(user, "°Gracias por tu valoraciÛn!", f"CalificaciÛn {rating}/5 registrada.")
+            await notify_async(user, "¬°Gracias por tu valoraci√≥n!", f"Calificaci√≥n {rating}/5 registrada.")
     except Exception:
         pass
 
-    return {"ok": True, "message": "ValoraciÛn registrada"}
+    return {"ok": True, "message": "Valoraci√≥n registrada"}
 
 
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
-    usuario = request.session.get("usuario", "AnÛnimo")
+    usuario = request.session.get("usuario", "An√≥nimo")
 
-    # Si hay una valoraciÛn pendiente, bloquear nuevo an·lisis
+    # Si hay una valoraci√≥n pendiente, bloquear nuevo an√°lisis
     try:
         pr = _pr_get(usuario)
         if pr or tiene_valoracion_pendiente(usuario):
-            payload = {"error": "Tienes una valoraciÛn pendiente. Califica el an·lisis anterior para continuar."}
+            payload = {"error": "Tienes una valoraci√≥n pendiente. Califica el an√°lisis anterior para continuar."}
             if pr:
                 payload["pending"] = True
                 payload["last"] = pr
@@ -1317,7 +1317,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         print("?? Warning al chequear pendiente:", repr(e))
 
     if not archivos:
-        return JSONResponse({"error": "SubÌ al menos un archivo"}, status_code=400)
+        return JSONResponse({"error": "Sub√≠ al menos un archivo"}, status_code=400)
 
     for a in archivos:
         if not a or not a.filename:
@@ -1328,7 +1328,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     try:
         resumen = await run_in_threadpool(analizar_anexos, archivos)
     except Exception as e:
-        return JSONResponse({"error": f"Fallo en el an·lisis: {e}"}, status_code=500)
+        return JSONResponse({"error": f"Fallo en el an√°lisis: {e}"}, status_code=500)
 
     # 2) Generar PDF
     try:
@@ -1370,7 +1370,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
                 ext = os.path.splitext(a.filename)[1].lower()
                 dst = os.path.join(user_dir, f"{i:02d}_{base}{ext}")
                 try:
-                    # reset por si el extractor consumiÛ el stream
+                    # reset por si el extractor consumi√≥ el stream
                     await a.seek(0)
                     await _save_upload_stream(a, dst)
                     saved_paths.append(dst)
@@ -1419,8 +1419,8 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         "analisis_id": analisis_id,
     }
 # =========================
-# main.py ó PARTE 3 / 6
-# (historial, usuario/avatares, diagnÛstico)
+# main.py ‚Äî PARTE 3 / 6
+# (historial, usuario/avatares, diagn√≥stico)
 # =========================
 
 # ? Fallback para kb_session (usado en PARTE 2 durante la ingesta KB)
@@ -1430,7 +1430,7 @@ from contextlib import contextmanager
 def kb_session():
     """
     Usa utils.kb_session() si existe; si no, entrega un contexto nulo.
-    AsÌ evitamos fallos si a˙n no implementaste la sesiÛn de KB.
+    As√≠ evitamos fallos si a√∫n no implementaste la sesi√≥n de KB.
     """
     ks = getattr(U, "kb_session", None)
     if callable(ks):
@@ -1440,7 +1440,7 @@ def kb_session():
                 yield db
                 return
         except TypeError:
-            # Caso 2: devuelve una conexiÛn/objeto directamente
+            # Caso 2: devuelve una conexi√≥n/objeto directamente
             try:
                 db = ks()
                 yield db
@@ -1463,7 +1463,7 @@ async def ver_historial(
 ):
     """
     Devuelve el historial paginado en JSON (filtrado por usuario/rol).
-    ⁄til para futuras mejoras de UI (carga perezosa, b˙squeda, etc.).
+    √ötil para futuras mejoras de UI (carga perezosa, b√∫squeda, etc.).
     """
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
@@ -1558,12 +1558,12 @@ async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
     data = await avatar.read()
     size_mb = len(data) / (1024 * 1024)
     if size_mb > AVATAR_MAX_MB:
-        return JSONResponse({"error": f"M·ximo {AVATAR_MAX_MB} MB"}, status_code=400)
+        return JSONResponse({"error": f"M√°ximo {AVATAR_MAX_MB} MB"}, status_code=400)
 
     prefix = _email_safe(email)
     dst = os.path.join(AVATAR_DIR, prefix + ext)
 
-    # elimina variantes anteriores (si existÌan)
+    # elimina variantes anteriores (si exist√≠an)
     for e in (".webp", ".png", ".jpg", ".jpeg"):
         p = os.path.join(AVATAR_DIR, prefix + e)
         if os.path.isfile(p) and p != dst:
@@ -1578,19 +1578,19 @@ async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
     url = f"/{dst.replace(os.sep, '/')}"
 
     try:
-        await emit_alert(email, "Perfil actualizado", "Tu avatar se actualizÛ correctamente")
+        await emit_alert(email, "Perfil actualizado", "Tu avatar se actualiz√≥ correctamente")
     except Exception:
         pass
 
     return {"ok": True, "avatar_url": url}
 
 
-# ================== DiagnÛstico (controlado por env) ==================
+# ================== Diagn√≥stico (controlado por env) ==================
 @app.get("/__diag/auth")
 async def diag_auth(request: Request):
     """
     Habilitar con ENABLE_DIAG=1 (no expone secretos).
-    ⁄til para verificar si la cookie de sesiÛn se est· guardando.
+    √ötil para verificar si la cookie de sesi√≥n se est√° guardando.
     """
     if (os.getenv("ENABLE_DIAG", "0") != "1"):
         raise HTTPException(status_code=404, detail="Not found")
@@ -1615,7 +1615,7 @@ async def diag_auth(request: Request):
     }
 
 
-# ? DiagnÛstico de templates/loader
+# ? Diagn√≥stico de templates/loader
 @app.get("/__diag/templates")
 async def _diag_templates():
     if (os.getenv("ENABLE_DIAG", "0") != "1"):
@@ -1626,7 +1626,7 @@ async def _diag_templates():
     }
 
 
-# DiagnÛstico r·pido siempre disponible (no revela info sensible)
+# Diagn√≥stico r√°pido siempre disponible (no revela info sensible)
 @app.get("/debug/whoami")
 async def debug_whoami(request: Request):
     sess = request.session or {}
@@ -1643,32 +1643,32 @@ async def debug_whoami(request: Request):
         "route": str(request.url),
     }
 # =========================
-# main.py ó PARTE 4 / 6
+# main.py ‚Äî PARTE 4 / 6
 # (chat OpenAI, chat interno)
 # =========================
 
 # ================== Helpers de contexto para Chat OpenAI ==================
 def _build_chat_context(historial: List[dict], usuario_actual: str, max_items: int = 8, max_chars: int = 1500) -> str:
     """
-    Construye un contexto compacto usando el ˙ltimo an·lisis del usuario + extractos del historial.
+    Construye un contexto compacto usando el √∫ltimo an√°lisis del usuario + extractos del historial.
     Limita cantidad de items y longitud para evitar prompts gigantes.
     """
     if not historial:
-        return "(Sin historial todavÌa.)"
+        return "(Sin historial todav√≠a.)"
 
-    # ˙ltimo an·lisis del usuario
+    # √∫ltimo an√°lisis del usuario
     mine = [h for h in historial if h.get("usuario") == usuario_actual and h.get("resumen")]
     mine.sort(key=lambda h: _parse_dt_utc(h.get("fecha")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
     ultimo = mine[0] if mine else None
     if ultimo:
         ultimo_resumen = (
-            f"\n ?? ⁄ltimo an·lisis del usuario actual:\n"
+            f"\n ?? √öltimo an√°lisis del usuario actual:\n"
             f" - Fecha: {ultimo.get('fecha')}\n"
             f" - Archivo: {ultimo.get('nombre_archivo')}\n"
             f" - Resumen: {ultimo.get('resumen')}\n"
         )
     else:
-        ultimo_resumen = "(El usuario a˙n no tiene an·lisis registrados.)"
+        ultimo_resumen = "(El usuario a√∫n no tiene an√°lisis registrados.)"
 
     # resto del historial (global), ordenado nuevo?viejo
     others = [h for h in historial if h.get("resumen")]
@@ -1678,8 +1678,8 @@ def _build_chat_context(historial: List[dict], usuario_actual: str, max_items: i
     for h in others[:max_items]:
         resumen = str(h.get("resumen") or "").strip()
         if len(resumen) > max_chars:
-            resumen = resumen[:max_chars] + "Ö"
-        lines.append(f"- [{h.get('fecha')}] {h.get('usuario')} analizÛ '{h.get('nombre_archivo')}' y obtuvo:\n{resumen}\n")
+            resumen = resumen[:max_chars] + "‚Ä¶"
+        lines.append(f"- [{h.get('fecha')}] {h.get('usuario')} analiz√≥ '{h.get('nombre_archivo')}' y obtuvo:\n{resumen}\n")
 
     contexto_general = "\n".join(lines)
     return f"{ultimo_resumen}\n\n?? Historial breve:\n{contexto_general}"
@@ -1703,7 +1703,7 @@ async def chat_openai(request: Request):
     usuario_actual = request.session.get("usuario", "Desconocido")
 
     if not mensaje:
-        return JSONResponse({"respuesta": "Decime quÈ necesit·s revisar del pliego ??"})
+        return JSONResponse({"respuesta": "Decime qu√© necesit√°s revisar del pliego ??"})
 
     respuesta = await _call_chat_llm(mensaje, usuario_actual)
     return JSONResponse({"respuesta": respuesta})
@@ -1715,7 +1715,7 @@ async def api_chat_openai(request: Request, payload: dict = Body(...)):
     usuario_actual = request.session.get("usuario", "Desconocido")
 
     if not mensaje:
-        return JSONResponse({"reply": "Decime quÈ necesit·s revisar del pliego ??"})
+        return JSONResponse({"reply": "Decime qu√© necesit√°s revisar del pliego ??"})
 
     respuesta = await _call_chat_llm(mensaje, usuario_actual)
     return JSONResponse({"reply": respuesta})
@@ -1725,7 +1725,7 @@ async def api_chat_openai(request: Request, payload: dict = Body(...)):
 @app.get("/chat_openai_embed", response_class=HTMLResponse)
 async def chat_openai_embed(request: Request):
     if not request.session.get("usuario"):
-        return HTMLResponse("<div style='padding:12px'>Inici· sesiÛn para usar el chat.</div>")
+        return HTMLResponse("<div style='padding:12px'>Inici√° sesi√≥n para usar el chat.</div>")
 
     html = """<!doctype html><html><head>
  <meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
@@ -1751,7 +1751,7 @@ async def chat_openai_embed(request: Request):
     const v = ta.value.trim();
     if(!v) return;
     busy = true; btn.disabled = true;
-    add('<div><b>T˙:</b> '+esc(v)+'</div>');
+    add('<div><b>T√∫:</b> '+esc(v)+'</div>');
     ta.value=''; autosize();
     try{
       const r = await fetch('/chat-openai', {
@@ -1848,7 +1848,7 @@ async def api_buscar_usuarios(request: Request, term: str = "", limit: int = 8):
         return {"items": [{"id": u["id"], "nombre": u["nombre"], "email": u["email"]} for u in norm]}
     except Exception as e:
         print("? Error api_buscar_usuarios:", repr(e))
-        return JSONResponse({"error": "No se pudo completar la b˙squeda"}, status_code=500)
+        return JSONResponse({"error": "No se pudo completar la b√∫squeda"}, status_code=500)
 
 
 @app.post("/chat/enviar")
@@ -1878,7 +1878,7 @@ async def chat_enviar(request: Request):
     except Exception as e:
         if _is_no_table_error(e):
             ensure_chat_tables()
-            return JSONResponse({"ok": False, "error": "InicialicÈ las tablas de chat, intent· de nuevo."}, status_code=503)
+            return JSONResponse({"ok": False, "error": "Inicialic√© las tablas de chat, intent√° de nuevo."}, status_code=503)
         print("? Error chat_enviar:", repr(e))
         return JSONResponse({"error": "No se pudo enviar el mensaje"}, status_code=500)
 
@@ -1896,7 +1896,7 @@ async def chat_enviar_archivos(
     de = request.session.get("usuario")
     files = [a for a in archivos if a and a.filename]
     if len(files) > CHAT_MAX_FILES:
-        return JSONResponse({"error": f"M·ximo {CHAT_MAX_FILES} archivos por mensaje"}, status_code=400)
+        return JSONResponse({"error": f"M√°ximo {CHAT_MAX_FILES} archivos por mensaje"}, status_code=400)
 
     actor_user_id, ip = _actor_info(request)
     try:
@@ -1910,7 +1910,7 @@ async def chat_enviar_archivos(
     except Exception as e:
         if _is_no_table_error(e):
             ensure_chat_tables()
-            return JSONResponse({"ok": False, "error": "InicialicÈ las tablas de chat, intent· de nuevo."}, status_code=503)
+            return JSONResponse({"ok": False, "error": "Inicialic√© las tablas de chat, intent√° de nuevo."}, status_code=503)
         print("? Error creando mensaje:", repr(e))
         return JSONResponse({"error": "No se pudo crear el mensaje"}, status_code=500)
 
@@ -1928,13 +1928,13 @@ async def chat_enviar_archivos(
         written = await _save_upload_stream(archivo, path)
         total_bytes += written
 
-        # ? LÌmite correcto del chat
+        # ? L√≠mite correcto del chat
         if (total_bytes / (1024 * 1024)) > CHAT_MAX_TOTAL_MB:
             try:
                 os.remove(path)
             except Exception:
                 pass
-            return JSONResponse({"error": f"TamaÒo total supera {CHAT_MAX_TOTAL_MB} MB"}, status_code=400)
+            return JSONResponse({"error": f"Tama√±o total supera {CHAT_MAX_TOTAL_MB} MB"}, status_code=400)
 
         try:
             guardar_adjunto(
@@ -1998,7 +1998,7 @@ async def chat_mensajes(request: Request, con: str, limit: int = 100):
 
     yo = request.session.get("usuario")
     if not con:
-        return JSONResponse({"error": "Falta par·metro 'con' (email del contacto)"}, status_code=400)
+        return JSONResponse({"error": "Falta par√°metro 'con' (email del contacto)"}, status_code=400)
 
     limit = max(1, min(int(limit or 100), 500))
 
@@ -2033,7 +2033,7 @@ async def chat_marcar_leidos(request: Request):
             ensure_chat_tables()
             return JSONResponse({"ok": True})
         print("? Error chat_marcar_leidos:", repr(e))
-        return JSONResponse({"error": "No se pudo marcar como leÌdos"}, status_code=500)
+        return JSONResponse({"error": "No se pudo marcar como le√≠dos"}, status_code=500)
 
 
 @app.get("/chat/no-leidos")
@@ -2124,11 +2124,11 @@ async def chat_abrir(request: Request):
         print("? Error chat_abrir:", repr(e))
         return JSONResponse({"error": "No se pudo abrir el hilo"}, status_code=500)
 # =========================
-# main.py ó PARTE 5 / 6
-# (AuditorÌa, Admin, endpoints legacy + **Incidencias (vista GET)**)
+# main.py ‚Äî PARTE 5 / 6
+# (Auditor√≠a, Admin, endpoints legacy + **Incidencias (vista GET)**)
 # =========================
 
-# ---------- Vista mÌnima de Incidencias (evita 404 al hacer clic en el botÛn) ----------
+# ---------- Vista m√≠nima de Incidencias (evita 404 al hacer clic en el bot√≥n) ----------
 @app.get("/incidencias", response_class=HTMLResponse)
 async def incidencias_view(request: Request):
     if not request.session.get("usuario"):
@@ -2136,7 +2136,7 @@ async def incidencias_view(request: Request):
 
     # Intentamos renderizar templates/incidencias.html si existe; si no, devolvemos un HTML simple
     try:
-        # forzamos carga para verificar existencia; si no existe, get_template lanza excepciÛn
+        # forzamos carga para verificar existencia; si no existe, get_template lanza excepci√≥n
         templates.env.get_template("incidencias.html")
         return templates.TemplateResponse("incidencias.html", {"request": request})
     except Exception:
@@ -2148,8 +2148,8 @@ async def incidencias_view(request: Request):
           <div class="container">
             <h1 class="h4 mb-3">Incidencias</h1>
             <div class="alert alert-info">
-              La vista <code>templates/incidencias.html</code> no existe a˙n. <br>
-              Creala para personalizar el mÛdulo. Mientras tanto, esta vista placeholder evita el 404.
+              La vista <code>templates/incidencias.html</code> no existe a√∫n. <br>
+              Creala para personalizar el m√≥dulo. Mientras tanto, esta vista placeholder evita el 404.
             </div>
             <a class="btn btn-secondary" href="/">Volver al inicio</a>
           </div>
@@ -2161,7 +2161,7 @@ async def incidencias_view(request: Request):
 async def incidencias_trailing():
     return RedirectResponse("/incidencias", status_code=307)
 
-# ================== AuditorÌa (vista audit_logs) ==================
+# ================== Auditor√≠a (vista audit_logs) ==================
 @app.get("/auditoria", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def ver_auditoria(request: Request):
     logs = obtener_auditoria()
@@ -2170,23 +2170,23 @@ async def ver_auditoria(request: Request):
 
 @app.post("/auditoria/eliminar", dependencies=[Depends(require_admin)])
 async def auditoria_eliminar_disabled(request: Request):
-    return JSONResponse({"error": "OperaciÛn no permitida: la auditorÌa es inmutable"}, status_code=405)
+    return JSONResponse({"error": "Operaci√≥n no permitida: la auditor√≠a es inmutable"}, status_code=405)
 
 
 @app.post("/auditoria/eliminar-masivo", dependencies=[Depends(require_admin)])
 async def auditoria_eliminar_masivo_disabled(request: Request):
-    return JSONResponse({"error": "OperaciÛn no permitida: la auditorÌa es inmutable"}, status_code=405)
+    return JSONResponse({"error": "Operaci√≥n no permitida: la auditor√≠a es inmutable"}, status_code=405)
 
 
 @app.post("/auditoria/purgar", dependencies=[Depends(require_admin)])
 async def auditoria_purgar_disabled(request: Request):
-    return JSONResponse({"error": "OperaciÛn no permitida: la auditorÌa es inmutable"}, status_code=405)
+    return JSONResponse({"error": "Operaci√≥n no permitida: la auditor√≠a es inmutable"}, status_code=405)
 
 
-# ========= Panel de AdministraciÛn =========
+# ========= Panel de Administraci√≥n =========
 @app.get("/admin", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def admin_panel(request: Request):
-    # Renderiza el panel de administraciÛn (botÛn del topbar apunta aquÌ)
+    # Renderiza el panel de administraci√≥n (bot√≥n del topbar apunta aqu√≠)
     return templates.TemplateResponse("admin.html", {"request": request})
 
 
@@ -2243,7 +2243,7 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
     actor_user_id, ip = _actor_info(request)
 
     email = payload.email.lower()
-    # Bloquea sÛlo si EXISTE y est· ACTIVO. Si existe inactivo, se permitir· re-crear (restaurar).
+    # Bloquea s√≥lo si EXISTE y est√° ACTIVO. Si existe inactivo, se permitir√° re-crear (restaurar).
     row = obtener_usuario_por_email(email)  # (id, nombre, email, password, rol, activo)
     if row and bool(row[5]):  # activo = 1
         return JSONResponse({"error": "El email ya existe"}, status_code=409)
@@ -2281,7 +2281,7 @@ async def admin_users_password(request: Request, payload: AdminPasswordIn):
         return {"ok": True}
     except Exception as e:
         print("? admin_users_password:", repr(e))
-        return JSONResponse({"error": "No se pudo actualizar la contraseÒa"}, status_code=500)
+        return JSONResponse({"error": "No se pudo actualizar la contrase√±a"}, status_code=500)
 
 
 @app.post("/api/admin/users/toggle")
@@ -2360,7 +2360,7 @@ async def legacy_admin_create_user(request: Request):
 @app.post("/admin/blanquear-password")
 async def legacy_admin_password(request: Request):
     data = await _json_or_form(request)
-    # Si no llega contraseÒa, usar DEFAULT_NEW_USER_PASSWORD
+    # Si no llega contrase√±a, usar DEFAULT_NEW_USER_PASSWORD
     new_pwd = (data.get("password") or data.get("nueva") or data.get("new") or "").strip() or DEFAULT_NEW_USER_PASSWORD
     payload = AdminPasswordIn(
         email=(data.get("email") or "").strip(),
@@ -2373,7 +2373,7 @@ async def legacy_admin_password(request: Request):
 async def legacy_admin_toggle(request: Request):
     data = await _json_or_form(request)
     activo_raw = str(data.get("activo", "")).lower()
-    activo = activo_raw in ("1", "true", "t", "yes", "on", "si", "sÌ")
+    activo = activo_raw in ("1", "true", "t", "yes", "on", "si", "s√≠")
     payload = AdminToggleIn(
         email=(data.get("email") or "").strip(),
         activo=activo,
@@ -2403,7 +2403,7 @@ async def legacy_admin_delete_post(request: Request):
     data = await _json_or_form(request)
     email = (data.get("email") or "").strip()
     hard_raw = str(data.get("hard", "")).lower()
-    hard = hard_raw in ("1", "true", "t", "yes", "on", "si", "sÌ")
+    hard = hard_raw in ("1", "true", "t", "yes", "on", "si", "s√≠")
     return await admin_users_delete(request, email=email, hard=hard)
 
 
@@ -2447,10 +2447,10 @@ async def legacy_admin_reset_session(request: Request):
         return {"ok": True}
     except Exception as e:
         print("? legacy_admin_reset_session:", repr(e))
-        return JSONResponse({"error": "No se pudo reiniciar la sesiÛn"}, status_code=500)
+        return JSONResponse({"error": "No se pudo reiniciar la sesi√≥n"}, status_code=500)
 # =========================
-# main.py ó PARTE 6 / 6
-# (Calendario, Notificaciones, Presencia/Online, AuditorÌa de actividad + CSV, diag rutas)
+# main.py ‚Äî PARTE 6 / 6
+# (Calendario, Notificaciones, Presencia/Online, Auditor√≠a de actividad + CSV, diag rutas)
 # =========================
 
 # =====================================================================
@@ -2507,7 +2507,7 @@ async def cal_create(request: Request):
             (evt_id, title, desc, start, end, all_day, color, created_by, now, now),
         )
 
-    await notify_async(created_by, "Evento creado", f"{title} ï {start}{(' ? '+end) if end else ''}")
+    await notify_async(created_by, "Evento creado", f"{title} ‚Ä¢ {start}{(' ? '+end) if end else ''}")
 
     return {
         "id": evt_id,
@@ -2817,7 +2817,7 @@ async def usuarios_activos(request: Request):
 
 
 # =====================================================================
-# ===================== AUDITORÕA DE ACTIVIDAD (admins) ===============
+# ===================== AUDITOR√çA DE ACTIVIDAD (admins) ===============
 # =====================================================================
 
 def _parse_iso(ts: Optional[str]):
@@ -2965,7 +2965,7 @@ async def auditoria_actividad_csv(
     )
 
 # =========================
-# KB ó UI mÌnima + APIs
+# KB ‚Äî UI m√≠nima + APIs
 # =========================
 
 # Vista HTML (solo admins)
@@ -3042,13 +3042,13 @@ async def kb_upload(
     files: List[UploadFile] = File(...),
 ):
     """
-    Sube 1..N archivos a una fuente/rubro de la KB y, si est· disponible, invoca utils.kb_ingest_file.
+    Sube 1..N archivos a una fuente/rubro de la KB y, si est√° disponible, invoca utils.kb_ingest_file.
     """
     slug = _kb_slugify(source or "")
     if not slug:
         return JSONResponse({"error": "Falta 'source' (rubro)"}, status_code=400)
     if not files:
-        return JSONResponse({"error": "SubÌ al menos un archivo"}, status_code=400)
+        return JSONResponse({"error": "Sub√≠ al menos un archivo"}, status_code=400)
 
     dst_dir = os.path.join(KB_STORAGE_DIR, slug)
     os.makedirs(dst_dir, exist_ok=True)
@@ -3061,7 +3061,7 @@ async def kb_upload(
         orig = fup.filename
         ext = os.path.splitext(orig)[1].lower()
         if ext not in KB_ALLOWED_EXT:
-            return JSONResponse({"error": f"ExtensiÛn no permitida: {ext}"}, status_code=400)
+            return JSONResponse({"error": f"Extensi√≥n no permitida: {ext}"}, status_code=400)
 
         safe = _safe_basename(orig) + ext
         path = os.path.join(dst_dir, safe)
@@ -3070,7 +3070,7 @@ async def kb_upload(
 
         if callable(funcs["ingest_file"]):
             try:
-                # Llamada sÌncrona en threadpool para no bloquear
+                # Llamada s√≠ncrona en threadpool para no bloquear
                 await run_in_threadpool(funcs["ingest_file"], source=slug, filepath=path, original_name=orig)
             except Exception as e:
                 print("kb_ingest_file error:", repr(e))
@@ -3102,11 +3102,11 @@ class KBPriorityIn(BaseModel):
 @app.post("/api/kb/priorities", dependencies=[Depends(require_admin)])
 async def kb_priorities_upsert(payload: KBPriorityIn):
     """
-    Upsert de prioridad/ponderaciÛn de tÈrmino (si utils.kb_upsert_priority existe).
+    Upsert de prioridad/ponderaci√≥n de t√©rmino (si utils.kb_upsert_priority existe).
     """
     f = _kb_funcs()
     if not callable(f["upsert_priority"]):
-        return JSONResponse({"error": "FunciÛn no disponible en utils"}, status_code=501)
+        return JSONResponse({"error": "Funci√≥n no disponible en utils"}, status_code=501)
 
     try:
         f["upsert_priority"](term=payload.term, weight=int(payload.weight), source=payload.source)
@@ -3114,7 +3114,8 @@ async def kb_priorities_upsert(payload: KBPriorityIn):
     except Exception as e:
         return JSONResponse({"error": f"No se pudo guardar: {e}"}, status_code=500)
 
-# (Opcional) diagnÛstico de rutas
+# (Opcional) diagn√≥stico de rutas
 @app.get("/__diag/routes")
 def _diag_routes():
     return {"routes": sorted({getattr(r, "path", "") for r in app.routes})}
+
