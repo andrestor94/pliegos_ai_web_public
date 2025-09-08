@@ -49,10 +49,12 @@ OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "90"))
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
 
 # ========================= Base de Conocimiento (KB) =========================
-# Modelos: KBSource, KBFile, KBChunk, KBPriority
-try:
-    # import absoluto (estructura plana)
-    from models import KBSource, KBFile, KBChunk, KBPriority
+# Evitamos importar modelos al cargar el módulo para no registrar tablas dos veces.
+# Usamos lazy-import dentro de cada función.
+def _kb_models():
+    from models import KBSource as _KBSource, KBFile as _KBFile, KBChunk as _KBChunk, KBPriority as _KBPriority
+    return _KBSource, _KBFile, _KBChunk, _KBPriority
+
 except Exception:
     # fallback a import relativo si estás en paquete
     from .models import KBSource, KBFile, KBChunk, KBPriority  # type: ignore
@@ -130,67 +132,42 @@ def _kb_embed(text: str, _client: Optional[OpenAI] = None) -> List[float]:
     return resp.data[0].embedding  # type: ignore
 
 
-def kb_create_or_get_source(db, name: str, storage_path: str, scope: Dict[str, Any]) -> KBSource:
-    """
-    Crea o recupera una fuente KB. Asegura la carpeta de almacenamiento.
-    """
+def kb_create_or_get_source(db, name: str, storage_path: str, scope: Dict[str, Any]):
+    KBSource, _, _, _ = _kb_models()
     src = db.query(KBSource).filter_by(name=name).first()
     if src:
-        # actualizar storage_path/scope si cambiaron
         changed = False
         if storage_path and src.storage_path != storage_path:
-            src.storage_path = storage_path
-            changed = True
+            src.storage_path = storage_path; changed = True
         if scope and (src.scope or {}) != scope:
-            src.scope = scope
-            changed = True
+            src.scope = scope; changed = True
         if changed:
-            db.add(src)
-            db.commit()
-            db.refresh(src)
+            db.add(src); db.commit(); db.refresh(src)
         return src
-
     os.makedirs(storage_path or ".", exist_ok=True)
     src = KBSource(name=name, storage_path=storage_path, scope=scope or {})
-    db.add(src)
-    db.commit()
-    db.refresh(src)
+    db.add(src); db.commit(); db.refresh(src)
     return src
 
 
 def kb_ingest_file(
-    db,
-    source: KBSource,
-    local_path: str,
-    *,
-    rubric: str,
-    tags: Optional[List[str]] = None,
-    _client: Optional[OpenAI] = None,
-    chunk_chars: int = 1500,
-    overlap: int = 200,
+    db, source, local_path: str, *, rubric: str, tags: Optional[List[str]] = None,
+    _client: Optional[OpenAI] = None, chunk_chars: int = 1500, overlap: int = 200,
 ) -> int:
-    """
-    Ingiere un archivo en la KB: copia al storage, crea KBFile y KBChunk con embeddings.
-    Dedup por hash_sha256.
-    """
+    KBSource, KBFile, KBChunk, _ = _kb_models()
     if not os.path.isfile(local_path):
         raise FileNotFoundError(f"No existe el archivo: {local_path}")
-
     os.makedirs(source.storage_path or ".", exist_ok=True)
-
     sha = _kb_sha256_path(local_path)
     existing = db.query(KBFile).filter_by(hash_sha256=sha).first()
     if existing:
         return existing.id
-
     dest = os.path.join(source.storage_path or ".", os.path.basename(local_path))
     if os.path.abspath(dest) != os.path.abspath(local_path):
         shutil.copy2(local_path, dest)
     size = os.path.getsize(dest)
     ctype = _kb_detect_content_type(dest)
-
     text, meta_extra = _kb_extract_text_from_path(dest)
-
     kbfile = KBFile(
         source_id=source.id,
         filename=os.path.basename(dest),
@@ -200,39 +177,25 @@ def kb_ingest_file(
         stored_path=dest,
         meta={"rubro": rubric, "tags": (tags or []), **(meta_extra or {})},
     )
-    db.add(kbfile)
-    db.flush()  # para obtener kbfile.id
-
+    db.add(kbfile); db.flush()
     if (text or "").strip():
         text_norm = _kb_clean_text(text)
         ord_idx = 0
         for chunk in _kb_chunk_text(text_norm, max_chars=chunk_chars, overlap=overlap):
             vec = _kb_embed(chunk, _client=_client)
-            db.add(
-                KBChunk(
-                    file_id=kbfile.id,
-                    ord=ord_idx,
-                    text=chunk,
-                    embedding=json.dumps(vec, ensure_ascii=False),
-                    span={},
-                    meta={},
-                )
-            )
+            db.add(KBChunk(
+                file_id=kbfile.id, ord=ord_idx, text=chunk,
+                embedding=json.dumps(vec), span={}, meta={}
+            ))
             ord_idx += 1
-
     db.commit()
     return kbfile.id
 
 
 def kb_upsert_priority(db, rubric: str, label: str, details: str = "", weight: float = 1.0) -> None:
-    """
-    Crea o actualiza una prioridad (punto que no debe faltar) para un 'rubric' dado.
-    """
+    _, _, _, KBPriority = _kb_models()
     from sqlalchemy import and_
-
-    row = db.query(KBPriority).filter(
-        and_(KBPriority.rubric == rubric, KBPriority.label == label)
-    ).first()
+    row = db.query(KBPriority).filter(and_(KBPriority.rubric == rubric, KBPriority.label == label)).first()
     if not row:
         row = KBPriority(rubric=rubric, label=label, details=details or "", weight=weight)
         db.add(row)
@@ -240,6 +203,7 @@ def kb_upsert_priority(db, rubric: str, label: str, details: str = "", weight: f
         row.details = details or row.details
         row.weight = weight
     db.commit()
+
 
 # (La parte 2 continúa con: Prompts (lazy import) y el resto de utilidades existentes…)
 # -*- coding: utf-8 -*-
