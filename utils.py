@@ -1593,3 +1593,76 @@ try:
     __all__.append("generar_pdf_con_plantilla")  # type: ignore
 except Exception:
     pass
+# ==================== Compatibilidad con versiones anteriores ====================
+
+def responder_chat_openai(
+    prompt_or_messages,
+    *,
+    model: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+    system: Optional[str] = None,
+    tools: Optional[List[Dict[str, Any]]] = None,
+    tool_choice: Optional[Any] = None,
+    **kwargs,
+) -> str:
+    """
+    Wrapper legacy para chat simple.
+    Acepta string (prompt) o lista de mensajes estilo OpenAI.
+    Ignora kwargs extra y usa _chat_create_safe para compatibilidad de tokens.
+    """
+    # Normaliza mensajes
+    if isinstance(prompt_or_messages, str):
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt_or_messages})
+    else:
+        messages = list(prompt_or_messages or [])
+        if system:
+            # Insertar system al principio si no está
+            if not messages or messages[0].get("role") != "system":
+                messages = [{"role": "system", "content": system}] + messages
+
+    # Modelo y temperatura
+    use_model = (model or _pick_model(final_pass=False))
+    temp = temperature if (temperature is not None) else _mk_temperature()
+
+    payload: Dict[str, Any] = {"model": use_model, "messages": messages}
+    if temp is not None:
+        payload["temperature"] = float(temp)
+    if max_tokens is not None:
+        payload["max_completion_tokens"] = int(max_tokens)
+    if tools:
+        payload["tools"] = tools
+    if tool_choice:
+        payload["tool_choice"] = tool_choice
+
+    resp = _chat_create_safe(**payload)
+    try:
+        return (resp.choices[0].message.content or "").strip()
+    except Exception:
+        return ""
+
+def analizar_con_openai(
+    texto_fuente: str,
+    *,
+    varios_anexos: Optional[bool] = None,
+    force_multi: Optional[bool] = None,
+    **kwargs,
+) -> str:
+    """
+    Alias legacy hacia analizar_y_generar_informe.
+    Ignora kwargs extra (p.ej. de APIs viejas).
+    """
+    return analizar_y_generar_informe(
+        texto_fuente,
+        varios_anexos=varios_anexos,
+        force_multi=force_multi,
+    )
+
+# Export explícito si usás __all__
+try:
+    __all__.extend(["responder_chat_openai", "analizar_con_openai"])  # type: ignore
+except Exception:
+    pass
