@@ -1688,3 +1688,107 @@ __all__ = [
     # helpers útiles
     "extraer_texto_universal", "preparar_texto_para_pdf",
 ]
+# ==================== Compat: analizar_anexos (multi-archivo) ====================
+
+class _FauxUpload:
+    """Wrapper simple para paths/bytes -> objeto tipo UploadFile (lo mínimo que usamos)."""
+    def __init__(self, *, filename: str, data: bytes):
+        self.filename = filename
+        self._data = data
+        self.file = io.BytesIO(data)
+    def read(self) -> bytes:
+        return self._data
+
+def _coerce_uploadlike(x) -> Any:
+    """
+    Devuelve un objeto con .filename y .file/.read para poder pasarlo a extraer_texto_universal.
+    Admite:
+      - Starlette UploadFile / file-like con .filename
+      - str path a archivo
+      - dict {"filename":..., "bytes":...} o {"path":...}
+      - bytes (se nombra como 'anexo.bin')
+    """
+    # Tiene .filename y .file/.read -> ya sirve
+    if hasattr(x, "filename") and (hasattr(x, "file") or hasattr(x, "read")):
+        return x
+
+    # Path en str
+    if isinstance(x, str) and os.path.isfile(x):
+        with open(x, "rb") as f:
+            data = f.read()
+        return _FauxUpload(filename=os.path.basename(x), data=data)
+
+    # Dict con path
+    if isinstance(x, dict) and "path" in x and os.path.isfile(str(x["path"])):
+        p = str(x["path"])
+        with open(p, "rb") as f:
+            data = f.read()
+        return _FauxUpload(filename=os.path.basename(p), data=data)
+
+    # Dict con bytes
+    if isinstance(x, dict) and "bytes" in x:
+        fn = x.get("filename") or "anexo.bin"
+        data = x["bytes"] if isinstance(x["bytes"], (bytes, bytearray)) else bytes(x["bytes"])
+        return _FauxUpload(filename=str(fn), data=data)
+
+    # Bytes sueltos
+    if isinstance(x, (bytes, bytearray)):
+        return _FauxUpload(filename="anexo.bin", data=bytes(x))
+
+    # Último recurso: string no existente -> vacío
+    return _FauxUpload(filename="anexo_desconocido", data=b"")
+
+def analizar_anexos(
+    anexos: List[Any],
+    *,
+    varios_anexos: Optional[bool] = None,
+    force_multi: Optional[bool] = None,
+    **kwargs,
+) -> str:
+    """
+    Toma múltiples archivos (PDF/DOCX/imagen/texto), extrae su texto y genera UN informe consolidado.
+    Compatible con firmas antiguas que usaban `analizar_anexos`.
+    """
+    anexos = anexos or []
+    partes: List[str] = []
+    for i, raw in enumerate(anexos, start=1):
+        f = _coerce_uploadlike(raw)
+        try:
+            texto = extraer_texto_universal(f)
+        except Exception as e:
+            texto = f"[ERROR al extraer Anexo {i}: {e}]"
+        nombre = getattr(f, "filename", f"Anexo_{i}")
+        nombre = (nombre or f"Anexo_{i}").strip()
+        partes.append(f"=== ANEXO {i} — {nombre}\n{texto}\n")
+
+    corpus = "\n\n".join(partes).strip()
+    # Fuerza el modo multi-anexo para que el prompt cite como (Anexo X, p. N)
+    return analizar_y_generar_informe(
+        corpus,
+        varios_anexos=True if varios_anexos is None else bool(varios_anexos),
+        force_multi=force_multi,
+    )
+
+def analizar_anexos_y_pdf(
+    anexos: List[Any],
+    *,
+    varios_anexos: Optional[bool] = None,
+    force_multi: Optional[bool] = None,
+    ruta_pdf: Optional[str] = None,
+) -> Tuple[str, Optional[str]]:
+    """
+    Igual que analizar_anexos pero además exporta a PDF.
+    """
+    texto = analizar_anexos(
+        anexos,
+        varios_anexos=varios_anexos,
+        force_multi=force_multi,
+    )
+    pdf_path = generar_pdf_informe(texto, out_path=ruta_pdf)
+    return texto, pdf_path
+
+# Exportar símbolos para imports antiguos
+try:
+    __all__.extend(["analizar_anexos", "analizar_anexos_y_pdf"])  # type: ignore
+except Exception:
+    pass
