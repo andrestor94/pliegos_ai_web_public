@@ -1570,3 +1570,26 @@ __all__ = [
     # helpers útiles
     "extraer_texto_universal", "preparar_texto_para_pdf",
 ]
+# ==================== Compat extra (plantillas) ====================
+
+def generar_pdf_con_plantilla(
+    informe_texto: str,
+    *,
+    plantilla: Optional[str] = None,
+    salida: Optional[str] = None,
+    **kwargs,
+) -> str:
+    """
+    Compatibilidad con versiones anteriores.
+    Ignora 'plantilla' y usa el generador simple de ReportLab.
+    - informe_texto: contenido en markdown-light
+    - plantilla: nombre/slug de plantilla (no usado aquí)
+    - salida: ruta opcional del PDF a escribir
+    """
+    return generar_pdf_informe(informe_texto, out_path=salida)
+
+# Asegurá que quede exportado si usás __all__
+try:
+    __all__.append("generar_pdf_con_plantilla")  # type: ignore
+except Exception:
+    pass
