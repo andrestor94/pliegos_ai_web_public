@@ -1,6 +1,6 @@
 ﻿# =========================
-# main.py — PARTE 1 / 5
-# (imports, helpers base, app init, WS, utils)
+# main.py — PARTE 1 / 6
+# (imports, helpers base, app init, WS, utils, + KB bootstrap)
 # =========================
 
 import os
@@ -9,6 +9,7 @@ import uuid
 import asyncio
 import re
 import json
+import importlib  # ⭐ nuevo (utils dinámico para KB)
 from math import ceil
 from typing import List, Optional, Dict, Set
 
@@ -52,6 +53,8 @@ from utils import (
     responder_chat_openai,
     analizar_anexos,
 )
+import utils as U  # ⭐ nuevo: acceso dinámico a helpers KB si existen
+
 from database import (
     DB_PATH,
     inicializar_bd,
@@ -85,7 +88,7 @@ from database import (
     iniciar_analisis_historial,
     marcar_valoracion_historial,
     tiene_valoracion_pendiente,
-    # 👇 importamos para usarlo en la sección Admin (PARTE 4)
+    # 👇 importamos para usarlo en la sección Admin (PARTE 4+)
     crear_o_restaurar_usuario,
 )
 # ORM (audit_logs)
@@ -492,6 +495,33 @@ AVATAR_ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".webp"}
 AVATAR_MAX_MB = 2  # MB
 
 
+# ================== ⭐ Knowledge Base (KB) bootstrap ==================
+# Carpeta base para almacenar originales de la KB (ingesta por rubro)
+KB_STORAGE_DIR = os.path.join("storage", "kb")
+os.makedirs(KB_STORAGE_DIR, exist_ok=True)
+
+# Extensiones permitidas para KB (reusa y amplía)
+KB_ALLOWED_EXT = set(CHAT_ALLOWED_EXT) | {".md", ".json", ".yaml", ".yml"}
+
+def _kb_slugify(name: str) -> str:
+    s = (name or "").strip().lower()
+    s = re.sub(r"[^a-z0-9._-]+", "-", s)
+    return s.strip("-") or "rubro"
+
+def _kb_funcs():
+    """Descubre funciones KB en utils.py sin romper si no están todavía."""
+    return {
+        "create_or_get_source": getattr(U, "kb_create_or_get_source", None),
+        "ingest_file": getattr(U, "kb_ingest_file", None),
+        "upsert_priority": getattr(U, "kb_upsert_priority", None),
+        "list_sources": getattr(U, "kb_list_sources", None),          # opcional
+        "list_priorities": getattr(U, "kb_list_priorities", None),    # opcional
+    }
+
+def _kb_enabled() -> bool:
+    f = _kb_funcs()
+    return bool(f["create_or_get_source"] and f["ingest_file"])
+
 # ================== Helpers ==================
 def _actor_info(request: Request):
     email = request.session.get("usuario")
@@ -617,6 +647,7 @@ async def chat_config():
         "allowed_ext": sorted(list({e.lstrip(".").lower() for e in CHAT_ALLOWED_EXT})),
         "max_files": CHAT_MAX_FILES,
         "max_total_mb": CHAT_MAX_TOTAL_MB,
+        "kb_allowed_ext": sorted(list({e.lstrip('.').lower() for e in KB_ALLOWED_EXT})),  # ⭐ agregado
     }
 
 
@@ -732,7 +763,7 @@ async def login_form(request: Request):
         msg = "Sesión cerrada."
     return templates.TemplateResponse("login.html", {"request": request, "error": None, "mensaje": msg})
 # =========================
-# main.py — PARTE 2 / 5
+# main.py — PARTE 2 / 6
 # (login/logout, cambiar password, rating, analizar pliego)
 # =========================
 
@@ -1258,7 +1289,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         "analisis_id": analisis_id,
     }
 # =========================
-# main.py — PARTE 3 / 5
+# main.py — PARTE 3 / 6
 # (historial, usuario/avatares, diagnóstico)
 # =========================
 
@@ -1452,8 +1483,8 @@ async def debug_whoami(request: Request):
         "route": str(request.url),
     }
 # =========================
-# main.py — PARTE 4 / 5
-# (chat OpenAI, chat interno, auditoría, admin + Incidencias con adjuntos)
+# main.py — PARTE 4 / 6
+# (chat OpenAI, chat interno)
 # =========================
 
 # ================== Helpers de contexto para Chat OpenAI ==================
@@ -1932,7 +1963,10 @@ async def chat_abrir(request: Request):
             return JSONResponse({"ok": True})
         print("❌ Error chat_abrir:", repr(e))
         return JSONResponse({"error": "No se pudo abrir el hilo"}, status_code=500)
-
+# =========================
+# main.py — PARTE 5 / 6
+# (Auditoría, Admin, endpoints legacy)
+# =========================
 
 # ================== Auditoría (vista audit_logs) ==================
 @app.get("/auditoria", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
@@ -2222,333 +2256,10 @@ async def legacy_admin_reset_session(request: Request):
         print("❌ legacy_admin_reset_session:", repr(e))
         return JSONResponse({"error": "No se pudo reiniciar la sesión"}, status_code=500)
 
-
-# ================== Incidencias (vista + API con adjuntos) ==================
-# ⚠️ Importante: REUSAMOS INCID_ATTACH_DIR / INCID_ALLOWED_EXT / INCID_MAX_TOTAL_MB
-# definidos en la PARTE 1 (no los redefinimos acá para evitar inconsistencias).
-
-def _incid_list_attachments(ticket_id: int):
-    """
-    Devuelve los adjuntos del ticket como lista de dicts.
-    Incluye una URL estática directa y una protegida (download_url).
-    """
-    prefix = f"{int(ticket_id)}_"
-    out = []
-    for name in sorted(os.listdir(INCID_ATTACH_DIR)):
-        if not name.startswith(prefix):
-            continue
-        path = os.path.join(INCID_ATTACH_DIR, name)
-        if not os.path.isfile(path):
-            continue
-        size = os.path.getsize(path)
-        static_url = "/" + INCID_ATTACH_DIR.replace(os.sep, "/") + "/" + name
-        compat_url = f"/static/adjuntos_incidencias/{name}"  # compat histórica
-        out.append(
-            {
-                "filename": name,
-                "size": size,
-                "url": static_url,
-                "compat_url": compat_url,
-                "download_url": f"/incidencias/adjunto/{ticket_id}/{name}",
-            }
-        )
-    return out
-
-
-def _parse_iso_utc(s: str):
-    if not s:
-        return None
-    s = s.replace("Z", "+00:00")
-    try:
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    except Exception:
-        try:
-            return datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-        except Exception:
-            return None
-
-
-def _infer_ticket_id(usuario: str, titulo: str, descripcion: str, tipo: str, ref_iso_utc: str) -> Optional[int]:
-    """Heurística para recuperar el ID del ticket recién creado cuando crear_ticket() no lo devuelve."""
-    try:
-        rows = obtener_todos_los_tickets() or []
-        # Si sos admin, filtrar a los tuyos igual; si no, DB puede tener muchos
-        rows = [r for r in rows if (r[1] or "").strip().lower() == (usuario or "").strip().lower()]
-    except Exception:
-        try:
-            rows = obtener_tickets_por_usuario(usuario) or []
-        except Exception:
-            rows = []
-
-    ref = _parse_iso_utc(ref_iso_utc) or datetime.now(timezone.utc)
-    best = None
-    best_dt_diff = 999_999_999
-
-    for r in rows:  # (id, usuario, titulo, descripcion, tipo, estado, fecha)
-        if (r[2] or "").strip() != titulo.strip():
-            continue
-        if (r[3] or "").strip() != (descripcion or "").strip():
-            continue
-        if (r[4] or "").strip() != (tipo or "General").strip():
-            continue
-
-        dt = _parse_iso_utc(r[6]) or ref
-        diff = abs(int((dt - ref).total_seconds()))
-        if diff < best_dt_diff:
-            best_dt_diff = diff
-            best = int(r[0])
-
-    return best
-
-
-# ---- Incidencias: asegurar config por si falta Parte 1 (robustez) ----
-if "INCID_ATTACH_DIR" not in globals():
-    INCID_ATTACH_DIR = os.path.join("static", "adjuntos_incidencias")
-    os.makedirs(INCID_ATTACH_DIR, exist_ok=True)
-
-if "INCID_ALLOWED_EXT" not in globals():
-    INCID_ALLOWED_EXT = CHAT_ALLOWED_EXT
-
-if "INCID_MAX_FILES" not in globals():
-    INCID_MAX_FILES = 10
-
-if "INCID_MAX_TOTAL_MB" not in globals():
-    INCID_MAX_TOTAL_MB = 25
-
-
-def _validate_incid_ext(filename: str):
-    ext = os.path.splitext(filename or "")[1].lower()
-    if ext not in INCID_ALLOWED_EXT:
-        raise HTTPException(status_code=400, detail=f"Tipo de archivo no permitido en incidencias: {ext}")
-
-
-@app.get("/incidencias", response_class=HTMLResponse)
-@app.get("/incidencias/", response_class=HTMLResponse)  # alias con barra final
-async def incidencias_view(request: Request):
-    if not request.session.get("usuario"):
-        return RedirectResponse("/login")
-
-    email = request.session.get("usuario")
-    rol = request.session.get("rol", "usuario")
-
-    # admin ve todo, usuario ve las suyas
-    rows = obtener_todos_los_tickets() if (rol == "admin" or es_admin(email)) else obtener_tickets_por_usuario(email)
-
-    tickets = []
-    for r in rows:
-        # fecha legible robusta
-        try:
-            fecha_leg = iso_utc_to_ar_str(r[6]) if r[6] else ""
-        except Exception:
-            try:
-                fecha_leg = datetime.strptime(r[6], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M")
-            except Exception:
-                fecha_leg = r[6] or ""
-
-        t = {
-            "id": r[0],
-            "usuario": r[1],
-            "titulo": r[2],
-            "descripcion": r[3],
-            "tipo": r[4],
-            "estado": r[5],
-            "fecha": r[6],
-            "fecha_legible": fecha_leg,
-        }
-
-        # Adjuntos
-        try:
-            t["adjuntos"] = _incid_list_attachments(int(r[0]))
-        except Exception:
-            t["adjuntos"] = []
-
-        tickets.append(t)
-
-    return templates.TemplateResponse(
-        "incidencias.html",
-        {
-            "request": request,
-            "tickets": tickets,
-            "usuario_actual": {"nombre": request.session.get("nombre") or email, "rol": rol},
-        },
-    )
-
-
-@app.get("/api/incidencias")
-async def incidencias_list_json(request: Request):
-    if not request.session.get("usuario"):
-        return JSONResponse({"error": "No autenticado"}, status_code=401)
-
-    email = request.session.get("usuario")
-    rol = request.session.get("rol", "usuario")
-
-    rows = obtener_todos_los_tickets() if (rol == "admin" or es_admin(email)) else obtener_tickets_por_usuario(email)
-
-    items = []
-    for r in rows:
-        items.append(
-            {
-                "id": r[0],
-                "usuario": r[1],
-                "titulo": r[2],
-                "descripcion": r[3],
-                "tipo": r[4],
-                "estado": r[5],
-                "fecha": r[6],
-                "adjuntos_info": _incid_list_attachments(int(r[0])),
-                "adjuntos": [x["filename"] for x in _incid_list_attachments(int(r[0]))],
-            }
-        )
-    return {"items": items}
-
-
-@app.post("/incidencias/crear")
-async def incidencias_crear(
-    request: Request,
-    titulo: str = Form(...),
-    descripcion: str = Form(""),
-    tipo: str = Form("General"),
-    archivos: List[UploadFile] = File(default=[]),  # opcional, múltiples
-):
-    if not request.session.get("usuario"):
-        return JSONResponse({"error": "No autenticado"}, status_code=401)
-
-    usuario = request.session.get("usuario")
-    actor_user_id, ip = _actor_info(request)
-
-    # 1) Crear ticket
-    now_iso = now_iso_utc()
-    crear_ticket(
-        usuario,
-        titulo.strip(),
-        (descripcion or "").strip(),
-        (tipo or "General").strip(),
-        actor_user_id=actor_user_id,
-        ip=ip,
-    )
-
-    # 2) Inferir ID del ticket recién creado
-    ticket_id = _infer_ticket_id(usuario, titulo, descripcion or "", tipo or "General", now_iso)
-
-    # 3) Guardar adjuntos
-    files = [a for a in (archivos or []) if (a and a.filename)]
-    if ticket_id and files:
-        total_bytes = 0
-        for i, f in enumerate(files, start=1):
-            _validate_incid_ext(f.filename)
-            ext = os.path.splitext(f.filename)[1].lower()
-            safe = _safe_basename(f.filename)
-            name = f"{ticket_id}_{i:02d}_{safe}{ext}"
-            path = os.path.join(INCID_ATTACH_DIR, name)
-
-            written = await _save_upload_stream(f, path)
-            total_bytes += written
-
-            if (total_bytes / (1024 * 1024)) > INCID_MAX_TOTAL_MB:
-                try:
-                    os.remove(path)
-                except Exception:
-                    pass
-                return JSONResponse({"error": f"Tamaño total supera {INCID_MAX_TOTAL_MB} MB"}, status_code=400)
-
-    return ({"ok": True, "id": ticket_id} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
-
-
-# --- Aliases para aceptar también POST a /incidencias (JSON sin archivos) ---
-@app.post("/incidencias")
-@app.post("/incidencias/")
-async def incidencias_post_alias(
-    request: Request,
-    titulo: Optional[str] = Form(default=None),
-    descripcion: Optional[str] = Form(default=""),
-    tipo: Optional[str] = Form(default="General"),
-):
-    # Si vino por fetch JSON:
-    if titulo is None:
-        try:
-            data = await request.json()
-        except Exception:
-            data = {}
-        titulo = (data.get("titulo") or data.get("title") or "").strip()
-        descripcion = (data.get("descripcion") or data.get("description") or "")
-        tipo = (data.get("tipo") or data.get("type") or "General")
-
-    return await incidencias_crear(
-        request,
-        titulo=titulo or "",
-        descripcion=descripcion or "",
-        tipo=tipo or "General",
-        archivos=[],
-    )
-
-
-@app.get("/incidencias/adjunto/{ticket_id}/{filename}")
-async def incidencias_adjunto(ticket_id: int, filename: str):
-    """Sirve un adjunto de incidencia, validando que el filename pertenezca al ticket."""
-    filename = os.path.basename(filename)
-    if not filename.startswith(f"{int(ticket_id)}_"):
-        return JSONResponse({"error": "Adjunto inválido"}, status_code=400)
-
-    path = os.path.join(INCID_ATTACH_DIR, filename)
-    if not os.path.isfile(path):
-        return JSONResponse({"error": "No encontrado"}, status_code=404)
-    return FileResponse(path)
-
-
-@app.post("/incidencias/cerrar")
-async def incidencias_cerrar(request: Request, id: int = Form(...)):
-    if not request.session.get("usuario"):
-        return JSONResponse({"error": "No autenticado"}, status_code=401)
-
-    actor_user_id, ip = _actor_info(request)
-    actualizar_estado_ticket(id, "Cerrado", actor_user_id=actor_user_id, ip=ip)
-
-    return ({"ok": True} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
-
-
-@app.post("/incidencias/eliminar")
-async def incidencias_eliminar(request: Request, id: int = Form(...)):
-    if not request.session.get("usuario"):
-        return JSONResponse({"error": "No autenticado"}, status_code=401)
-
-    actor_user_id, ip = _actor_info(request)
-    eliminar_ticket(id, actor_user_id=actor_user_id, ip=ip)
-
-    # también podemos eliminar adjuntos del disco
-    prefix = f"{int(id)}_"
-    try:
-        for name in list(os.listdir(INCID_ATTACH_DIR)):
-            if name.startswith(prefix):
-                try:
-                    os.remove(os.path.join(INCID_ATTACH_DIR, name))
-                except Exception:
-                    pass
-    except Exception:
-        pass
-
-    return ({"ok": True} if wants_json(request) else RedirectResponse("/incidencias", status_code=303))
-
-
-@app.post("/incidencias/cerrar/{id}")
-async def incidencias_cerrar_path(id: int, request: Request):
-    return await incidencias_cerrar(request, id=id)
-
-
-@app.post("/incidencias/eliminar/{id}")
-async def incidencias_eliminar_path(id: int, request: Request):
-    return await incidencias_eliminar(request, id=id)
-
-
-# (Opcional) diagnóstico de rutas
-@app.get("/__diag/routes")
-def _diag_routes():
-    return {"routes": sorted({getattr(r, "path", "") for r in app.routes})}
+# (La PARTE 6 incluye: Incidencias con adjuntos, Calendario, Notificaciones, Presencia/Online y Auditoría de actividad + CSV)
 # =========================
-# main.py — PARTE 5 / 5
-# (Calendario, Notificaciones, Presencia/Online, Auditoría de actividad + CSV)
+# main.py — PARTE 6 / 6
+# (Calendario, Notificaciones, Presencia/Online, Auditoría de actividad + CSV, diag rutas)
 # =========================
 
 # =====================================================================
@@ -3061,3 +2772,9 @@ async def auditoria_actividad_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# (Opcional) diagnóstico de rutas
+@app.get("/__diag/routes")
+def _diag_routes():
+    return {"routes": sorted({getattr(r, "path", "") for r in app.routes})}

@@ -1,26 +1,99 @@
+# crear_db.py
+# Crea (o actualiza si no existen) todas las tablas definidas en models.py
+# y (opcionalmente) siembra usuarios iniciales.
+#
+# Uso recomendado:
+#   python crear_db.py --reset --seed-users
+#
+# Flags:
+#   --reset       : si la DB es SQLite, borra el archivo antes de crear (CUIDADO en prod)
+#   --seed-users  : crea los usuarios Admin/Andrés si no existen
+
 import os
-from database import crear_tabla_usuarios, agregar_usuario
+import argparse
+from sqlalchemy.exc import SQLAlchemyError
 
-DB_PATH = "usuarios.db"
+# Engine / Base provienen de tu módulo database (ya usado por models.py)
+from database import engine, Base  # Base es la misma que importa models.py
+import models  # noqa: F401  (importar registra TODOS los modelos en Base.metadata)
 
-def crear_usuarios_base():
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
-        print("🗑️ Base de datos anterior eliminada.")
+# Para mantener tu lógica de creación de usuarios
+from database import agregar_usuario
 
-    crear_tabla_usuarios()
 
+def is_sqlite_engine() -> bool:
+    """Detecta si el engine apunta a SQLite."""
+    try:
+        url = str(engine.url)
+        return url.startswith("sqlite")
+    except Exception:
+        return False
+
+
+def sqlite_path_from_engine() -> str | None:
+    """Devuelve la ruta del archivo sqlite si aplica."""
+    try:
+        if is_sqlite_engine():
+            # engine.url.database trae la ruta a archivo sqlite
+            return engine.url.database
+    except Exception:
+        pass
+    return None
+
+
+def create_schema(reset_sqlite: bool = False) -> None:
+    """Crea todas las tablas definidas en models.py."""
+    if reset_sqlite and is_sqlite_engine():
+        db_file = sqlite_path_from_engine()
+        if db_file and os.path.exists(db_file):
+            os.remove(db_file)
+            print(f"🗑️  Base SQLite anterior eliminada: {db_file}")
+
+    print("==> Creando/actualizando tablas…")
+    try:
+        Base.metadata.create_all(bind=engine)
+        print("✔ Tablas creadas/actualizadas correctamente.")
+    except SQLAlchemyError as e:
+        print("✖ Error creando tablas:", e)
+        raise
+
+
+def seed_users() -> None:
+    """Crea usuarios iniciales si no existen (usa tu agregar_usuario)."""
     usuarios_iniciales = [
-        ("Admin", "admin@suizo.com", "admin123", "admin"),
-        ("Andrés", "andres@suizo.com", "usuario123", "usuario")
+        ("Admin",  "admin@suizo.com",  "admin123",   "admin"),
+        ("Andrés", "andres@suizo.com", "usuario123", "usuario"),
     ]
-
     for nombre, email, password, rol in usuarios_iniciales:
         try:
             agregar_usuario(nombre=nombre, email=email, rol=rol, password=password)
             print(f"✅ Usuario creado: {email} ({rol}) - contraseña: {password}")
         except Exception as e:
-            print(f"⚠️ Error creando {email}: {e}")
+            # Si ya existe o hay validación interna, lo informamos y seguimos
+            print(f"ℹ️  No se creó {email} (posible duplicado): {e}")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Crear esquema de la DB y sembrar usuarios (opcional).")
+    ap.add_argument("--reset", action="store_true",
+                    help="Si la DB es SQLite, borrar el archivo antes de crear (¡no usar en producción!).")
+    ap.add_argument("--seed-users", action="store_true",
+                    help="Crear usuarios iniciales (Admin/Andrés) si no existen.")
+    args = ap.parse_args()
+
+    # Mostrar a qué URL estamos conectados (útil en Render vs local)
+    try:
+        print(f"🔗 DATABASE URL: {engine.url}")
+    except Exception:
+        pass
+
+    create_schema(reset_sqlite=args.reset)
+
+    if args.seed_users:
+        seed_users()
+
+    print("==> Listo.")
+
 
 if __name__ == "__main__":
-    crear_usuarios_base()
+    main()

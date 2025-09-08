@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
-# utils.py — COMPLETO (con mejoras: lazy import de prompts, control estricto de longitud/orden)
+# utils.py — Parte 1/4 (Base + Ingesta KB añadida)
 
 """
 Módulo utilitario para:
 - Extracción de texto (PDF/DOCX/Imágenes + OCR selectivo con OpenAI Vision)
 - Normalizaciones y helpers varios
 - Pipeline de análisis con modelos OpenAI
+- (NUEVO) Ingesta de Base de Conocimiento (KB): subir/leer archivos, trocear y embebidos
 
 Cambios clave en esta versión:
 - Evita ciclos de import con prompts.py usando "lazy import".
 - Controla tamaño y orden de la salida (recortes por sección, tope de palabras por bullet).
 - Wrapper de Chat Completions compatible con max_completion_tokens / max_tokens.
+- (NUEVO) Helpers y funciones para crear fuentes KB, ingerir archivos y generar embeddings.
 """
 
 from __future__ import annotations
@@ -22,8 +24,10 @@ import base64
 import mimetypes
 import time
 import json  # necesario para tool-calling en el chat
+import hashlib
+import shutil
 from datetime import datetime
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Iterator, Any
 from tempfile import NamedTemporaryFile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -43,6 +47,181 @@ load_dotenv()
 # ========================= OpenAI client =========================
 OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "90"))
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
+
+# ========================= Base de Conocimiento (KB) =========================
+# Modelos: KBSource, KBFile, KBChunk, KBPriority
+try:
+    # import absoluto (estructura plana)
+    from models import KBSource, KBFile, KBChunk, KBPriority
+except Exception:
+    # fallback a import relativo si estás en paquete
+    from .models import KBSource, KBFile, KBChunk, KBPriority  # type: ignore
+
+def _kb_clean_text(s: str) -> str:
+    return " ".join((s or "").replace("\r", " ").replace("\n", " ").split())
+
+def _kb_chunk_text(text: str, max_chars: int = 1500, overlap: int = 200) -> Iterator[str]:
+    if not text:
+        return iter(())
+    n = len(text)
+    i = 0
+    while i < n:
+        j = min(i + max_chars, n)
+        yield text[i:j]
+        if j >= n:
+            break
+        i = max(0, j - overlap)
+
+def _kb_sha256_path(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(b)
+    return h.hexdigest()
+
+def _kb_detect_content_type(filename: str) -> str:
+    fn = filename.lower()
+    if fn.endswith(".pdf"):
+        return "application/pdf"
+    if fn.endswith(".json"):
+        return "application/json"
+    if fn.endswith((".txt", ".md", ".log", ".csv")):
+        return "text/plain"
+    # por defecto, texto plano para indexación básica
+    return mimetypes.guess_type(filename)[0] or "text/plain"
+
+def _kb_extract_text_from_path(path: str) -> Tuple[str, Dict[str, Any]]:
+    ext = os.path.splitext(path)[1].lower()
+    meta: Dict[str, Any] = {}
+    if ext in [".txt", ".md", ".csv", ".log"]:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read(), meta
+    if ext == ".json":
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            obj = json.load(f)
+        meta["json_keys"] = list(obj.keys()) if isinstance(obj, dict) else None
+        return json.dumps(obj, ensure_ascii=False), meta
+    if ext == ".pdf":
+        doc = fitz.open(path)
+        texts: List[str] = []
+        spans: List[Dict[str, Any]] = []
+        for p in range(len(doc)):
+            t = (doc[p].get_text("text") or "").strip()
+            texts.append(t)
+            spans.append({"page": p + 1, "chars": len(t)})
+        meta["pages"] = len(doc)
+        meta["spans"] = spans
+        return "\n".join(texts), meta
+    # binario no soportado para texto: indexa sin texto
+    return "", {"unsupported": True, "ext": ext}
+
+def _kb_embed(text: str, _client: Optional[OpenAI] = None) -> List[float]:
+    cli = _client or client
+    resp = cli.embeddings.create(model="text-embedding-3-large", input=text)
+    return resp.data[0].embedding  # type: ignore
+
+def kb_create_or_get_source(db, name: str, storage_path: str, scope: Dict[str, Any]) -> KBSource:
+    """
+    Crea o recupera una fuente KB. Asegura la carpeta de almacenamiento.
+    """
+    src = db.query(KBSource).filter_by(name=name).first()
+    if src:
+        # actualizar storage_path/scope si cambiaron
+        changed = False
+        if storage_path and src.storage_path != storage_path:
+            src.storage_path = storage_path
+            changed = True
+        if scope and (src.scope or {}) != scope:
+            src.scope = scope
+            changed = True
+        if changed:
+            db.add(src); db.commit(); db.refresh(src)
+        return src
+
+    os.makedirs(storage_path or ".", exist_ok=True)
+    src = KBSource(name=name, storage_path=storage_path, scope=scope or {})
+    db.add(src); db.commit(); db.refresh(src)
+    return src
+
+def kb_ingest_file(
+    db,
+    source: KBSource,
+    local_path: str,
+    *,
+    rubric: str,
+    tags: Optional[List[str]] = None,
+    _client: Optional[OpenAI] = None,
+    chunk_chars: int = 1500,
+    overlap: int = 200,
+) -> int:
+    """
+    Ingiere un archivo en la KB: copia al storage, crea KBFile y KBChunk con embeddings.
+    Dedup por hash_sha256.
+    """
+    if not os.path.isfile(local_path):
+        raise FileNotFoundError(f"No existe el archivo: {local_path}")
+
+    os.makedirs(source.storage_path or ".", exist_ok=True)
+
+    sha = _kb_sha256_path(local_path)
+    existing = db.query(KBFile).filter_by(hash_sha256=sha).first()
+    if existing:
+        return existing.id
+
+    dest = os.path.join(source.storage_path or ".", os.path.basename(local_path))
+    if os.path.abspath(dest) != os.path.abspath(local_path):
+        shutil.copy2(local_path, dest)
+    size = os.path.getsize(dest)
+    ctype = _kb_detect_content_type(dest)
+
+    text, meta_extra = _kb_extract_text_from_path(dest)
+
+    kbfile = KBFile(
+        source_id=source.id,
+        filename=os.path.basename(dest),
+        content_type=ctype,
+        bytes=size,
+        hash_sha256=sha,
+        stored_path=dest,
+        meta={"rubro": rubric, "tags": (tags or []), **(meta_extra or {})},
+    )
+    db.add(kbfile)
+    db.flush()  # para obtener kbfile.id
+
+    if (text or "").strip():
+        text_norm = _kb_clean_text(text)
+        ord_idx = 0
+        for chunk in _kb_chunk_text(text_norm, max_chars=chunk_chars, overlap=overlap):
+            vec = _kb_embed(chunk, _client=_client)
+            db.add(KBChunk(
+                file_id=kbfile.id,
+                ord=ord_idx,
+                text=chunk,
+                embedding=json.dumps(vec),
+                span={}, meta={}
+            ))
+            ord_idx += 1
+
+    db.commit()
+    return kbfile.id
+
+def kb_upsert_priority(db, rubric: str, label: str, details: str = "", weight: float = 1.0) -> None:
+    """
+    Crea o actualiza una prioridad (punto que no debe faltar) para un 'rubric' dado.
+    """
+    from sqlalchemy import and_
+    row = db.query(KBPriority).filter(and_(KBPriority.rubric == rubric, KBPriority.label == label)).first()
+    if not row:
+        row = KBPriority(rubric=rubric, label=label, details=details or "", weight=weight)
+        db.add(row)
+    else:
+        row.details = details or row.details
+        row.weight = weight
+    db.commit()
+
+# (La parte 2 continúa con: Prompts (lazy import) y el resto de utilidades existentes…)
+# -*- coding: utf-8 -*-
+# utils.py — Parte 2/4 (Prompts + Extracción base)
 
 # ========================= Prompts (lazy import) =========================
 _prom = None
@@ -211,8 +390,7 @@ def _ocr_openai_imagen_b64(b64_img: str, mime: str = "image/png") -> str:
                     {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64_img}"}}
                 ]
             }],
-            max_tokens=900,
-            temperature=None,
+            max_completion_tokens=900,
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception as e:
@@ -336,7 +514,7 @@ def extraer_texto_de_pdf(file) -> str:
 
 def extraer_texto_de_docx(file) -> str:
     t0 = _t()
-    raw = _leer_todo(file)
+    raw = __leer_todo(file)
     if not raw:
         _log_tiempo("extraccion_docx_sin_bytes", t0)
         return ""
@@ -387,9 +565,7 @@ def extraer_texto_de_imagen(file) -> str:
         _log_tiempo("extraccion_imagen_sin_bytes", t0)
         return ""
 
-    mime_guess = _mime_guess(file) or ""
     ext = _ext_de_archivo(file)
-
     try:
         img_doc = fitz.open(stream=raw, filetype=ext.lstrip(".") or None)
         page = img_doc.load_page(0)
@@ -398,10 +574,7 @@ def extraer_texto_de_imagen(file) -> str:
         mime = "image/png"
     except Exception:
         b64 = base64.b64encode(raw).decode("utf-8")
-        if mime_guess.startswith("image/"):
-            mime = mime_guess
-        else:
-            mime = "image/png" if ext == ".png" else "image/jpeg"
+        mime = "image/png" if ext == ".png" else "image/jpeg"
 
     out = _ocr_openai_imagen_b64(b64, mime=mime)
     _log_tiempo("extraccion_imagen_ocr", t0)
@@ -446,7 +619,7 @@ def extraer_texto_universal(file) -> str:
     _log_tiempo("extraer_texto_universal_texto_plano", t0)
     return out
 
-# ==================== Pre-limpieza ====================
+# ==================== Pre-limpieza y helpers ====================
 def _limpieza_basica_preanalisis(s: str) -> str:
     s = re.sub(r"\n?P[aá]gina\s+\d+\s+de\s+\d+\s*\n", "\n", s, flags=re.I)
     s = re.sub(r"\n[-_]{3,}\n", "\n", s)
@@ -454,7 +627,6 @@ def _limpieza_basica_preanalisis(s: str) -> str:
     s = re.sub(r"\n{3,}", "\n\n", s)
     return (s or "").strip()
 
-# ==================== Filtrado de meta-frases y utilidades ====================
 _META_PATTERNS = [
     re.compile(r"(?i)\bparte\s+\d+\s+de\s+\d+"),
     re.compile(r"(?i)informe\s+basado\s+en\s+la\s+parte"),
@@ -475,7 +647,7 @@ def _limpiar_meta(texto: str) -> str:
 def _particionar(texto: str, max_chars: int) -> List[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto or ""), max_chars)]
 
-# =============== Índices de anexos y páginas ===============
+# Índices y utilidades para páginas y anexos
 _ANEXO_RE = re.compile(r"(?im)^===\s*ANEXO\s+(\d+)")
 _PAG_TAG_RE = re.compile(r"\[PÁGINA\s+(\d+)\]")
 
@@ -505,13 +677,23 @@ def _anexo_en_pos(indices: List[Tuple[int, int]], pos: int) -> Optional[int]:
         else:
             break
     return last
+# -*- coding: utf-8 -*-
+# utils.py — Parte 3/4 (Normalización + Hints + Secciones)
 
-# =============== Normalización de citas según modo (multi vs único) ===============
+# --- Parche de alias por typo en Parte 2 ---
+# (en Parte 2, extraer_texto_de_docx usa __leer_todo por error tipográfico)
+try:
+    __leer_todo  # type: ignore
+except NameError:
+    __leer_todo = _leer_todo  # alias seguro
+
+# =============== Normalización de citas (multi vs único anexo) ===============
 _CITA_ANEXO_RE = re.compile(r"\(Anexo\s+([IVXLCDM\d]+)(?:,\s*p\.\s*(\d+))?\)", re.I)
 
 def _normalize_citas_salida(texto: str, varios_anexos: bool) -> str:
     if varios_anexos:
         return texto or ""
+    # Si NO hay múltiples anexos, simplifica "(Anexo X, p. N)" => "(p. N)"
     def repl(m):
         pag = m.group(2)
         if pag:
@@ -738,54 +920,12 @@ def _extraer_renglones_y_especificaciones(texto: str) -> List[Tuple[int, Optiona
     res.sort(key=lambda t: t[0])
     return res
 
-def _construir_evidencia_ampliacion(texto: str) -> Tuple[str, int, int]:
-    texto = texto or ""
-    renglones = _extraer_renglones_y_especificaciones(texto)
-    articulos = _extraer_articulos_con_snippets(texto)
-
-    ev_parts: List[str] = []
-    if renglones:
-        ev = []
-        for (num, qty, code, desc, p, ax) in renglones:
-            cit = f"(Anexo {ax}, p. {p})" if ax else f"(p. {p})"
-            det = []
-            if qty is not None:
-                det.append(f"cant {qty}")
-            if code:
-                det.append(f"cod {code}")
-            det_txt = " — ".join(det) if det else ""
-            linea = f"- Renglón {num}{(' — ' + det_txt) if det_txt else ''}: {desc} {cit}"
-            ev.append(linea)
-        ev_parts.append("### EVIDENCIA Renglones / Planilla (literal)\n" + "\n".join(ev))
-    if articulos:
-        ev = []
-        for (rot, sn, p, ax) in articulos:
-            cit = f"(Anexo {ax}, p. {p})" if ax else f"(p. {p})"
-            ev.append(f"- {rot} — {sn} {cit}")
-        ev_parts.append("### EVIDENCIA Artículos (literal)\n" + "\n".join(ev))
-
-    return ("\n\n".join(ev_parts) if ev_parts else ""), len(renglones), len(articulos)
-
-def _conteo_en_informe(informe: str) -> Tuple[int, int]:
-    informe = informe or ""
-    return _count(r"(?im)\brengl[oó]n\s*\d+", informe), _count(r"(?im)\bart(?:[íi]culo|\.?)\s*\d+", informe)
-
-def _max_out_for_text(texto: str) -> int:
-    texto = texto or ""
-    base_chars = len(texto)
-    r_count = _count(r"(?im)^\s*(?:reng(?:l[oó]n)?\.?\s*)?\d{1,4}\b", texto)
-    a_count = _count(r"(?im)^\s*art(?:[íi]culo|\.?)\s*\d+", texto)
-    base = MAX_COMPLETION_TOKENS_SALIDA
-    if r_count >= 20 or a_count >= 20:
-        base = max(base, 6500)
-    elif r_count >= 8 or a_count >= 8:
-        base = max(base, 5000)
-    if ANALISIS_MODO == "fast":
-        if base_chars < 15000:
-            base = max(base, 2800)
-        elif base_chars < 40000:
-            base = max(base, 3500)
-    return int(base)
+# ==================== Construcción de secciones (2.13, 2.16, 2.3, 2.15) ====================
+_ART_KEYS = re.compile(
+    r"(objeto|tipolog|modalidad|mantenim|pr[oó]rroga|oferta|apertura|evaluaci[oó]n|empate|mejora|adjudicaci[oó]n|"
+    r"garant[ií]a|entrega|plazo|pago|factura|sanci[oó]n|penalidad|rescis[ií]n|perfeccionamiento|subsanaci[oó]n)",
+    re.I
+)
 
 def _truncate_words(s: str, max_words: int) -> str:
     try:
@@ -795,12 +935,6 @@ def _truncate_words(s: str, max_words: int) -> str:
         return " ".join(words[:max_words]).rstrip(",.;:") + "..."
     except Exception:
         return (s or "").strip()
-
-_ART_KEYS = re.compile(
-    r"(objeto|tipolog|modalidad|mantenim|pr[oó]rroga|oferta|apertura|evaluaci[oó]n|empate|mejora|adjudicaci[oó]n|"
-    r"garant[ií]a|entrega|plazo|pago|factura|sanci[oó]n|penalidad|rescis[ií]n|perfeccionamiento|subsanaci[oó]n)",
-    re.I
-)
 
 def _build_section_213(texto: str, varios_anexos: bool) -> str:
     rows = _extraer_renglones_y_especificaciones(texto or "")
@@ -921,7 +1055,7 @@ def _build_section_215(texto: str, varios_anexos: bool) -> str:
         out.append(f" - {t} {n} {cita}")
     return "\n".join(out)
 
-# ====== Reemplazo de secciones en el informe ======
+# ====== Reemplazo/inyección de secciones en el informe ======
 def _find_section_bounds(text: str, header_regex: str) -> Tuple[int, int]:
     text = text or ""
     m = re.search(header_regex, text, flags=re.I)
@@ -1049,15 +1183,12 @@ def _split_informe_por_secciones(s: str) -> List[Tuple[str, str]]:
     Devuelve lista [(header, body)] incluyendo "Ficha..." como primera si existe.
     """
     s = s or ""
-    # Normalizar saltos largos
     s = re.sub(r"\n{3,}", "\n\n", s)
 
-    # Detectar ficha (opcional)
     blocks: List[Tuple[str, str]] = []
     ficha_re = re.compile(r"(?im)^\s*Ficha\s+estandarizada\s+del\s+procedimiento.*$")
     sec_re = re.compile(r"(?im)^\s*(\d{1,2})\)\s")
 
-    pos = 0
     m_ficha = ficha_re.search(s)
     starts: List[Tuple[int, str]] = []
 
@@ -1065,7 +1196,6 @@ def _split_informe_por_secciones(s: str) -> List[Tuple[str, str]]:
         starts.append((m_ficha.start(), m_ficha.group(0).strip()))
 
     for m in sec_re.finditer(s):
-        # Guarda el header completo de la línea
         line_start = s.rfind("\n", 0, m.start()) + 1
         line_end = s.find("\n", m.start())
         if line_end == -1:
@@ -1073,7 +1203,6 @@ def _split_informe_por_secciones(s: str) -> List[Tuple[str, str]]:
         header_line = s[line_start:line_end].strip()
         starts.append((line_start, header_line))
 
-    # Si no hay headers, retorna todo como un bloque genérico
     if not starts:
         return [("INFORME", s.strip())]
 
@@ -1084,7 +1213,6 @@ def _split_informe_por_secciones(s: str) -> List[Tuple[str, str]]:
         hpos, header = starts[i]
         npos, _ = starts[i+1]
         body = s[hpos: npos].split("\n", 1)
-        # body_content excluye la primera línea (header)
         if len(body) == 1:
             header_line, body_content = header, ""
         else:
@@ -1100,12 +1228,9 @@ def _recortar_por_politica(header: str, body: str) -> str:
     if not STRICT_OUT:
         return f"{header}\n{body}".strip()
 
-    # Eliminar cualquier línea de '===' (p.ej., hallazgos auxiliares si se filtraron)
     body = re.sub(r"(?im)^===.*$", "", body)
 
-    # Recorte por líneas
     lines = [ln for ln in (body or "").splitlines()]
-    # No contemos encabezados secundarios vacíos
     recortadas: List[str] = []
     max_lines = max(1, MAX_LINES_PER_SECTION)
 
@@ -1114,7 +1239,6 @@ def _recortar_por_politica(header: str, body: str) -> str:
         if not ln_clean:
             recortadas.append("")
             continue
-        # Limitar palabras por línea/bullet
         ln_clean = _truncate_words(ln_clean, MAX_WORDS_PER_BULLET)
         recortadas.append(ln_clean)
         if len([x for x in recortadas if x.strip()]) >= max_lines:
@@ -1122,7 +1246,6 @@ def _recortar_por_politica(header: str, body: str) -> str:
 
     body_recortado = "\n".join(recortadas).strip()
 
-    # Recorte por caracteres para cada sección
     if len(body_recortado) > SECTION_CHAR_LIMIT:
         body_recortado = body_recortado[:SECTION_CHAR_LIMIT].rsplit("\n", 1)[0].rstrip() + "\n..."
 
@@ -1135,7 +1258,6 @@ def _enforce_output_policy(informe: str) -> str:
     s = informe or ""
     blocks = _split_informe_por_secciones(s)
 
-    # Reordenar: ficha primero; luego 1..12 en orden
     ficha = [b for b in blocks if re.match(r"(?im)^Ficha\s+estandarizada\s+del\s+procedimiento", b[0])]
     otros = [b for b in blocks if not re.match(r"(?im)^Ficha\s+estandarizada\s+del\s+procedimiento", b[0])]
 
@@ -1152,571 +1274,8 @@ def _enforce_output_policy(informe: str) -> str:
 
     out = "\n\n".join([p for p in partes if p.strip()])
 
-    # Recorte por tamaño total
     if len(out) > MAX_TOTAL_CHARS_OUT:
         out = out[:MAX_TOTAL_CHARS_OUT].rsplit("\n", 1)[0].rstrip() + "\n..."
 
-    # Limpiezas finales
     out = re.sub(r"\n{3,}", "\n\n", out).strip()
     return out
-
-# ==================== Llamada a OpenAI robusta ====================
-def _pick_model(stage_default: str) -> str:
-    if ANALISIS_MODO == "fast" and FAST_FORCE_MODEL:
-        return FAST_FORCE_MODEL
-    if stage_default == "notas":
-        return MODEL_NOTAS
-    if stage_default == "sintesis":
-        return MODEL_SINTESIS
-    return MODEL_ANALISIS
-
-def _llamada_openai(
-    messages,
-    model=None,
-    temperature_str=TEMPERATURE_ANALISIS,
-    max_completion_tokens=None,
-    retries=2,
-    fallback_model: Optional[str] = None,
-):
-    mdl = model or _pick_model("analisis")
-    fb = fallback_model or FALLBACK_MODEL_DEFAULT
-
-    # temperatura opcional (no enviar si no corresponde)
-    temp_wanted = None
-    if ANALISIS_MODO == "fast":
-        temp_wanted = 0.0
-    elif temperature_str != "":
-        try:
-            temp_wanted = float(temperature_str)
-        except Exception:
-            temp_wanted = None
-
-    def _build_kwargs(m, with_temperature=True, max_tok=None):
-        kw = dict(
-            model=m,
-            messages=messages,
-            max_completion_tokens=int(max_tok or max_completion_tokens or MAX_COMPLETION_TOKENS_SALIDA),
-        )
-        if with_temperature and (temp_wanted is not None):
-            kw["temperature"] = temp_wanted
-        return kw
-
-    models_to_try = [mdl] + ([fb] if fb and fb != mdl else [])
-    last_error = None
-
-    for m in models_to_try:
-        for attempt in range(retries + 1):
-            try:
-                kw = _build_kwargs(m, with_temperature=True)
-                resp = _chat_create_safe(**kw)
-                content = (resp.choices[0].message.content or "").strip()
-                if content:
-                    return resp
-
-                # reintento sin temperature y con menos tokens
-                max_tok_used = int(kw.get("max_completion_tokens", MAX_COMPLETION_TOKENS_SALIDA))
-                kw2 = _build_kwargs(m, with_temperature=False, max_tok=min(1024, max_tok_used))
-                resp2 = _chat_create_safe(**kw2)
-                content2 = (resp2.choices[0].message.content or "").strip()
-                if content2:
-                    return resp2
-                raise RuntimeError("La respuesta del modelo llegó vacía.")
-            except Exception as e:
-                last_error = e
-                if attempt < retries:
-                    time.sleep(1.2 * (attempt + 1))
-                else:
-                    break
-
-    raise RuntimeError(str(last_error) if last_error else "Fallo en _llamada_openai")
-
-# ==================== Concurrencia para NOTAS ====================
-def _compute_chunk_size(total_chars: int) -> int:
-    if TARGET_PARTS <= 0:
-        return CHUNK_SIZE_BASE
-    ideal = (total_chars + TARGET_PARTS - 1) // TARGET_PARTS
-    return max(CHUNK_SIZE_BASE, ideal)
-
-def _generar_notas_concurrente(partes: List[str]) -> List[str]:
-    resultados: List[Optional[str]] = [None] * len(partes)
-    t0 = _t()
-
-    def worker(idx: int, parte: str):
-        msg = [
-            {"role": "system",
-             "content": "Eres un analista jurídico que extrae bullets técnicos con citas; cero invenciones; máxima concisión."},
-            {"role": "user",
-             "content": f"{_craft_prompt_notas_text()}\n\n## Guía de sinónimos/normalización\n{_sinonimos_text()}\n\n=== FRAGMENTO {idx+1}/{len(partes)} ===\n{parte}"}
-        ]
-        r = _llamada_openai(msg, max_completion_tokens=NOTAS_MAX_TOKENS, model=_pick_model("notas"))
-        return idx, (r.choices[0].message.content or "").strip()
-
-    with ThreadPoolExecutor(max_workers=max(1, ANALISIS_CONCURRENCY)) as ex:
-        future_to_idx = {ex.submit(worker, i, p): i for i, p in enumerate(partes)}
-        for fut in as_completed(future_to_idx):
-            idx = future_to_idx[fut]
-            try:
-                _i, content = fut.result()
-                resultados[idx] = content
-            except Exception as e:
-                resultados[idx] = f"[ERROR] No se pudieron generar notas de la parte {idx+1}: {e}"
-
-    _log_tiempo(f"notas_intermedias_{len(partes)}_partes_concurrente", t0)
-    return [r or "" for r in resultados]
-
-# ==================== Segundo pase (focalizado) ====================
-_NOESP_RE = re.compile(r"(?i)\bNO ESPECIFICADO\b")
-
-def _segundo_pase_si_falta(original_report: str, texto_fuente: str, varios_anexos: bool) -> str:
-    if not ENABLE_SECOND_PASS_COMPLETION:
-        return original_report
-    if not _NOESP_RE.search(original_report or ""):
-        return original_report
-
-    evidencia: List[str] = []
-    for clave, meta in DETECTABLE_FIELDS.items():
-        label = meta["label"]
-        if re.search(rf"{re.escape(label)}.*NO ESPECIFICADO", original_report or "", flags=re.I) or \
-           re.search(rf"{re.escape(label)}\s*:\s*NO ESPECIFICADO", original_report or "", flags=re.I):
-            hits = _buscar_candidatos(texto_fuente or "", meta["pats"], _index_paginas(texto_fuente or ""), 10)
-            if hits:
-                evidencia.append(f"### {label}\n" + "\n".join(hits))
-
-    if not evidencia:
-        return original_report
-
-    prompt_corr = f"""
-(Revision focalizada) Completa UNICAMENTE los campos marcados como "NO ESPECIFICADO" en el informe,
-usando SOLO la evidencia literal que te paso abajo. Mantiene exactamente la estructura y secciones del
-informe original, sin agregar nuevas secciones. Donde la evidencia sea ambigua, deja "NO ESPECIFICADO".
-Respeta las reglas de citas del informe original (usa (Anexo X, p. N) o (p. N) segun corresponda).
-NO imprimas rótulos como 'Informe Original'.
-
-=== CONTENIDO A CORREGIR ===
-{original_report}
-
-=== EVIDENCIA LITERAL (snippets con páginas) ===
-{'\n\n'.join(evidencia)}
-"""
-    try:
-        resp = _llamada_openai(
-            [{"role": "system", "content": "Redactor técnico-jurídico. Cero invenciones."},
-             {"role": "user", "content": prompt_corr}],
-            model=_pick_model("sintesis"),
-            max_completion_tokens=MAX_COMPLETION_TOKENS_SALIDA
-        )
-        corregido = (resp.choices[0].message.content or "").strip()
-        corregido = _normalize_citas_salida(_limpiar_meta(corregido), varios_anexos)
-        corregido = re.sub(r"(?im)^\s*informe\s+original\s*$", "", corregido)
-        return corregido
-    except Exception:
-        return original_report
-
-# ==================== Analizador principal ====================
-def analizar_con_openai(texto: str) -> str:
-    if not texto or not texto.strip():
-        return "No se recibió contenido para analizar."
-
-    texto_len = len(texto)
-    n_anexos = _contar_anexos(texto)
-    varios_anexos = n_anexos >= 2
-    prompt_maestro_local = prompt_andres(varios_anexos)
-
-    hints = _build_regex_hints(texto) if ENABLE_REGEX_HINTS else ""
-    hints_block = f"\n\n=== HALLAZGOS AUTOMÁTICOS (snippets literales para verificación) ===\n{hints}\n" if hints else ""
-
-    force_two_stage = (varios_anexos and texto_len >= MULTI_FORCE_TWO_STAGE_MIN_CHARS)
-
-    # ---- Single pass ----
-    if (not varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS) or \
-       (varios_anexos and texto_len <= MAX_SINGLE_PASS_CHARS_MULTI and not force_two_stage):
-        t0 = _t()
-        max_out = _max_out_for_text(texto)
-        messages = [
-            {"role": "system",
-             "content": "Actúa como equipo experto en derecho administrativo argentino y compras públicas. Redactor técnico-jurídico. Cero invenciones."},
-            {"role": "user",
-             "content": f"{prompt_maestro_local}{_output_policy_block()}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\nDevuelve SOLO el informe final, sin preámbulos."}
-        ]
-        try:
-            resp = _llamada_openai(messages, max_completion_tokens=max_out, model=_pick_model("analisis"))
-            bruto = (resp.choices[0].message.content or "").strip()
-            bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
-            bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
-            bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
-            bruto = _reparar_ficha(bruto, texto)
-            bruto = _corregir_seccion_9_si_vacia(bruto, texto, varios_anexos)
-            bruto = _normalizar_encabezados_salida(bruto)
-            bruto = _enforce_output_policy(bruto) if STRICT_OUT else bruto
-            out = preparar_texto_para_pdf(bruto)
-            _log_tiempo("analizar_single_pass" + ("_multi" if varios_anexos else ""), t0)
-            return out
-        except Exception as e:
-            return f"Error al generar el análisis: {e}"
-
-    # ---- Dos etapas (chunking + concurrencia) ----
-    chunk_size = _compute_chunk_size(texto_len)
-    partes = _particionar(texto, chunk_size)
-
-    if len(partes) == 1:
-        t0 = _t()
-        max_out = _max_out_for_text(texto)
-        messages = [
-            {"role": "system",
-             "content": "Actúa como equipo experto en derecho administrativo argentino y compras públicas. Redactor técnico-jurídico. Cero invenciones."},
-            {"role": "user",
-             "content": f"{prompt_maestro_local}{_output_policy_block()}{hints_block}\n\n=== CONTENIDO COMPLETO DEL PLIEGO ===\n{texto}\n\nDevuelve SOLO el informe final, sin preámbulos."}
-        ]
-        try:
-            resp = _llamada_openai(messages, max_completion_tokens=max_out, model=_pick_model("analisis"))
-            bruto = (resp.choices[0].message.content or "").strip()
-            bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
-            bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
-            bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
-            bruto = _reparar_ficha(bruto, texto)
-            bruto = _corregir_seccion_9_si_vacia(bruto, texto, varios_anexos)
-            bruto = _normalizar_encabezados_salida(bruto)
-            bruto = _enforce_output_policy(bruto) if STRICT_OUT else bruto
-            out = preparar_texto_para_pdf(bruto)
-            _log_tiempo("analizar_single_pass_len1", t0)
-            return out
-        except Exception as e:
-            return f"Error al generar el análisis: {e}"
-
-    # A) Notas intermedias (concurrente)
-    notas_list = _generar_notas_concurrente(partes)
-    notas_integradas = "\n".join(notas_list)
-
-    # B) Síntesis final
-    t0_sint = _t()
-    max_out = _max_out_for_text(texto)
-    messages_final = [
-        {"role": "system",
-         "content": "Actúa como equipo experto en derecho administrativo argentino y compras públicas. Redactor técnico-jurídico. Cero invenciones."},
-        {"role": "user",
-         "content": f"""{prompt_andres(varios_anexos)}{_output_policy_block()}
-
-=== NOTAS INTERMEDIAS INTEGRADAS (DEDUPE Y TRAZABILIDAD) ===
-{notas_integradas}
-
-{("=== HALLAZGOS AUTOMÁTICOS (snippets literales) ===\n" + _build_regex_hints(texto)) if ENABLE_REGEX_HINTS else ""}
-
-Integra TODO en un solo informe; deduplica; cita una vez por dato. Prohibido meta-comentarios.
-Devuelve SOLO el informe final en texto.
-"""}
-    ]
-    try:
-        resp_final = _llamada_openai(messages_final, max_completion_tokens=max_out, model=_pick_model("sintesis"))
-        bruto = (resp_final.choices[0].message.content or "").strip()
-        bruto = _normalize_citas_salida(_limpiar_meta(bruto), varios_anexos)
-        bruto = _segundo_pase_si_falta(bruto, texto, varios_anexos)
-        bruto = _ampliar_secciones_especificas(bruto, texto, varios_anexos)
-        bruto = _reparar_ficha(bruto, texto)
-        bruto = _corregir_seccion_9_si_vacia(bruto, texto, varios_anexos)
-        bruto = _normalizar_encabezados_salida(bruto)
-        bruto = _enforce_output_policy(bruto) if STRICT_OUT else bruto
-        out = preparar_texto_para_pdf(bruto)
-        _log_tiempo("sintesis_final", t0_sint)
-        return out
-    except Exception as e:
-        return f"Error en la síntesis final: {e}\n\nNotas intermedias:\n{_limpiar_meta(notas_integradas)}"
-
-# ==================== Multi-anexo ====================
-def analizar_anexos(files: list) -> str:
-    """
-    Combina anexos y ejecuta análisis.
-    - 1 archivo: NO marca '=== ANEXO ... ===' para habilitar single-pass y citas (p. N).
-    - >=2: marca ANEXOS para trazabilidad.
-    """
-    if not files:
-        return "No se recibieron anexos para analizar."
-
-    t0 = _t()
-    bloques: List[str] = []
-    multi = len(files) >= 2
-
-    for idx, f in enumerate(files, 1):
-        try:
-            texto = extraer_texto_universal(f)
-        except Exception:
-            try:
-                f.file.seek(0)
-                texto = f.file.read().decode("utf-8", errors="ignore")
-            except Exception:
-                texto = ""
-
-        nombre = getattr(f, "filename", f"anexo_{idx}") or f"anexo_{idx}"
-        if multi:
-            bloques.append(f"=== ANEXO {idx:02d}: {nombre} ===\n{texto}\n")
-        else:
-            bloques.append(texto)
-
-    contenido_unico = "\n".join(bloques).strip()
-    if len(contenido_unico) < 100:
-        _log_tiempo("anexos_armado_vacio", t0)
-        return ("No se pudo extraer texto útil de los anexos. "
-                "Verifica si los documentos están escaneados y eleva VISION_MAX_PAGES/DPI, "
-                "o subí archivos en texto nativo.")
-
-    contenido_unico = _limpieza_basica_preanalisis(contenido_unico)
-    _log_tiempo("anexos_armado_y_limpieza", t0)
-
-    return analizar_con_openai(contenido_unico)
-
-# ==================== Chat (tools/RAG ligero) ====================
-MAX_CHAT_CONTEXT_CHARS = int(os.getenv("MAX_CHAT_CONTEXT_CHARS", "38000"))
-CHAT_MAX_TOKENS        = int(os.getenv("CHAT_MAX_TOKENS", "1200"))
-CHAT_RETRIES           = int(os.getenv("CHAT_RETRIES", "2"))
-CHAT_FALLBACK_MODEL    = os.getenv("OPENAI_MODEL_CHAT_FALLBACK", FALLBACK_MODEL_DEFAULT)
-
-def _compactar_contexto_para_chat(contexto: str) -> str:
-    s = (contexto or "").strip()
-    if len(s) <= MAX_CHAT_CONTEXT_CHARS:
-        return s
-    head = s[: MAX_CHAT_CONTEXT_CHARS // 3]
-    tail = s[- MAX_CHAT_CONTEXT_CHARS // 3 :]
-    medio = s[len(s)//2 - MAX_CHAT_CONTEXT_CHARS//6 : len(s)//2 + MAX_CHAT_CONTEXT_CHARS//6]
-    return (
-        head + "\n\n[...] (contenido intermedio omitido por longitud) [...]\n\n"
-        + medio
-        + "\n\n[...] (contenido intermedio omitido por longitud) [...]\n\n"
-        + tail
-    )
-
-def _buscar_en_historial_impl(contexto: str, query: str, k: int = 8, window: int = 280) -> dict:
-    texto = contexto or ""
-    q = (query or "").strip()
-    if not texto or not q:
-        return {"hits": []}
-
-    low = texto.lower()
-    terms = [t for t in re.findall(r"[a-z0-9áéíóúñ/.-]{3,}", q.lower()) if t not in {"que","con","por","del","para","los","las"}]
-    if not terms:
-        terms = [q.lower()]
-
-    idx_pag = _index_paginas(texto)
-    seen = set()
-    hits = []
-
-    for t in terms:
-        for m in re.finditer(re.escape(t), low):
-            pos = m.start()
-            if any(abs(pos - h) < window//2 for h in seen):
-                continue
-            seen.add(pos)
-            start = max(0, pos - window)
-            end   = min(len(texto), pos + window)
-            snippet = texto[start:end].replace("\n", " ").strip()
-            p = _pagina_de_indice(idx_pag, pos) if idx_pag else None
-            hits.append({"term": t, "page": p, "snippet": ("..." + snippet + "...")})
-            if len(hits) >= k:
-                break
-        if len(hits) >= k:
-            break
-
-    return {"hits": hits}
-
-def responder_chat_openai(mensaje: str, contexto: str = "", usuario: str = "Usuario") -> str:
-    contexto_compacto = _compactar_contexto_para_chat(contexto or "(No hay historial disponible.)")
-
-    tools = [{
-        "type": "function",
-        "function": {
-            "name": "buscar_en_historial",
-            "description": "Busca evidencia textual en el historial y en informes ya analizados. Devuelve snippets con página.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query":  {"type": "string", "description": "Consulta o palabras clave a buscar."},
-                    "k":      {"type": "integer", "description": "Cantidad máxima de snippets a devolver.", "default": 8}
-                },
-                "required": ["query"]
-            }
-        }
-    }]
-
-    system_msg = (
-        "Eres el asistente del sistema 'Suizo Argentina – Licitaciones IA'. "
-        "Respondes con precisión, sin inventar. "
-        "Si la pregunta se refiere a pliegos/informes/archivos analizados, "
-        "PRIMERO usa la herramienta buscar_en_historial con términos concretos para traer evidencia. "
-        "Cita los datos con (p. N) cuando sea posible. "
-        "Si no hay evidencia en el material, indícalo explícitamente. "
-        "Para preguntas generales, responde breve y claro."
-    )
-
-    user_prompt = f"""
-Usuario: {usuario}
-
-=== CONTEXTO DISPONIBLE (recortado) ===
-{contexto_compacto}
-
-=== PREGUNTA ===
-{mensaje}
-
-Instrucciones de salida:
-- Si usaste evidencia del historial, menciónala con '(p. N)' cuando tengas la página.
-- Si no encontraste nada en el historial, di: "No lo veo en los archivos/historial que tengo" y luego da orientación.
-- Nada de meta-texto tipo "parte X/Y". No inventes campos ni datos.
-"""
-
-    def _chat_call(model_name: str, msgs: list):
-        return _chat_create_safe(
-            model=model_name,
-            messages=msgs,
-            tools=tools,
-            tool_choice="auto",
-            max_tokens=CHAT_MAX_TOKENS,
-            temperature=None,
-        )
-
-    model_primary = os.getenv("OPENAI_MODEL_CHAT", _pick_model("analisis"))
-    messages = [
-        {"role": "system", "content": system_msg},
-        {"role": "user", "content": user_prompt},
-    ]
-
-    last_error = None
-    for model_try in [model_primary, CHAT_FALLBACK_MODEL]:
-        if not model_try:
-            continue
-        for attempt in range(CHAT_RETRIES + 1):
-            try:
-                resp = _chat_call(model_try, messages)
-                choice = resp.choices[0]
-                if getattr(choice.message, "tool_calls", None):
-                    for tc in choice.message.tool_calls:
-                        if tc.function.name == "buscar_en_historial":
-                            try:
-                                args = json.loads(tc.function.arguments or "{}")
-                            except Exception:
-                                args = {"query": (mensaje or "")}
-                            result = _buscar_en_historial_impl(
-                                contexto_compacto,
-                                args.get("query", ""),
-                                int(args.get("k", 8))
-                            )
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tc.id,
-                                "name": "buscar_en_historial",
-                                "content": json.dumps(result, ensure_ascii=False)
-                            })
-                    resp2 = _chat_call(model_try, messages)
-                    out = (resp2.choices[0].message.content or "").strip()
-                    if out:
-                        return out
-                    raise RuntimeError("La respuesta llegó vacía tras tool-calling.")
-                else:
-                    out = (choice.message.content or "").strip()
-                    if out:
-                        return out
-                    raise RuntimeError("La respuesta llegó vacía.")
-            except Exception as e:
-                last_error = e
-                time.sleep(1.2 * (attempt + 1))
-
-    return (
-        "No pude generar respuesta en este momento. "
-        f"Detalle técnico: {last_error}"
-        if last_error else
-        "No pude generar respuesta en este momento."
-    )
-
-# ==================== PDF ====================
-def _render_pdf_bytes(resumen: str, fecha_display: Optional[str] = None) -> bytes:
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-
-    plantilla_path = os.path.join("static", "fondo-pdf.png")
-    if os.path.exists(plantilla_path):
-        plantilla = ImageReader(plantilla_path)
-        c.drawImage(plantilla, 0, 0, width=A4[0], height=A4[1])
-
-    azul = HexColor("#044369")
-    c.setFillColor(azul)
-    c.setFont("Helvetica-Bold", 16)
-    c.drawCentredString(A4[0] / 2, A4[1] - 30 * mm, "Resumen Analítico de Licitación")
-    c.setFont("Helvetica", 10)
-    c.drawCentredString(A4[0] / 2, A4[1] - 36 * mm, "Inteligencia Comercial")
-    c.setFillColor("black")
-    c.setFont("Helvetica", 10)
-
-    if not fecha_display:
-        try:
-            fecha_display = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).strftime("%d/%m/%Y %H:%M")
-        except Exception:
-            fecha_display = datetime.now().strftime("%d/%m/%Y %H:%M")
-    c.drawCentredString(A4[0] / 2, A4[1] - 42 * mm, f"{fecha_display}")
-
-    resumen = (resumen or "").replace("**", "")
-    resumen = re.sub(r"(?im)^\s*informe\s+completo\s*$", "", resumen)
-    resumen = re.sub(r"(?im)^\s*informe\s+original\s*$", "", resumen)
-    resumen = preparar_texto_para_pdf(resumen)
-
-    c.setFont("Helvetica", 11)
-    margen_izquierdo = 20 * mm
-    margen_superior = A4[1] - 54 * mm
-    ancho_texto = 170 * mm
-    alto_linea = 14
-    y = margen_superior
-
-    for parrafo in resumen.split("\n"):
-        if not parrafo.strip():
-            y -= alto_linea
-            continue
-        if parrafo.strip().endswith(":") or parrafo.isupper() or re.match(r"^\d+(\.\d+)*\s", parrafo):
-            c.setFont("Helvetica-Bold", 12); c.setFillColor(azul)
-        else:
-            c.setFont("Helvetica", 11); c.setFillColor("black")
-        for linea in dividir_texto(parrafo.strip(), c, ancho_texto):
-            if y <= 20 * mm:
-                c.showPage()
-                if os.path.exists(plantilla_path):
-                    c.drawImage(plantilla, 0, 0, width=A4[0], height=A4[1])
-                c.setFont("Helvetica", 11); c.setFillColor("black")
-                y = margen_superior
-            c.drawString(margen_izquierdo, y, linea)
-            y -= alto_linea
-        if parrafo.strip().endswith(":") or parrafo.isupper() or re.match(r"^\d+(\.\d+)*\s", parrafo):
-            y -= alto_linea // 2
-
-    c.save()
-    return buffer.getvalue()
-
-def generar_pdf_con_plantilla(resumen: str, nombre_archivo: str, fecha_display: Optional[str] = None):
-    output_dir = os.path.join("generated_pdfs")
-    os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, nombre_archivo)
-
-    data = _render_pdf_bytes(resumen, fecha_display=fecha_display)
-
-    with NamedTemporaryFile(dir=output_dir, delete=False) as tmp:
-        tmp.write(data)
-        tmp_path = tmp.name
-    try:
-        os.replace(tmp_path, output_path)
-    except Exception:
-        with open(output_path, "wb") as f:
-            f.write(data)
-        try:
-            os.remove(tmp_path)
-        except Exception:
-            pass
-
-    return output_path
-
-def dividir_texto(texto, canvas_obj, max_width):
-    palabras = (texto or "").split(" ")
-    lineas, linea_actual = [], ""
-    for palabra in palabras:
-        prueba = (linea_actual + " " + palabra) if linea_actual else palabra
-        if canvas_obj.stringWidth(prueba, canvas_obj._fontname, canvas_obj._fontsize) <= max_width:
-            linea_actual = prueba
-        else:
-            if linea_actual:
-                lineas.append(linea_actual)
-            linea_actual = palabra
-    if linea_actual:
-        lineas.append(linea_actual)
-    return lineas
