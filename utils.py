@@ -1536,3 +1536,37 @@ def generar_informe_y_pdf(
     )
     pdf_path = generar_pdf_informe(informe, out_path=ruta_pdf) if export_pdf else None
     return informe, pdf_path
+# ==================== Compatibilidad retro (APIs antiguas) ====================
+
+def analizar_con_openai(texto_fuente: str, *, varios_anexos=None, force_multi=None) -> str:
+    """Nombre histórico: mantiene compat con main.py antiguo."""
+    return analizar_y_generar_informe(
+        texto_fuente,
+        varios_anexos=varios_anexos,
+        force_multi=force_multi,
+    )
+
+def generar_pdf(informe_texto: str, ruta_pdf: Optional[str] = None) -> str:
+    """Alias histórico para exportar a PDF."""
+    return generar_pdf_informe(informe_texto, out_path=ruta_pdf)
+
+def analizar_y_pdf(texto_fuente: str, *, varios_anexos=None, force_multi=None,
+                   ruta_pdf: Optional[str] = None) -> Tuple[str, Optional[str]]:
+    """Alias cómodo equivalente a generar_informe_y_pdf."""
+    return generar_informe_y_pdf(
+        texto_fuente,
+        varios_anexos=varios_anexos,
+        force_multi=force_multi,
+        export_pdf=True,
+        ruta_pdf=ruta_pdf,
+    )
+
+# Exponer símbolos más usados por imports antiguos
+__all__ = [
+    # nuevas
+    "analizar_y_generar_informe", "generar_informe_y_pdf", "generar_pdf_informe",
+    # compat
+    "analizar_con_openai", "analizar_y_pdf", "generar_pdf",
+    # helpers útiles
+    "extraer_texto_universal", "preparar_texto_para_pdf",
+]
