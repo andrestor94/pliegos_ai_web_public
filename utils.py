@@ -1,18 +1,17 @@
 # -*- coding: utf-8 -*-
-# utils.py — Parte 1/4 (Base + Ingesta KB añadida)
+# utils.py — Parte 1/4 (Base + Ingesta KB)
 
 """
 Módulo utilitario para:
 - Extracción de texto (PDF/DOCX/Imágenes + OCR selectivo con OpenAI Vision)
 - Normalizaciones y helpers varios
 - Pipeline de análisis con modelos OpenAI
-- (NUEVO) Ingesta de Base de Conocimiento (KB): subir/leer archivos, trocear y embebidos
+- Ingesta de Base de Conocimiento (KB): subir/leer archivos, trocear y embebidos
 
-Cambios clave en esta versión:
-- Evita ciclos de import con prompts.py usando "lazy import".
-- Controla tamaño y orden de la salida (recortes por sección, tope de palabras por bullet).
+Notas:
+- Se usa lazy-import para evitar ciclos (p.ej. con prompts.py o modelos SQLAlchemy).
 - Wrapper de Chat Completions compatible con max_completion_tokens / max_tokens.
-- (NUEVO) Helpers y funciones para crear fuentes KB, ingerir archivos y generar embeddings.
+- Esta es la PARTE 1/4: Base + funciones de KB. Las demás partes completan el módulo.
 """
 
 from __future__ import annotations
@@ -20,12 +19,12 @@ from __future__ import annotations
 import io
 import os
 import re
-import base64
-import mimetypes
+import json
 import time
-import json  # necesario para tool-calling en el chat
-import hashlib
+import base64
 import shutil
+import hashlib
+import mimetypes
 from datetime import datetime
 from typing import List, Tuple, Dict, Optional, Iterator, Any
 from tempfile import NamedTemporaryFile
@@ -37,8 +36,8 @@ from openai import OpenAI
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
-from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import HexColor
+from reportlab.lib.utils import ImageReader
 from zoneinfo import ZoneInfo
 
 # ========================= Carga de .env =========================
@@ -49,16 +48,29 @@ OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "90"))
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
 
 # ========================= Embeddings model ======================
-EMBEDDINGS_MODEL = os.getenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-large").strip() or "text-embedding-3-large"
+EMBEDDINGS_MODEL = (
+    os.getenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-large").strip()
+    or "text-embedding-3-large"
+)
 
 # ========================= Base de Conocimiento (KB) =========================
 # Lazy-import de modelos para evitar registrar tablas dos veces en SQLAlchemy.
 def _kb_models():
     try:
-        from models import KBSource as _KBSource, KBFile as _KBFile, KBChunk as _KBChunk, KBPriority as _KBPriority
+        from models import (
+            KBSource as _KBSource,
+            KBFile as _KBFile,
+            KBChunk as _KBChunk,
+            KBPriority as _KBPriority,
+        )
     except Exception:
         # fallback si se ejecuta como paquete
-        from .models import KBSource as _KBSource, KBFile as _KBFile, KBChunk as _KBChunk, KBPriority as _KBPriority  # type: ignore
+        from .models import (  # type: ignore
+            KBSource as _KBSource,
+            KBFile as _KBFile,
+            KBChunk as _KBChunk,
+            KBPriority as _KBPriority,
+        )
     return _KBSource, _KBFile, _KBChunk, _KBPriority
 
 
@@ -137,21 +149,34 @@ def kb_create_or_get_source(db, name: str, storage_path: str, scope: Dict[str, A
     if src:
         changed = False
         if storage_path and src.storage_path != storage_path:
-            src.storage_path = storage_path; changed = True
+            src.storage_path = storage_path
+            changed = True
         if scope and (src.scope or {}) != scope:
-            src.scope = scope; changed = True
+            src.scope = scope
+            changed = True
         if changed:
-            db.add(src); db.commit(); db.refresh(src)
+            db.add(src)
+            db.commit()
+            db.refresh(src)
         return src
     os.makedirs(storage_path or ".", exist_ok=True)
     src = KBSource(name=name, storage_path=storage_path, scope=scope or {})
-    db.add(src); db.commit(); db.refresh(src)
+    db.add(src)
+    db.commit()
+    db.refresh(src)
     return src
 
 
 def kb_ingest_file(
-    db, source, local_path: str, *, rubric: str, tags: Optional[List[str]] = None,
-    _client: Optional[OpenAI] = None, chunk_chars: int = 1500, overlap: int = 200,
+    db,
+    source,
+    local_path: str,
+    *,
+    rubric: str,
+    tags: Optional[List[str]] = None,
+    _client: Optional[OpenAI] = None,
+    chunk_chars: int = 1500,
+    overlap: int = 200,
 ) -> int:
     KBSource, KBFile, KBChunk, _ = _kb_models()
     if not os.path.isfile(local_path):
@@ -176,16 +201,23 @@ def kb_ingest_file(
         stored_path=dest,
         meta={"rubro": rubric, "tags": (tags or []), **(meta_extra or {})},
     )
-    db.add(kbfile); db.flush()
+    db.add(kbfile)
+    db.flush()
     if (text or "").strip():
         text_norm = _kb_clean_text(text)
         ord_idx = 0
         for chunk in _kb_chunk_text(text_norm, max_chars=chunk_chars, overlap=overlap):
             vec = _kb_embed(chunk, _client=_client)
-            db.add(KBChunk(
-                file_id=kbfile.id, ord=ord_idx, text=chunk,
-                embedding=json.dumps(vec), span={}, meta={}
-            ))
+            db.add(
+                KBChunk(
+                    file_id=kbfile.id,
+                    ord=ord_idx,
+                    text=chunk,
+                    embedding=json.dumps(vec),
+                    span={},
+                    meta={},
+                )
+            )
             ord_idx += 1
     db.commit()
     return kbfile.id
@@ -194,7 +226,12 @@ def kb_ingest_file(
 def kb_upsert_priority(db, rubric: str, label: str, details: str = "", weight: float = 1.0) -> None:
     _, _, _, KBPriority = _kb_models()
     from sqlalchemy import and_
-    row = db.query(KBPriority).filter(and_(KBPriority.rubric == rubric, KBPriority.label == label)).first()
+
+    row = (
+        db.query(KBPriority)
+        .filter(and_(KBPriority.rubric == rubric, KBPriority.label == label))
+        .first()
+    )
     if not row:
         row = KBPriority(rubric=rubric, label=label, details=details or "", weight=weight)
         db.add(row)
@@ -1536,65 +1573,8 @@ def generar_informe_y_pdf(
     )
     pdf_path = generar_pdf_informe(informe, out_path=ruta_pdf) if export_pdf else None
     return informe, pdf_path
-# ==================== Compatibilidad retro (APIs antiguas) ====================
 
-def analizar_con_openai(texto_fuente: str, *, varios_anexos=None, force_multi=None) -> str:
-    """Nombre histórico: mantiene compat con main.py antiguo."""
-    return analizar_y_generar_informe(
-        texto_fuente,
-        varios_anexos=varios_anexos,
-        force_multi=force_multi,
-    )
-
-def generar_pdf(informe_texto: str, ruta_pdf: Optional[str] = None) -> str:
-    """Alias histórico para exportar a PDF."""
-    return generar_pdf_informe(informe_texto, out_path=ruta_pdf)
-
-def analizar_y_pdf(texto_fuente: str, *, varios_anexos=None, force_multi=None,
-                   ruta_pdf: Optional[str] = None) -> Tuple[str, Optional[str]]:
-    """Alias cómodo equivalente a generar_informe_y_pdf."""
-    return generar_informe_y_pdf(
-        texto_fuente,
-        varios_anexos=varios_anexos,
-        force_multi=force_multi,
-        export_pdf=True,
-        ruta_pdf=ruta_pdf,
-    )
-
-# Exponer símbolos más usados por imports antiguos
-__all__ = [
-    # nuevas
-    "analizar_y_generar_informe", "generar_informe_y_pdf", "generar_pdf_informe",
-    # compat
-    "analizar_con_openai", "analizar_y_pdf", "generar_pdf",
-    # helpers útiles
-    "extraer_texto_universal", "preparar_texto_para_pdf",
-]
-# ==================== Compat extra (plantillas) ====================
-
-def generar_pdf_con_plantilla(
-    informe_texto: str,
-    *,
-    plantilla: Optional[str] = None,
-    salida: Optional[str] = None,
-    **kwargs,
-) -> str:
-    """
-    Compatibilidad con versiones anteriores.
-    Ignora 'plantilla' y usa el generador simple de ReportLab.
-    - informe_texto: contenido en markdown-light
-    - plantilla: nombre/slug de plantilla (no usado aquí)
-    - salida: ruta opcional del PDF a escribir
-    """
-    return generar_pdf_informe(informe_texto, out_path=salida)
-
-# Asegurá que quede exportado si usás __all__
-try:
-    __all__.append("generar_pdf_con_plantilla")  # type: ignore
-except Exception:
-    pass
-# ==================== Compatibilidad con versiones anteriores ====================
-
+# ==================== Compatibilidad y alias retro ====================
 def responder_chat_openai(
     prompt_or_messages,
     *,
@@ -1661,8 +1641,50 @@ def analizar_con_openai(
         force_multi=force_multi,
     )
 
-# Export explícito si usás __all__
-try:
-    __all__.extend(["responder_chat_openai", "analizar_con_openai"])  # type: ignore
-except Exception:
-    pass
+def generar_pdf(informe_texto: str, ruta_pdf: Optional[str] = None) -> str:
+    """Alias histórico para exportar a PDF."""
+    return generar_pdf_informe(informe_texto, out_path=ruta_pdf)
+
+def analizar_y_pdf(
+    texto_fuente: str,
+    *,
+    varios_anexos: Optional[bool] = None,
+    force_multi: Optional[bool] = None,
+    ruta_pdf: Optional[str] = None
+) -> Tuple[str, Optional[str]]:
+    """Alias cómodo equivalente a generar_informe_y_pdf."""
+    return generar_informe_y_pdf(
+        texto_fuente,
+        varios_anexos=varios_anexos,
+        force_multi=force_multi,
+        export_pdf=True,
+        ruta_pdf=ruta_pdf,
+    )
+
+# ==================== Compat extra (plantillas) ====================
+def generar_pdf_con_plantilla(
+    informe_texto: str,
+    *,
+    plantilla: Optional[str] = None,
+    salida: Optional[str] = None,
+    **kwargs,
+) -> str:
+    """
+    Compatibilidad con versiones anteriores.
+    Ignora 'plantilla' y usa el generador simple de ReportLab.
+    - informe_texto: contenido en markdown-light
+    - plantilla: nombre/slug de plantilla (no usado aquí)
+    - salida: ruta opcional del PDF a escribir
+    """
+    return generar_pdf_informe(informe_texto, out_path=salida)
+
+# ==================== __all__ ====================
+__all__ = [
+    # nuevas
+    "analizar_y_generar_informe", "generar_informe_y_pdf", "generar_pdf_informe",
+    # compat
+    "analizar_con_openai", "analizar_y_pdf", "generar_pdf", "generar_pdf_con_plantilla",
+    "responder_chat_openai",
+    # helpers útiles
+    "extraer_texto_universal", "preparar_texto_para_pdf",
+]
