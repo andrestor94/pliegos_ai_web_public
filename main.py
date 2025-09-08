@@ -51,9 +51,47 @@ from utils import (
     analizar_con_openai,
     generar_pdf_con_plantilla,
     responder_chat_openai,
-    analizar_anexos,
+    # analizar_anexos  # ⬅️ lo reemplazamos con un fallback robusto más abajo
 )
 import utils as U  # ⭐ nuevo: acceso dinámico a helpers KB si existen
+
+# ✅ Fallback robusto para evitar ImportError: utils.analizar_anexos
+try:
+    from utils import analizar_anexos as _analizar_anexos  # type: ignore
+except Exception:
+    _analizar_anexos = None
+
+def analizar_anexos(archivos: List[UploadFile]) -> str:
+    """
+    Síncrona (para run_in_threadpool). Si utils.analizar_anexos existe, delega.
+    Si no, extrae texto con utils.extraer_texto_universal y llama al pipeline
+    utils.analizar_y_generar_informe, preservando '=== ANEXO N' para citas.
+    """
+    if callable(_analizar_anexos):
+        return _analizar_anexos(archivos)
+
+    textos = []
+    for i, a in enumerate(archivos, start=1):
+        if not a or not getattr(a, "filename", None):
+            continue
+        try:
+            # Usa el extractor universal de utils (maneja pdf/docx/imagen/etc.)
+            t = U.extraer_texto_universal(a)
+        except Exception as e:
+            t = f"[ERROR leyendo {getattr(a, 'filename', '')}: {e}]"
+        t = (t or "").strip()
+        if t:
+            textos.append(f"=== ANEXO {i}\n{t}")
+
+    corpus = "\n\n".join(textos).strip()
+    if not corpus:
+        return "No se pudo extraer texto de los anexos."
+
+    varios = len(textos) > 1
+    try:
+        return U.analizar_y_generar_informe(corpus, varios_anexos=varios)
+    except Exception as e:
+        return f"[Error de análisis] {e}"
 
 from database import (
     DB_PATH,
@@ -65,7 +103,7 @@ from database import (
     cambiar_estado_usuario,
     borrar_usuario,
     cambiar_rol,
-    buscar_usuarios,
+    buscar_usarios,
     guardar_en_historial,
     obtener_historial,
     eliminar_del_historial,
@@ -1965,8 +2003,41 @@ async def chat_abrir(request: Request):
         return JSONResponse({"error": "No se pudo abrir el hilo"}, status_code=500)
 # =========================
 # main.py — PARTE 5 / 6
-# (Auditoría, Admin, endpoints legacy)
+# (Auditoría, Admin, endpoints legacy + **Incidencias (vista GET)**)
 # =========================
+
+# ---------- Vista mínima de Incidencias (evita 404 al hacer clic en el botón) ----------
+@app.get("/incidencias", response_class=HTMLResponse)
+async def incidencias_view(request: Request):
+    if not request.session.get("usuario"):
+        return RedirectResponse("/login")
+
+    # Intentamos renderizar templates/incidencias.html si existe; si no, devolvemos un HTML simple
+    try:
+        # forzamos carga para verificar existencia; si no existe, get_template lanza excepción
+        templates.env.get_template("incidencias.html")
+        return templates.TemplateResponse("incidencias.html", {"request": request})
+    except Exception:
+        html = """<!doctype html><html><head>
+        <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>Incidencias</title>
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+        </head><body class="p-3">
+          <div class="container">
+            <h1 class="h4 mb-3">Incidencias</h1>
+            <div class="alert alert-info">
+              La vista <code>templates/incidencias.html</code> no existe aún. <br>
+              Creala para personalizar el módulo. Mientras tanto, esta vista placeholder evita el 404.
+            </div>
+            <a class="btn btn-secondary" href="/">Volver al inicio</a>
+          </div>
+        </body></html>"""
+        return HTMLResponse(html)
+
+# Aceptar barra final y algunos alias comunes
+@app.get("/incidencias/")
+async def incidencias_trailing():
+    return RedirectResponse("/incidencias", status_code=307)
 
 # ================== Auditoría (vista audit_logs) ==================
 @app.get("/auditoria", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
@@ -2255,9 +2326,7 @@ async def legacy_admin_reset_session(request: Request):
     except Exception as e:
         print("❌ legacy_admin_reset_session:", repr(e))
         return JSONResponse({"error": "No se pudo reiniciar la sesión"}, status_code=500)
-
-# (La PARTE 6 incluye: Incidencias con adjuntos, Calendario, Notificaciones, Presencia/Online y Auditoría de actividad + CSV)
-# =========================
+	# =========================
 # main.py — PARTE 6 / 6
 # (Calendario, Notificaciones, Presencia/Online, Auditoría de actividad + CSV, diag rutas)
 # =========================
