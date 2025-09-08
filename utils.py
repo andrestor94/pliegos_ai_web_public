@@ -57,8 +57,13 @@ except Exception:
     # fallback a import relativo si estás en paquete
     from .models import KBSource, KBFile, KBChunk, KBPriority  # type: ignore
 
+# Modelo de embeddings configurable
+EMBEDDINGS_MODEL = os.getenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-large").strip() or "text-embedding-3-large"
+
+
 def _kb_clean_text(s: str) -> str:
     return " ".join((s or "").replace("\r", " ").replace("\n", " ").split())
+
 
 def _kb_chunk_text(text: str, max_chars: int = 1500, overlap: int = 200) -> Iterator[str]:
     if not text:
@@ -72,12 +77,14 @@ def _kb_chunk_text(text: str, max_chars: int = 1500, overlap: int = 200) -> Iter
             break
         i = max(0, j - overlap)
 
+
 def _kb_sha256_path(path: str) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for b in iter(lambda: f.read(1024 * 1024), b""):
             h.update(b)
     return h.hexdigest()
+
 
 def _kb_detect_content_type(filename: str) -> str:
     fn = filename.lower()
@@ -89,6 +96,7 @@ def _kb_detect_content_type(filename: str) -> str:
         return "text/plain"
     # por defecto, texto plano para indexación básica
     return mimetypes.guess_type(filename)[0] or "text/plain"
+
 
 def _kb_extract_text_from_path(path: str) -> Tuple[str, Dict[str, Any]]:
     ext = os.path.splitext(path)[1].lower()
@@ -115,10 +123,12 @@ def _kb_extract_text_from_path(path: str) -> Tuple[str, Dict[str, Any]]:
     # binario no soportado para texto: indexa sin texto
     return "", {"unsupported": True, "ext": ext}
 
+
 def _kb_embed(text: str, _client: Optional[OpenAI] = None) -> List[float]:
     cli = _client or client
-    resp = cli.embeddings.create(model="text-embedding-3-large", input=text)
+    resp = cli.embeddings.create(model=EMBEDDINGS_MODEL, input=text)
     return resp.data[0].embedding  # type: ignore
+
 
 def kb_create_or_get_source(db, name: str, storage_path: str, scope: Dict[str, Any]) -> KBSource:
     """
@@ -135,13 +145,18 @@ def kb_create_or_get_source(db, name: str, storage_path: str, scope: Dict[str, A
             src.scope = scope
             changed = True
         if changed:
-            db.add(src); db.commit(); db.refresh(src)
+            db.add(src)
+            db.commit()
+            db.refresh(src)
         return src
 
     os.makedirs(storage_path or ".", exist_ok=True)
     src = KBSource(name=name, storage_path=storage_path, scope=scope or {})
-    db.add(src); db.commit(); db.refresh(src)
+    db.add(src)
+    db.commit()
+    db.refresh(src)
     return src
+
 
 def kb_ingest_file(
     db,
@@ -193,24 +208,31 @@ def kb_ingest_file(
         ord_idx = 0
         for chunk in _kb_chunk_text(text_norm, max_chars=chunk_chars, overlap=overlap):
             vec = _kb_embed(chunk, _client=_client)
-            db.add(KBChunk(
-                file_id=kbfile.id,
-                ord=ord_idx,
-                text=chunk,
-                embedding=json.dumps(vec),
-                span={}, meta={}
-            ))
+            db.add(
+                KBChunk(
+                    file_id=kbfile.id,
+                    ord=ord_idx,
+                    text=chunk,
+                    embedding=json.dumps(vec, ensure_ascii=False),
+                    span={},
+                    meta={},
+                )
+            )
             ord_idx += 1
 
     db.commit()
     return kbfile.id
+
 
 def kb_upsert_priority(db, rubric: str, label: str, details: str = "", weight: float = 1.0) -> None:
     """
     Crea o actualiza una prioridad (punto que no debe faltar) para un 'rubric' dado.
     """
     from sqlalchemy import and_
-    row = db.query(KBPriority).filter(and_(KBPriority.rubric == rubric, KBPriority.label == label)).first()
+
+    row = db.query(KBPriority).filter(
+        and_(KBPriority.rubric == rubric, KBPriority.label == label)
+    ).first()
     if not row:
         row = KBPriority(rubric=rubric, label=label, details=details or "", weight=weight)
         db.add(row)
@@ -514,7 +536,7 @@ def extraer_texto_de_pdf(file) -> str:
 
 def extraer_texto_de_docx(file) -> str:
     t0 = _t()
-    raw = __leer_todo(file)
+    raw = _leer_todo(file)  # corregido: usar _leer_todo (evita NameError)
     if not raw:
         _log_tiempo("extraccion_docx_sin_bytes", t0)
         return ""
@@ -1279,3 +1301,274 @@ def _enforce_output_policy(informe: str) -> str:
 
     out = re.sub(r"\n{3,}", "\n\n", out).strip()
     return out
+# -*- coding: utf-8 -*-
+# utils.py — Parte 4/4 (Pipeline de análisis + PDF + helpers finales)
+
+# ==================== Mensajería al modelo ====================
+def _mk_temperature() -> Optional[float]:
+    try:
+        return float(TEMPERATURE_ANALISIS) if TEMPERATURE_ANALISIS else None
+    except Exception:
+        return None
+
+def _pick_model(final_pass: bool = False) -> str:
+    """
+    Selecciona el modelo según modo/flags. Para pasadas parciales puede forzar uno 'fast'.
+    """
+    if not final_pass and (ANALISIS_MODO == "fast") and FAST_FORCE_MODEL:
+        return FAST_FORCE_MODEL
+    return MODEL_ANALISIS
+
+def _craft_system_prompt(varios_anexos: bool, texto_hints: str = "") -> str:
+    base = prompt_andres(varios_anexos)
+    bloques = [base]
+    sinos = _sinonimos_text()
+    if sinos:
+        bloques.append(sinos)
+    bloques.append(_output_policy_block())
+    if texto_hints.strip():
+        bloques.append("\n=== HINTS DETECTADOS (útiles para recall) ===\n" + texto_hints.strip())
+    return "\n\n".join(b for b in bloques if b).strip()
+
+def _msg_single_block(varios_anexos: bool, texto_fuente: str, texto_hints: str = "", titulo: str = "") -> List[Dict[str, Any]]:
+    sys = _craft_system_prompt(varios_anexos, texto_hints=texto_hints)
+    user = []
+    if titulo:
+        user.append(f"TÍTULO/BLOQUE: {titulo}")
+    user.append("CONTENIDO A ANALIZAR (texto literal paginado):")
+    user.append(texto_fuente.strip())
+    content = "\n\n".join(user)
+    return [{"role": "system", "content": sys}, {"role": "user", "content": content}]
+
+def _call_chat(messages: List[Dict[str, Any]], model: Optional[str] = None, max_tokens: Optional[int] = None) -> str:
+    payload = {
+        "model": model or _pick_model(final_pass=False),
+        "messages": messages,
+    }
+    temp = _mk_temperature()
+    if temp is not None:
+        payload["temperature"] = temp
+    if max_tokens is not None:
+        payload["max_completion_tokens"] = int(max_tokens)
+
+    resp = _chat_create_safe(**payload)
+    return (resp.choices[0].message.content or "").strip()
+
+# ==================== Análisis: single/multi-pass ====================
+def _resumen_parcial(chunk_text: str, varios_anexos: bool, idx: int, total: int, texto_hints: str = "") -> str:
+    """
+    Produce un resumen estructurado (mini-informe) del bloque.
+    """
+    titulo = f"Bloque {idx}/{total}"
+    msgs = _msg_single_block(varios_anexos, chunk_text, texto_hints=texto_hints, titulo=titulo)
+    out = _call_chat(msgs, model=_pick_model(final_pass=False), max_tokens=NOTAS_MAX_TOKENS)
+    return out
+
+def _agregar_y_consolidar(parciales: List[str], varios_anexos: bool, texto_hints: str = "") -> str:
+    """
+    Funde los parciales en un informe único, aplicando la guía de salida.
+    """
+    sys = _craft_system_prompt(varios_anexos, texto_hints=texto_hints)
+    corpus = "\n\n".join([f"=== PARCIAL {i+1} ===\n{p}" for i, p in enumerate(parciales) if (p or "").strip()])
+    user = (
+        "Integrá TODOS los parciales anteriores en un ÚNICO informe final, sin repetir texto, "
+        "llenando las secciones que falten y citando correctamente (ver reglas). "
+        "No agregues anexos ni texto fuera de la estructura pedida."
+        "\n\n"
+        + corpus
+    )
+    msgs = [{"role": "system", "content": sys}, {"role": "user", "content": user}]
+    out = _call_chat(msgs, model=_pick_model(final_pass=True), max_tokens=MAX_COMPLETION_TOKENS_SALIDA)
+    return out
+
+def _postproceso_final(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
+    """
+    Post-procesos determinísticos/seguros, manteniendo citas y estructura.
+    """
+    s = informe or ""
+    s = _normalizar_encabezados_salida(s)
+    s = _reparar_ficha(s, texto_fuente or "")
+    s = _ampliar_secciones_especificas(s, texto_fuente or "", varios_anexos)
+    s = _corregir_seccion_9_si_vacia(s, texto_fuente or "", varios_anexos)
+    s = _normalize_citas_salida(s, varios_anexos)
+    s = _enforce_output_policy(s)
+    s = _limpiar_meta(s)
+    s = re.sub(r"\n{3,}", "\n\n", s).strip()
+    return s
+
+def analizar_y_generar_informe(
+    texto_fuente: str,
+    *,
+    varios_anexos: Optional[bool] = None,
+    force_multi: Optional[bool] = None,
+) -> str:
+    """
+    Pipeline principal para obtener el informe desde el texto crudo (paginado).
+    - Limpia/normaliza.
+    - Opcionalmente genera HINTS para recall.
+    - Decide single vs multi-pass y consolida.
+    - Aplica post-procesos determinísticos.
+    """
+    t0 = _t()
+
+    # Limpieza previa
+    raw = (texto_fuente or "").strip()
+    raw = _limpieza_basica_preanalisis(raw)
+    raw = _limpiar_meta(raw)
+
+    # Heurística de anexos si no se especifica
+    if varios_anexos is None:
+        varios_anexos = (_contar_anexos(raw) > 1)
+
+    # Hints regex (opcionales)
+    hints = _build_regex_hints(raw) if ENABLE_REGEX_HINTS else ""
+
+    # Elección single vs multi
+    multi = bool(force_multi) or (len(raw) > MAX_SINGLE_PASS_CHARS)
+
+    if not multi:
+        msgs = _msg_single_block(varios_anexos, raw, texto_hints=hints)
+        borrador = _call_chat(msgs, model=_pick_model(final_pass=True), max_tokens=MAX_COMPLETION_TOKENS_SALIDA)
+        final = _postproceso_final(borrador, raw, varios_anexos)
+        _log_tiempo("pipeline_single_pass", t0)
+        return final
+
+    # Multi-pass (parciales en paralelo)
+    partes = _particionar(raw, max_chars=CHUNK_SIZE_BASE)
+    parciales: List[str] = []
+
+    def _work(i_chunk: int, total: int, texto: str) -> str:
+        return _resumen_parcial(texto, varios_anexos, i_chunk, total, texto_hints=hints)
+
+    t1 = _t()
+    with ThreadPoolExecutor(max_workers=max(1, ANALISIS_CONCURRENCY)) as ex:
+        futs = [ex.submit(_work, i+1, len(partes), partes[i]) for i in range(len(partes))]
+        for fut in as_completed(futs):
+            try:
+                parciales.append(fut.result())
+            except Exception as e:
+                parciales.append(f"[ERROR parcial] {e}")
+
+    _log_tiempo("parciales_multi_pass", t1)
+
+    # Consolidación
+    t2 = _t()
+    borrador = _agregar_y_consolidar(parciales, varios_anexos, texto_hints=hints)
+    final = _postproceso_final(borrador, raw, varios_anexos)
+    _log_tiempo("consolidacion_multi_pass", t2)
+    _log_tiempo("pipeline_multi_pass_total", t0)
+    return final
+
+# ==================== Exportar a PDF (ReportLab) ====================
+def _wrap_lines(s: str, max_chars: int = 110) -> List[str]:
+    """
+    Wrap simple por caracteres (word-wrap), suficiente para A4 con márgenes y 10pt.
+    """
+    out: List[str] = []
+    for ln in (s or "").splitlines():
+        w = ln.strip("\r")
+        if not w:
+            out.append("")
+            continue
+        parts = []
+        buf = []
+        for tok in re.findall(r"\S+|\s+", w):
+            if tok.isspace():
+                # si agregarlo supera el límite, cortamos línea
+                if sum(len(x) for x in buf) + len(tok) > max_chars:
+                    parts.append("".join(buf).rstrip())
+                    buf = []
+                else:
+                    buf.append(tok)
+            else:
+                if sum(len(x) for x in buf) + len(tok) > max_chars:
+                    if buf:
+                        parts.append("".join(buf).rstrip())
+                        buf = [tok]
+                    else:
+                        parts.append(tok[:max_chars])
+                        buf = [tok[max_chars:]]
+                else:
+                    buf.append(tok)
+        if buf:
+            parts.append("".join(buf).rstrip())
+        out.extend(parts if parts else [""])
+    return out
+
+def generar_pdf_informe(texto_markdown: str, out_path: Optional[str] = None) -> str:
+    """
+    Crea un PDF simple y legible desde el texto del informe.
+    - Convierte markdown light -> texto plano con bullets.
+    - Usa márgenes y salto de página autom.
+    Devuelve la ruta del PDF generado.
+    """
+    # Normaliza a texto plano para PDF
+    contenido = preparar_texto_para_pdf(texto_markdown or "")
+
+    if not out_path:
+        ts = datetime.now(tz=ZoneInfo("America/Argentina/Buenos_Aires") if "America/Argentina/Buenos_Aires" else None).strftime("%Y%m%d_%H%M%S")
+        out_path = os.path.abspath(f"informe_{ts}.pdf")
+
+    c = canvas.Canvas(out_path, pagesize=A4)
+    width, height = A4
+    left = 20 * mm
+    right = 15 * mm
+    top = 18 * mm
+    bottom = 18 * mm
+
+    usable_w = width - left - right
+    x = left
+    y = height - top
+
+    c.setTitle("Informe generado")
+    c.setAuthor("Pliegos AI")
+    c.setSubject("Informe técnico-jurídico")
+
+    c.setFont("Helvetica-Bold", 12)
+    c.setFillColor(HexColor("#222222"))
+    c.drawString(x, y, "Informe técnico-jurídico")
+    y -= 8 * mm
+
+    c.setFont("Helvetica", 10)
+    c.setFillColor(HexColor("#000000"))
+
+    # Línea separadora
+    c.line(x, y, x + usable_w, y)
+    y -= 6 * mm
+
+    # Cuerpo
+    lines = _wrap_lines(contenido, max_chars=110)
+
+    for ln in lines:
+        if y < bottom + 15 * mm:
+            c.showPage()
+            y = height - top
+            c.setFont("Helvetica", 10)
+            c.setFillColor(HexColor("#000000"))
+        c.drawString(x, y, ln)
+        y -= 5 * mm
+
+    c.showPage()
+    c.save()
+    return out_path
+
+# ==================== Helpers de alto nivel ====================
+def generar_informe_y_pdf(
+    texto_fuente: str,
+    *,
+    varios_anexos: Optional[bool] = None,
+    force_multi: Optional[bool] = None,
+    export_pdf: bool = True,
+    ruta_pdf: Optional[str] = None,
+) -> Tuple[str, Optional[str]]:
+    """
+    Atajo: corre el pipeline de análisis y, opcionalmente, exporta a PDF.
+    Devuelve (informe_texto, ruta_pdf | None)
+    """
+    informe = analizar_y_generar_informe(
+        texto_fuente,
+        varios_anexos=varios_anexos,
+        force_multi=force_multi,
+    )
+    pdf_path = generar_pdf_informe(informe, out_path=ruta_pdf) if export_pdf else None
+    return informe, pdf_path
