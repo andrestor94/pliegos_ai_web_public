@@ -12,6 +12,7 @@ import json
 import importlib  # ⭐ nuevo (utils dinámico para KB)
 from math import ceil
 from typing import List, Optional, Dict, Set
+from contextlib import contextmanager  # ⭐ nuevo (para kb_session)
 
 from fastapi import (
     FastAPI,
@@ -132,6 +133,42 @@ from database import (
 # ORM (audit_logs)
 from db_orm import inicializar_bd_orm, SessionLocal, AuditLog
 
+# ---------- ⭐ KB ORM bootstrap (usa el mismo engine de SessionLocal) ----------
+def _kb_init_orm():
+    """
+    Garantiza que las tablas de la KB existan si está el módulo models.py
+    con declarativos (KBSource/KBFile/KBChunk/KBPriority).
+    No detiene la app si no existe.
+    """
+    try:
+        import models as KBM  # debe exponer Base + clases KB*
+        # obtener engine desde una sesión viva
+        with SessionLocal() as s:
+            engine = s.get_bind()
+        if engine is not None and hasattr(KBM, "Base"):
+            KBM.Base.metadata.create_all(bind=engine)
+            print("✅ KB: tablas verificadas/creadas")
+    except Exception as e:
+        # si no está models.py o falla algo, no frenamos la app
+        print("⚠️ KB init omitido:", repr(e))
+
+@contextmanager
+def kb_session():
+    """
+    Context manager simple para sesiones SQLAlchemy compartidas con la KB.
+    """
+    db = None
+    try:
+        db = SessionLocal()
+        yield db
+        db.commit()
+    except Exception:
+        if db:
+            db.rollback()
+        raise
+    finally:
+        if db:
+            db.close()
 
 # ================== TZ & helpers ==================
 TZ_AR = ZoneInfo("America/Argentina/Buenos_Aires")
@@ -277,6 +314,8 @@ inicializar_bd()
 ensure_chat_tables()
 # Inicializa ORM (audit_logs)
 inicializar_bd_orm()
+# 🔵 Inicializa (si existe) el esquema de la KB en el mismo engine
+_kb_init_orm()
 
 
 # ---------- Bootstrap de admin si DB está vacía ----------
@@ -1285,11 +1324,13 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             continue
         _validate_ext(a.filename)
 
+    # 1) Analizar anexos (sin bloquear el loop)
     try:
         resumen = await run_in_threadpool(analizar_anexos, archivos)
     except Exception as e:
         return JSONResponse({"error": f"Fallo en el análisis: {e}"}, status_code=500)
 
+    # 2) Generar PDF
     try:
         timestamp = now_stamp_ar()
         nombre_archivo_pdf = f"resumen_{timestamp}.pdf"
@@ -1297,6 +1338,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     except Exception as e:
         return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
 
+    # 3) Guardar en historial
     analisis_id = uuid.uuid4().hex
     try:
         historial_id = iniciar_analisis_historial(
@@ -1314,6 +1356,56 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             pass
         historial_id = None
 
+    # 4) ⭐ (Opcional) KB: guardar copias originales e intentar ingesta si hay helpers disponibles
+    saved_paths: List[str] = []
+    try:
+        # Guardar originales en storage/kb/<usuario>/<timestamp>/
+        if os.getenv("KB_SAVE_ORIGINALS", "1") == "1":
+            user_dir = os.path.join(KB_STORAGE_DIR, _email_safe(usuario), timestamp)
+            os.makedirs(user_dir, exist_ok=True)
+            for i, a in enumerate(archivos, start=1):
+                if not a or not a.filename:
+                    continue
+                base = _safe_basename(a.filename)
+                ext = os.path.splitext(a.filename)[1].lower()
+                dst = os.path.join(user_dir, f"{i:02d}_{base}{ext}")
+                try:
+                    # reset por si el extractor consumió el stream
+                    await a.seek(0)
+                    await _save_upload_stream(a, dst)
+                    saved_paths.append(dst)
+                except Exception as e:
+                    print("⚠️ No se pudo guardar original KB:", a.filename, repr(e))
+
+        # Intentar ingesta silenciosa si existen funciones en utils.*
+        if saved_paths and _kb_enabled():
+            fns = _kb_funcs()
+            src_name = f"default:{_email_safe(usuario)}"
+            try:
+                with kb_session() as db:
+                    # create_or_get_source puede diferir por proyecto → lo hacemos tolerante
+                    try:
+                        source_ref = fns["create_or_get_source"](db, src_name)
+                    except TypeError:
+                        try:
+                            source_ref = fns["create_or_get_source"](db, src_name, {"owner": usuario})
+                        except Exception:
+                            source_ref = src_name  # fallback: pasar nombre
+                    for p in saved_paths:
+                        try:
+                            # firma flexible: (db, source, path, meta) o (db, source, path)
+                            try:
+                                fns["ingest_file"](db, source_ref, p, {"uploaded_by": usuario, "timestamp": timestamp})
+                            except TypeError:
+                                fns["ingest_file"](db, source_ref, p)
+                        except Exception as ie:
+                            print("⚠️ Ingest fallida para", p, repr(ie))
+            except Exception as e:
+                print("⚠️ KB ingest omitida:", repr(e))
+    except Exception as e:
+        print("⚠️ KB save/ingest error:", repr(e))
+
+    # 5) Registrar rating pendiente
     try:
         _pr_add(usuario, historial_id, timestamp, nombre_archivo_pdf)
     except Exception as e:
@@ -1330,6 +1422,36 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
 # main.py — PARTE 3 / 6
 # (historial, usuario/avatares, diagnóstico)
 # =========================
+
+# ⭐ Fallback para kb_session (usado en PARTE 2 durante la ingesta KB)
+from contextlib import contextmanager
+
+@contextmanager
+def kb_session():
+    """
+    Usa utils.kb_session() si existe; si no, entrega un contexto nulo.
+    Así evitamos fallos si aún no implementaste la sesión de KB.
+    """
+    ks = getattr(U, "kb_session", None)
+    if callable(ks):
+        try:
+            # Caso 1: utils.kb_session devuelve un context manager
+            with ks() as db:
+                yield db
+                return
+        except TypeError:
+            # Caso 2: devuelve una conexión/objeto directamente
+            try:
+                db = ks()
+                yield db
+                return
+            except Exception:
+                pass
+        except Exception:
+            pass
+    # Fallback nulo
+    yield None
+
 
 # ================== Historial ==================
 @app.get("/historial")
@@ -2123,7 +2245,7 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
     email = payload.email.lower()
     # Bloquea sólo si EXISTE y está ACTIVO. Si existe inactivo, se permitirá re-crear (restaurar).
     row = obtener_usuario_por_email(email)  # (id, nombre, email, password, rol, activo)
-    if row and bool(row[5]):  # activo = 1
+    if row && bool(row[5]):  # activo = 1
         return JSONResponse({"error": "El email ya existe"}, status_code=409)
 
     try:
@@ -2326,7 +2448,7 @@ async def legacy_admin_reset_session(request: Request):
     except Exception as e:
         print("❌ legacy_admin_reset_session:", repr(e))
         return JSONResponse({"error": "No se pudo reiniciar la sesión"}, status_code=500)
-	# =========================
+# =========================
 # main.py — PARTE 6 / 6
 # (Calendario, Notificaciones, Presencia/Online, Auditoría de actividad + CSV, diag rutas)
 # =========================
@@ -2842,6 +2964,155 @@ async def auditoria_actividad_csv(
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
+# =========================
+# KB — UI mínima + APIs
+# =========================
+
+# Vista HTML (solo admins)
+@app.get("/kb", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+async def kb_view(request: Request):
+    return templates.TemplateResponse(
+        "kb.html",
+        {
+            "request": request,
+            "kb_enabled": _kb_enabled(),
+            "allowed_ext": sorted([e.lstrip(".").lower() for e in KB_ALLOWED_EXT]),
+        },
+    )
+
+
+# ---- APIs simples ----
+
+@app.get("/api/kb/sources", dependencies=[Depends(require_admin)])
+async def kb_sources():
+    """
+    Lista fuentes/rubros disponibles. Si utils.kb_list_sources existe, la usa.
+    Caso contrario, escanea carpetas en storage/kb.
+    """
+    f = _kb_funcs()
+    items = []
+    if callable(f["list_sources"]):
+        try:
+            items = f["list_sources"]() or []
+        except Exception as e:
+            print("kb_list_sources error:", repr(e))
+
+    if not items:
+        base = KB_STORAGE_DIR
+        try:
+            sources = []
+            for name in sorted(os.listdir(base)):
+                p = os.path.join(base, name)
+                if os.path.isdir(p):
+                    sources.append({"name": name, "slug": name, "path": p})
+            items = sources
+        except Exception as e:
+            print("kb fs scan error:", repr(e))
+            items = []
+
+    return {"items": items}
+
+
+@app.post("/api/kb/source", dependencies=[Depends(require_admin)])
+async def kb_source_create(name: str = Form(...)):
+    """
+    Crea (o garantiza) la carpeta para un rubro/fuente de KB y llama a utils.kb_create_or_get_source si existe.
+    """
+    f = _kb_funcs()
+    name = (name or "").strip()
+    if not name:
+        return JSONResponse({"error": "Nombre requerido"}, status_code=400)
+    slug = _kb_slugify(name)
+
+    dst_dir = os.path.join(KB_STORAGE_DIR, slug)
+    os.makedirs(dst_dir, exist_ok=True)
+
+    if callable(f["create_or_get_source"]):
+        try:
+            f["create_or_get_source"](name=name, slug=slug)
+        except Exception as e:
+            print("kb_create_or_get_source error:", repr(e))
+
+    return {"ok": True, "slug": slug}
+
+
+@app.post("/api/kb/upload", dependencies=[Depends(require_admin)])
+async def kb_upload(
+    source: str = Form(...),
+    files: List[UploadFile] = File(...),
+):
+    """
+    Sube 1..N archivos a una fuente/rubro de la KB y, si está disponible, invoca utils.kb_ingest_file.
+    """
+    slug = _kb_slugify(source or "")
+    if not slug:
+        return JSONResponse({"error": "Falta 'source' (rubro)"}, status_code=400)
+    if not files:
+        return JSONResponse({"error": "Subí al menos un archivo"}, status_code=400)
+
+    dst_dir = os.path.join(KB_STORAGE_DIR, slug)
+    os.makedirs(dst_dir, exist_ok=True)
+
+    saved = []
+    funcs = _kb_funcs()
+    for fup in files:
+        if not fup or not fup.filename:
+            continue
+        orig = fup.filename
+        ext = os.path.splitext(orig)[1].lower()
+        if ext not in KB_ALLOWED_EXT:
+            return JSONResponse({"error": f"Extensión no permitida: {ext}"}, status_code=400)
+
+        safe = _safe_basename(orig) + ext
+        path = os.path.join(dst_dir, safe)
+        written = await _save_upload_stream(fup, path)
+        saved.append({"file": safe, "bytes": written})
+
+        if callable(funcs["ingest_file"]):
+            try:
+                # Llamada síncrona en threadpool para no bloquear
+                await run_in_threadpool(funcs["ingest_file"], source=slug, filepath=path, original_name=orig)
+            except Exception as e:
+                print("kb_ingest_file error:", repr(e))
+
+    return {"ok": True, "saved": saved, "source": slug}
+
+
+@app.get("/api/kb/priorities", dependencies=[Depends(require_admin)])
+async def kb_priorities():
+    """
+    Lista de prioridades (si utils.kb_list_priorities existe).
+    """
+    f = _kb_funcs()
+    if callable(f["list_priorities"]):
+        try:
+            return {"items": f["list_priorities"]() or []}
+        except Exception as e:
+            print("kb_list_priorities error:", repr(e))
+            return {"items": []}
+    return {"items": []}
+
+
+class KBPriorityIn(BaseModel):
+    term: str
+    weight: int = 1
+    source: Optional[str] = None  # opcional
+
+
+@app.post("/api/kb/priorities", dependencies=[Depends(require_admin)])
+async def kb_priorities_upsert(payload: KBPriorityIn):
+    """
+    Upsert de prioridad/ponderación de término (si utils.kb_upsert_priority existe).
+    """
+    f = _kb_funcs()
+    if not callable(f["upsert_priority"]):
+        return JSONResponse({"error": "Función no disponible en utils"}, status_code=501)
+
+    try:
+        f["upsert_priority"](term=payload.term, weight=int(payload.weight), source=payload.source)
+        return {"ok": True}
+    except Exception as e:
+        return JSONResponse({"error": f"No se pudo guardar: {e}"}, status_code=500)
 
 # (Opcional) diagnóstico de rutas
 @app.get("/__diag/routes")

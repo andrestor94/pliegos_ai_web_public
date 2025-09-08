@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>KB • Admin</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    .card { border-radius: 14px; }
+    .muted { color:#6b7280 }
+    .badge-soft { background:#eef2ff; color:#3730a3; }
+    #srcList .active { background:#e5f3ff; }
+    .small-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  </style>
+</head>
+<body class="bg-light">
+<div class="container py-4">
+
+  <div class="d-flex align-items-center mb-3">
+    <h1 class="h4 mb-0">Base de Conocimiento (KB)</h1>
+    <span class="ms-3 badge badge-soft">
+      Ext permitidas: {{ ", ".join(allowed_ext) }}
+    </span>
+    {% if not kb_enabled %}
+      <span class="ms-2 text-warning small">⚠️ utils.kb_* no disponible: sólo almacenamiento de archivos.</span>
+    {% endif %}
+    <div class="ms-auto">
+      <a class="btn btn-sm btn-outline-secondary" href="/">Volver</a>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <!-- Fuente / Rubro -->
+    <div class="col-12 col-lg-4">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h6">Fuentes / Rubros</h2>
+          <form id="formSource" class="row g-2 mb-3" onsubmit="return false">
+            <div class="col-12">
+              <input id="sourceName" class="form-control" placeholder="Ej: pliegos-obras, compras, marco-legal"/>
+            </div>
+            <div class="col-12 d-grid">
+              <button id="btnCreateSource" class="btn btn-primary">Crear/usar fuente</button>
+            </div>
+          </form>
+          <div class="small muted mb-2">Seleccioná una fuente para subir archivos.</div>
+          <ul id="srcList" class="list-group small"></ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Subida -->
+    <div class="col-12 col-lg-8">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h6">Subir archivos a la KB</h2>
+          <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-5">
+              <label class="form-label small">Fuente seleccionada</label>
+              <input id="currentSource" class="form-control" placeholder="(ninguna)" readonly>
+            </div>
+            <div class="col-12 col-md-7">
+              <label class="form-label small">Archivos</label>
+              <input id="files" type="file" class="form-control" multiple>
+              <div class="form-text">Podés seleccionar varios. Ext: {{ ", ".join(allowed_ext) }}</div>
+            </div>
+          </div>
+          <div class="mt-3 d-flex gap-2">
+            <button id="btnUpload" class="btn btn-success" disabled>Subir</button>
+            <div id="uploadHint" class="small muted"></div>
+          </div>
+
+          <hr class="my-4">
+
+          <h2 class="h6">Prioridades (opcional)</h2>
+          <div class="row g-2">
+            <div class="col-12 col-md-5">
+              <input id="prioTerm" class="form-control" placeholder="Término/patrón (ej: 'obra pública')">
+            </div>
+            <div class="col-6 col-md-3">
+              <input id="prioWeight" type="number" value="1" min="0" class="form-control" placeholder="Peso">
+            </div>
+            <div class="col-6 col-md-4">
+              <input id="prioSource" class="form-control" placeholder="Fuente (opcional)">
+            </div>
+            <div class="col-12">
+              <button id="btnPrio" class="btn btn-outline-primary btn-sm">Guardar prioridad</button>
+            </div>
+          </div>
+
+          <div class="mt-3">
+            <button id="btnLoadPrios" class="btn btn-link btn-sm">Ver prioridades</button>
+            <div id="prioList" class="small-mono mt-2"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const srcList = document.getElementById('srcList');
+const currentSource = document.getElementById('currentSource');
+const filesInput = document.getElementById('files');
+const btnUpload = document.getElementById('btnUpload');
+const uploadHint = document.getElementById('uploadHint');
+
+async function loadSources() {
+  srcList.innerHTML = '<li class="list-group-item">Cargando…</li>';
+  try {
+    const r = await fetch('/api/kb/sources');
+    const j = await r.json();
+    const items = j.items || [];
+    if (!items.length) {
+      srcList.innerHTML = '<li class="list-group-item text-muted">No hay fuentes todavía</li>';
+      return;
+    }
+    srcList.innerHTML = '';
+    for (const s of items) {
+      const li = document.createElement('li');
+      li.className = 'list-group-item d-flex justify-content-between align-items-center';
+      li.innerHTML = `<span>${s.name || s.slug}</span>
+                      <button class="btn btn-sm btn-outline-primary">Usar</button>`;
+      li.querySelector('button').onclick = () => selectSource(s.slug || s.name);
+      srcList.appendChild(li);
+    }
+  } catch (e) {
+    srcList.innerHTML = '<li class="list-group-item text-danger">Error al cargar</li>';
+  }
+}
+
+function selectSource(slug) {
+  currentSource.value = slug;
+  btnUpload.disabled = false;
+  [...srcList.children].forEach(li => li.classList.remove('active'));
+  const match = [...srcList.children].find(li => (li.innerText || '').trim().startsWith(slug));
+  if (match) match.classList.add('active');
+}
+
+document.getElementById('btnCreateSource').onclick = async () => {
+  const name = (document.getElementById('sourceName').value || '').trim();
+  if (!name) return alert('Escribe un nombre');
+  const fd = new FormData();
+  fd.append('name', name);
+  const r = await fetch('/api/kb/source', { method: 'POST', body: fd });
+  const j = await r.json();
+  if (!r.ok) return alert(j.error || 'No se pudo crear');
+  selectSource(j.slug);
+  document.getElementById('sourceName').value = '';
+  loadSources();
+};
+
+btnUpload.onclick = async () => {
+  const src = (currentSource.value || '').trim();
+  if (!src) return alert('Seleccioná una fuente');
+  if (!filesInput.files.length) return alert('Elegí archivos');
+
+  const fd = new FormData();
+  fd.append('source', src);
+  for (const f of filesInput.files) fd.append('files', f);
+
+  btnUpload.disabled = true;
+  uploadHint.textContent = 'Subiendo...';
+  try {
+    const r = await fetch('/api/kb/upload', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Error en la subida');
+    uploadHint.textContent = `OK: ${j.saved?.length || 0} archivo(s).`;
+    filesInput.value = '';
+  } catch (e) {
+    uploadHint.textContent = 'Error: ' + (e.message || e);
+  } finally {
+    btnUpload.disabled = false;
+  }
+};
+
+document.getElementById('btnPrio').onclick = async () => {
+  const term = (document.getElementById('prioTerm').value || '').trim();
+  const weight = parseInt(document.getElementById('prioWeight').value || '1', 10);
+  const src = (document.getElementById('prioSource').value || '').trim() || null;
+  if (!term) return alert('Escribe un término');
+
+  const r = await fetch('/api/kb/priorities', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ term, weight, source: src })
+  });
+  const j = await r.json();
+  if (!r.ok) return alert(j.error || 'No se pudo guardar');
+  alert('Guardado');
+};
+
+document.getElementById('btnLoadPrios').onclick = async () => {
+  const box = document.getElementById('prioList');
+  box.textContent = 'Cargando…';
+  const r = await fetch('/api/kb/priorities');
+  const j = await r.json();
+  const items = j.items || [];
+  if (!items.length) {
+    box.textContent = '(sin prioridades registradas)';
+    return;
+  }
+  box.textContent = JSON.stringify(items, null, 2);
+};
+
+loadSources();
+</script>
+</body>
+</html>
