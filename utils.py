@@ -39,7 +39,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import HexColor
-from zoneinfo import ZoneInfo  # fallback local AR
+from zoneinfo import ZoneInfo
 
 # ========================= Carga de .env =========================
 load_dotenv()
@@ -48,23 +48,18 @@ load_dotenv()
 OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "90"))
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
 
+# ========================= Embeddings model ======================
+EMBEDDINGS_MODEL = os.getenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-large").strip() or "text-embedding-3-large"
+
 # ========================= Base de Conocimiento (KB) =========================
-# Evitamos importar modelos al cargar el módulo para no registrar tablas dos veces.
-# Usamos lazy-import dentro de cada función.
+# Lazy-import de modelos para evitar registrar tablas dos veces en SQLAlchemy.
 def _kb_models():
-    """
-    Devuelve (KBSource, KBFile, KBChunk, KBPriority) intentando primero import absoluto
-    y si falla, import relativo (para entornos donde utils.py viva dentro de un paquete).
-    """
     try:
         from models import KBSource as _KBSource, KBFile as _KBFile, KBChunk as _KBChunk, KBPriority as _KBPriority
     except Exception:
-        # fallback a import relativo si estás en paquete
+        # fallback si se ejecuta como paquete
         from .models import KBSource as _KBSource, KBFile as _KBFile, KBChunk as _KBChunk, KBPriority as _KBPriority  # type: ignore
     return _KBSource, _KBFile, _KBChunk, _KBPriority
-
-# Modelo de embeddings configurable
-EMBEDDINGS_MODEL = os.getenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-large").strip() or "text-embedding-3-large"
 
 
 def _kb_clean_text(s: str) -> str:
@@ -158,7 +153,7 @@ def kb_ingest_file(
     db, source, local_path: str, *, rubric: str, tags: Optional[List[str]] = None,
     _client: Optional[OpenAI] = None, chunk_chars: int = 1500, overlap: int = 200,
 ) -> int:
-    _, KBFile, KBChunk, _ = _kb_models()
+    KBSource, KBFile, KBChunk, _ = _kb_models()
     if not os.path.isfile(local_path):
         raise FileNotFoundError(f"No existe el archivo: {local_path}")
     os.makedirs(source.storage_path or ".", exist_ok=True)
@@ -257,23 +252,23 @@ def prompt_andres(varios_anexos: bool) -> str:
     )
 
 # ========================= Modelos / Heurísticas =========================
-MODEL_ANALISIS  = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-4o-mini")
-VISION_MODEL    = os.getenv("OPENAI_MODEL_VISION", "gpt-4o-mini")
-MODEL_NOTAS     = os.getenv("OPENAI_MODEL_NOTAS", MODEL_ANALISIS)
-MODEL_SINTESIS  = os.getenv("OPENAI_MODEL_SINTESIS", MODEL_ANALISIS)
+MODEL_ANALISIS   = os.getenv("OPENAI_MODEL_ANALISIS", "gpt-4o-mini")
+VISION_MODEL     = os.getenv("OPENAI_MODEL_VISION", "gpt-4o-mini")
+MODEL_NOTAS      = os.getenv("OPENAI_MODEL_NOTAS", MODEL_ANALISIS)
+MODEL_SINTESIS   = os.getenv("OPENAI_MODEL_SINTESIS", MODEL_ANALISIS)
 FAST_FORCE_MODEL = os.getenv("FAST_FORCE_MODEL", "").strip()  # opcional para fast
 FALLBACK_MODEL_DEFAULT = os.getenv("OPENAI_MODEL_FALLBACK", "gpt-4o-mini")
 
-MAX_SINGLE_PASS_CHARS = int(os.getenv("MAX_SINGLE_PASS_CHARS", "120000"))
+MAX_SINGLE_PASS_CHARS       = int(os.getenv("MAX_SINGLE_PASS_CHARS", "120000"))
 MAX_SINGLE_PASS_CHARS_MULTI = int(os.getenv("MAX_SINGLE_PASS_CHARS_MULTI", str(MAX_SINGLE_PASS_CHARS)))
 
 CHUNK_SIZE_BASE = int(os.getenv("CHUNK_SIZE", "24000"))
-TARGET_PARTS = int(os.getenv("TARGET_PARTS", "2"))
+TARGET_PARTS    = int(os.getenv("TARGET_PARTS", "2"))
 
 # Tope "blando" de tokens de salida (el wrapper puede reducir dinámicamente)
 MAX_COMPLETION_TOKENS_SALIDA = int(os.getenv("MAX_COMPLETION_TOKENS_SALIDA", "3500"))
-TEMPERATURE_ANALISIS = os.getenv("TEMPERATURE_ANALISIS", "").strip()
-ANALISIS_MODO = os.getenv("ANALISIS_MODO", "").lower().strip()  # "fast" opcional
+TEMPERATURE_ANALISIS         = os.getenv("TEMPERATURE_ANALISIS", "").strip()
+ANALISIS_MODO                = os.getenv("ANALISIS_MODO", "").lower().strip()  # "fast" opcional
 
 # Granularidad / anti-copia ligera
 RENGLON_DESC_MAX_WORDS = int(os.getenv("RENGLON_DESC_MAX_WORDS", "24"))
@@ -281,37 +276,37 @@ ART_SNIPPET_MAX_WORDS  = int(os.getenv("ART_SNIPPET_MAX_WORDS", "18"))
 
 # Concurrencia
 ANALISIS_CONCURRENCY = int(os.getenv("ANALISIS_CONCURRENCY", "3"))
-NOTAS_MAX_TOKENS = int(os.getenv("NOTAS_MAX_TOKENS", "1400"))
+NOTAS_MAX_TOKENS     = int(os.getenv("NOTAS_MAX_TOKENS", "1400"))
 
 # OCR
-VISION_MAX_PAGES = int(os.getenv("VISION_MAX_PAGES", "8"))
-VISION_DPI = int(os.getenv("VISION_DPI", "150"))
-OCR_TEXT_MIN_CHARS = int(os.getenv("OCR_TEXT_MIN_CHARS", "120"))
-OCR_CONCURRENCY = int(os.getenv("OCR_CONCURRENCY", "4"))
+VISION_MAX_PAGES     = int(os.getenv("VISION_MAX_PAGES", "8"))
+VISION_DPI           = int(os.getenv("VISION_DPI", "150"))
+OCR_TEXT_MIN_CHARS   = int(os.getenv("OCR_TEXT_MIN_CHARS", "120"))
+OCR_CONCURRENCY      = int(os.getenv("OCR_CONCURRENCY", "4"))
 
 # Control de paginado en texto nativo
 PAGINAR_TEXTO_NATIVO = int(os.getenv("PAGINAR_TEXTO_NATIVO", "1"))
 
 # Calidad/recall
 MULTI_FORCE_TWO_STAGE_MIN_CHARS = int(os.getenv("MULTI_FORCE_TWO_STAGE_MIN_CHARS", "45000"))
-ENABLE_REGEX_HINTS = int(os.getenv("ENABLE_REGEX_HINTS", "1"))
-HINTS_MAX_CHARS = int(os.getenv("HINTS_MAX_CHARS", "12000"))
-HINTS_PER_FIELD = int(os.getenv("HINTS_PER_FIELD", "8"))
-ENABLE_SECOND_PASS_COMPLETION = int(os.getenv("ENABLE_SECOND_PASS_COMPLETION", "1"))
+ENABLE_REGEX_HINTS              = int(os.getenv("ENABLE_REGEX_HINTS", "1"))
+HINTS_MAX_CHARS                 = int(os.getenv("HINTS_MAX_CHARS", "12000"))
+HINTS_PER_FIELD                 = int(os.getenv("HINTS_PER_FIELD", "8"))
+ENABLE_SECOND_PASS_COMPLETION   = int(os.getenv("ENABLE_SECOND_PASS_COMPLETION", "1"))
 
 # Ampliaciones automáticas
-EXPAND_SECTIONS_213_216 = int(os.getenv("EXPAND_SECTIONS_213_216", "0"))
-MAX_RENGLONES_OUT       = int(os.getenv("MAX_RENGLONES_OUT", "12"))
-MAX_ARTICULOS_OUT       = int(os.getenv("MAX_ARTICULOS_OUT", "12"))
-FORCE_DETERMINISTIC_213_216 = int(os.getenv("FORCE_DETERMINISTIC_213_216", "0"))
+EXPAND_SECTIONS_213_216        = int(os.getenv("EXPAND_SECTIONS_213_216", "0"))
+MAX_RENGLONES_OUT              = int(os.getenv("MAX_RENGLONES_OUT", "12"))
+MAX_ARTICULOS_OUT              = int(os.getenv("MAX_ARTICULOS_OUT", "12"))
+FORCE_DETERMINISTIC_213_216    = int(os.getenv("FORCE_DETERMINISTIC_213_216", "0"))
 
 # ====== Gobernanza de longitud / orden de salida ======
-STRICT_OUT = int(os.getenv("STRICT_OUT", "1"))  # 1 = aplicar recortes y orden forzado
-MAX_TOTAL_CHARS_OUT = int(os.getenv("MAX_TOTAL_CHARS_OUT", "16000"))
-MAX_LINES_PER_SECTION = int(os.getenv("MAX_LINES_PER_SECTION", "20"))
-MAX_WORDS_PER_BULLET = int(os.getenv("MAX_WORDS_PER_BULLET", "35"))
-SECTION_CHAR_LIMIT = int(os.getenv("SECTION_CHAR_LIMIT", "2200"))
-MAX_WORDS_TOTAL_GUIDE = int(os.getenv("MAX_WORDS_TOTAL_GUIDE", "1200"))  # guía para el prompt
+STRICT_OUT             = int(os.getenv("STRICT_OUT", "1"))  # 1 = aplicar recortes y orden forzado
+MAX_TOTAL_CHARS_OUT    = int(os.getenv("MAX_TOTAL_CHARS_OUT", "16000"))
+MAX_LINES_PER_SECTION  = int(os.getenv("MAX_LINES_PER_SECTION", "20"))
+MAX_WORDS_PER_BULLET   = int(os.getenv("MAX_WORDS_PER_BULLET", "35"))
+SECTION_CHAR_LIMIT     = int(os.getenv("SECTION_CHAR_LIMIT", "2200"))
+MAX_WORDS_TOTAL_GUIDE  = int(os.getenv("MAX_WORDS_TOTAL_GUIDE", "1200"))  # guía para el prompt
 
 # ========================= Timers PERF =========================
 def _t() -> float:
@@ -358,6 +353,7 @@ def _chat_create_safe(**kw):
             last_err = e
             continue
 
+    # último intento sin temperature
     payload = dict(intents[0])
     payload.pop("temperature", None)
     return client.chat.completions.create(**payload)
@@ -495,13 +491,13 @@ def extraer_texto_de_pdf(file) -> str:
             out = raw.decode("utf-8", errors="ignore")
             _log_tiempo("extraccion_pdf_decode", t0)
             return out
-    except Exception:
-        _log_tiempo("extraccion_pdf_error", t0)
-        return ""
+        except Exception:
+            _log_tiempo("extraccion_pdf_error", t0)
+            return ""
 
 def extraer_texto_de_docx(file) -> str:
     t0 = _t()
-    raw = _leer_todo(file)  # usar _leer_todo
+    raw = _leer_todo(file)
     if not raw:
         _log_tiempo("extraccion_docx_sin_bytes", t0)
         return ""
@@ -635,7 +631,7 @@ def _particionar(texto: str, max_chars: int) -> List[str]:
     return [texto[i:i + max_chars] for i in range(0, len(texto or ""), max_chars)]
 
 # Índices y utilidades para páginas y anexos
-_ANEXO_RE = re.compile(r"(?im)^===\s*ANEXO\s+(\d+)")
+_ANEXO_RE   = re.compile(r"(?im)^===\s*ANEXO\s+(\d+)")
 _PAG_TAG_RE = re.compile(r"\[PÁGINA\s+(\d+)\]")
 
 def _contar_anexos(s: str) -> int:
@@ -667,7 +663,7 @@ def _anexo_en_pos(indices: List[Tuple[int, int]], pos: int) -> Optional[int]:
 # -*- coding: utf-8 -*-
 # utils.py — Parte 3/4 (Normalización + Hints + Secciones)
 
-# --- Parche de alias por typo histórico ---
+# --- Parche de alias por compatibilidad (si alguna parte usó __leer_todo) ---
 try:
     __leer_todo  # type: ignore
 except NameError:
@@ -1080,7 +1076,192 @@ def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexo
         out = _replace_section(out, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla", alt213)
         out = _replace_section(out, r"(?im)^\s*2\.13\s+Planilla", sec213)
 
-    sec216 = _build_section_216(texto_fuente o
+    sec216 = _build_section_216(texto_fuente or "", varios_anexos)
+    if sec216:
+        out = _replace_section(out, r"(?im)^\s*2\.16\s+Cat[aá]logo\s+de\s+art", sec216)
+        # remueve posibles encabezados redundantes generados por el modelo
+        out = re.sub(r"(?im)^\s*(ANEXO|Anexo)\s*[-–—]?\s*Cat[aá]logo\s+de\s+art[^\n]*\n?", "", out)
+
+    out = re.sub(r"(?im)^\s*informe\s+original\s*$", "", out)
+    return out
+
+# === Post-procesos de Ficha y secciones ===
+def _reparar_ficha(informe: str, texto_fuente: str) -> str:
+    try:
+        total_renglones = len(_extraer_renglones_y_especificaciones(texto_fuente or ""))
+    except Exception:
+        total_renglones = 0
+
+    if total_renglones:
+        informe = re.sub(
+            r"(?im)^(\s*•\s*(?:N[uú]mero\s+de\s+rengl[oó]n|Numero\s+de\s+renglon)\s*:\s*)[^\n]*$",
+            lambda m: f"{m.group(1)}Total de renglones: {total_renglones}; ver Sección 9 para el detalle completo",
+            informe or ""
+        )
+        informe = re.sub(
+            r"(?im)\bTotal de renglones:\s*N\b",
+            f"Total de renglones: {total_renglones}",
+            informe or ""
+        )
+
+    informe = re.sub(
+        r"(?im)^(\s*•\s*Monto:\s*)(?:\$+\s*\.{0,3}|[$…]+)\s*(\(.*?\))?\s*$",
+        lambda m: f"{m.group(1)}NO ESPECIFICADO{(' ' + m.group(2) if m.group(2) else '')}",
+        informe or ""
+    )
+    return (informe or "")
+
+def _normalizar_encabezados_salida(informe: str) -> str:
+    s = informe or ""
+    s = re.sub(
+        r"(?im)^\s*0\)\s*Ficha\s+estandarizada\s+del\s+procedimiento\s*\(campos\s+estandarizados\)\s*$",
+        "Ficha estandarizada del procedimiento (campos estandarizados)", s
+    )
+    s = re.sub(
+        r"(?im)^\s*0\)\s*Ficha\s+estandarizada\s+del\s+procedimiento\s*$",
+        "Ficha estandarizada del procedimiento", s
+    )
+    return s.strip()
+
+def _corregir_seccion_9_si_vacia(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
+    s = informe or ""
+    start, end = _find_section_bounds(s, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla")
+    needs_fix = False
+
+    if start == -1:
+        needs_fix = True
+    else:
+        bloque = s[start:end]
+        if (_count(r"(?im)\bRengl[oó]n\s+\d+", bloque) == 0) or \
+           (re.search(r"(?i)\bNO ESPECIFICADO\b", bloque) is not None) or \
+           (len(bloque.strip()) < 80):
+            needs_fix = True
+
+    if not needs_fix:
+        return s
+
+    sec213 = _build_section_213(texto_fuente or "", varios_anexos)
+    if not sec213:
+        return s
+
+    sec9 = sec213.replace("2.13 Planilla de cotización y renglones:", "9) Renglones y planilla de cotización:")
+    if start == -1:
+        return (s.rstrip() + "\n\n" + sec9.strip() + "\n")
+    else:
+        return _replace_section(s, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla", sec9)
+
+# ====== Política de salida (guía para el modelo + recorte determinístico) ======
+def _output_policy_block() -> str:
+    return (
+        "\n\n=== POLÍTICA DE LONGITUD Y ORDEN ===\n"
+        f"- El informe completo NO debe exceder ~{MAX_WORDS_TOTAL_GUIDE} palabras.\n"
+        f"- Cada sección 1–12 máximo {MAX_LINES_PER_SECTION} líneas; cada bullet/ítem máximo {MAX_WORDS_PER_BULLET} palabras.\n"
+        f"- Evitar repeticiones; un solo dato por línea con su cita.\n"
+        "- Prohibido agregar anexos, apéndices, “hallazgos” o texto fuera de la estructura pedida.\n"
+        "- Mantener exactamente el orden: Ficha, 1) … 12)."
+    )
+
+def _split_informe_por_secciones(s: str) -> List[Tuple[str, str]]:
+    """
+    Devuelve lista [(header, body)] incluyendo "Ficha..." como primera si existe.
+    """
+    s = s or ""
+    s = re.sub(r"\n{3,}", "\n\n", s)
+
+    blocks: List[Tuple[str, str]] = []
+    ficha_re = re.compile(r"(?im)^\s*Ficha\s+estandarizada\s+del\s+procedimiento.*$")
+    sec_re = re.compile(r"(?im)^\s*(\d{1,2})\)\s")
+
+    m_ficha = ficha_re.search(s)
+    starts: List[Tuple[int, str]] = []
+
+    if m_ficha:
+        starts.append((m_ficha.start(), m_ficha.group(0).strip()))
+
+    for m in sec_re.finditer(s):
+        line_start = s.rfind("\n", 0, m.start()) + 1
+        line_end = s.find("\n", m.start())
+        if line_end == -1:
+            line_end = len(s)
+        header_line = s[line_start:line_end].strip()
+        starts.append((line_start, header_line))
+
+    if not starts:
+        return [("INFORME", s.strip())]
+
+    starts.sort(key=lambda t: t[0])
+    starts.append((len(s), ""))  # centinela
+
+    for i in range(len(starts) - 1):
+        hpos, header = starts[i]
+        npos, _ = starts[i+1]
+        body = s[hpos: npos].split("\n", 1)
+        if len(body) == 1:
+            header_line, body_content = header, ""
+        else:
+            header_line, body_content = body[0].strip(), body[1].strip()
+        blocks.append((header_line, body_content))
+
+    return blocks
+
+def _recortar_por_politica(header: str, body: str) -> str:
+    """
+    Aplica recortes determinísticos a un bloque de sección (body), manteniendo el header.
+    """
+    if not STRICT_OUT:
+        return f"{header}\n{body}".strip()
+
+    body = re.sub(r"(?im)^===.*$", "", body)
+
+    lines = [ln for ln in (body or "").splitlines()]
+    recortadas: List[str] = []
+    max_lines = max(1, MAX_LINES_PER_SECTION)
+
+    for ln in lines:
+        ln_clean = ln.strip()
+        if not ln_clean:
+            recortadas.append("")
+            continue
+        ln_clean = _truncate_words(ln_clean, MAX_WORDS_PER_BULLET)
+        recortadas.append(ln_clean)
+        if len([x for x in recortadas if x.strip()]) >= max_lines:
+            break
+
+    body_recortado = "\n".join(recortadas).strip()
+
+    if len(body_recortado) > SECTION_CHAR_LIMIT:
+        body_recortado = body_recortado[:SECTION_CHAR_LIMIT].rsplit("\n", 1)[0].rstrip() + "\n..."
+
+    return f"{header}\n{body_recortado}".strip()
+
+def _enforce_output_policy(informe: str) -> str:
+    """
+    Aplica orden y recortes por sección; limita tamaño total.
+    """
+    s = informe or ""
+    blocks = _split_informe_por_secciones(s)
+
+    ficha = [b for b in blocks if re.match(r"(?im)^Ficha\s+estandarizada\s+del\s+procedimiento", b[0])]
+    otros = [b for b in blocks if not re.match(r"(?im)^Ficha\s+estandarizada\s+del\s+procedimiento", b[0])]
+
+    def _sec_num(h: str) -> int:
+        m = re.match(r"^\s*(\d{1,2})\)\s", h)
+        return int(m.group(1)) if m else 99
+
+    otros.sort(key=lambda b: _sec_num(b[0]))
+    ordered = ficha + otros
+
+    partes: List[str] = []
+    for (h, body) in ordered:
+        partes.append(_recortar_por_politica(h, body))
+
+    out = "\n\n".join([p for p in partes if p.strip()])
+
+    if len(out) > MAX_TOTAL_CHARS_OUT:
+        out = out[:MAX_TOTAL_CHARS_OUT].rsplit("\n", 1)[0].rstrip() + "\n..."
+
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    return out
 # -*- coding: utf-8 -*-
 # utils.py — Parte 4/4 (Pipeline de análisis + PDF + helpers finales)
 
@@ -1106,22 +1287,22 @@ def _craft_system_prompt(varios_anexos: bool, texto_hints: str = "") -> str:
     if sinos:
         bloques.append(sinos)
     bloques.append(_output_policy_block())
-    if texto_hints.strip():
+    if (texto_hints or "").strip():
         bloques.append("\n=== HINTS DETECTADOS (útiles para recall) ===\n" + texto_hints.strip())
     return "\n\n".join(b for b in bloques if b).strip()
 
 def _msg_single_block(varios_anexos: bool, texto_fuente: str, texto_hints: str = "", titulo: str = "") -> List[Dict[str, Any]]:
     sys = _craft_system_prompt(varios_anexos, texto_hints=texto_hints)
-    user_parts = []
+    user = []
     if titulo:
-        user_parts.append(f"TÍTULO/BLOQUE: {titulo}")
-    user_parts.append("CONTENIDO A ANALIZAR (texto literal paginado):")
-    user_parts.append(texto_fuente.strip())
-    content = "\n\n".join(user_parts)
+        user.append(f"TÍTULO/BLOQUE: {titulo}")
+    user.append("CONTENIDO A ANALIZAR (texto literal paginado):")
+    user.append((texto_fuente or "").strip())
+    content = "\n\n".join(user)
     return [{"role": "system", "content": sys}, {"role": "user", "content": content}]
 
 def _call_chat(messages: List[Dict[str, Any]], model: Optional[str] = None, max_tokens: Optional[int] = None) -> str:
-    payload = {
+    payload: Dict[str, Any] = {
         "model": model or _pick_model(final_pass=False),
         "messages": messages,
     }
@@ -1250,11 +1431,10 @@ def _wrap_lines(s: str, max_chars: int = 110) -> List[str]:
         if not w:
             out.append("")
             continue
-        parts = []
-        buf = []
+        parts: List[str] = []
+        buf: List[str] = []
         for tok in re.findall(r"\S+|\s+", w):
             if tok.isspace():
-                # si agregarlo supera el límite, cortamos línea
                 if sum(len(x) for x in buf) + len(tok) > max_chars:
                     parts.append("".join(buf).rstrip())
                     buf = []
@@ -1287,9 +1467,9 @@ def generar_pdf_informe(texto_markdown: str, out_path: Optional[str] = None) -> 
 
     if not out_path:
         try:
-            tz = ZoneInfo(os.getenv("LOCAL_TZ", "America/Argentina/Buenos_Aires"))
+            tz = ZoneInfo("America/Argentina/Buenos_Aires")
         except Exception:
-            tz = None
+            tz = None  # usa timezone local por defecto
         ts = datetime.now(tz=tz).strftime("%Y%m%d_%H%M%S")
         out_path = os.path.abspath(f"informe_{ts}.pdf")
 
