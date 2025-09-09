@@ -9,10 +9,10 @@ import uuid
 import asyncio
 import re
 import json
-import importlib  # ? nuevo (utils dinámico para KB)
+from importlib import import_module  # import robusto para utils/Kb
 from math import ceil
 from typing import List, Optional, Dict, Set
-from contextlib import contextmanager  # ? nuevo (para kb_session)
+from contextlib import contextmanager, nullcontext  # kb_session fallback
 
 from fastapi import (
     FastAPI,
@@ -45,22 +45,25 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from sqlalchemy import or_
 from pydantic import BaseModel, EmailStr
-from jinja2 import ChoiceLoader, FileSystemLoader  # ? nuevo
+from jinja2 import ChoiceLoader, FileSystemLoader  # loader sin cache
 
+# --- Import base de utils (las funciones “no KB”) ---
 from utils import (
     extraer_texto_de_pdf,
     analizar_con_openai,
     generar_pdf_con_plantilla,
     responder_chat_openai,
-    # analizar_anexos  # ?? lo reemplazamos con un fallback robusto más abajo
 )
-import utils as U  # ? nuevo: acceso dinámico a helpers KB si existen
+
+# Import del módulo utils para llamadas dinámicas (KB, extractores, etc.)
+import utils as U
 
 # ? Fallback robusto para evitar ImportError: utils.analizar_anexos
 try:
     from utils import analizar_anexos as _analizar_anexos  # type: ignore
 except Exception:
     _analizar_anexos = None
+
 
 def analizar_anexos(archivos: List[UploadFile]) -> str:
     """
@@ -76,7 +79,6 @@ def analizar_anexos(archivos: List[UploadFile]) -> str:
         if not a or not getattr(a, "filename", None):
             continue
         try:
-            # Usa el extractor universal de utils (maneja pdf/docx/imagen/etc.)
             t = U.extraer_texto_universal(a)
         except Exception as e:
             t = f"[ERROR leyendo {getattr(a, 'filename', '')}: {e}]"
@@ -93,6 +95,7 @@ def analizar_anexos(archivos: List[UploadFile]) -> str:
         return U.analizar_y_generar_informe(corpus, varios_anexos=varios)
     except Exception as e:
         return f"[Error de análisis] {e}"
+
 
 from database import (
     DB_PATH,
@@ -133,7 +136,8 @@ from database import (
 # ORM (audit_logs)
 from db_orm import inicializar_bd_orm, SessionLocal, AuditLog
 
-# ---------- ? KB ORM bootstrap (usa el mismo engine de SessionLocal) ----------
+
+# ---------- KB: init ORM si hay models.py ----------
 def _kb_init_orm():
     """
     Garantiza que las tablas de la KB existan si está el módulo models.py
@@ -147,28 +151,11 @@ def _kb_init_orm():
             engine = s.get_bind()
         if engine is not None and hasattr(KBM, "Base"):
             KBM.Base.metadata.create_all(bind=engine)
-            print("? KB: tablas verificadas/creadas")
+            print("✓ KB: tablas verificadas/creadas")
     except Exception as e:
         # si no está models.py o falla algo, no frenamos la app
-        print("?? KB init omitido:", repr(e))
+        print("· KB init omitido:", repr(e))
 
-@contextmanager
-def kb_session():
-    """
-    Context manager simple para sesiones SQLAlchemy compartidas con la KB.
-    """
-    db = None
-    try:
-        db = SessionLocal()
-        yield db
-        db.commit()
-    except Exception:
-        if db:
-            db.rollback()
-        raise
-    finally:
-        if db:
-            db.close()
 
 # ================== TZ & helpers ==================
 TZ_AR = ZoneInfo("America/Argentina/Buenos_Aires")
@@ -182,7 +169,6 @@ def now_stamp_ar() -> str:
     return datetime.now(TZ_AR).strftime("%Y%m%d%H%M%S")
 
 
-# --- reemplazar ---
 def iso_utc_to_ar_str(iso_utc: str, fmt: str = "%d/%m/%Y %H:%M") -> str:
     if not iso_utc:
         return ""
@@ -196,14 +182,13 @@ def iso_utc_to_ar_str(iso_utc: str, fmt: str = "%d/%m/%Y %H:%M") -> str:
             dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
         except Exception:
             return iso_utc
-    # ?? clave: si es naive, asumimos Buenos Aires (NO UTC)
+    # clave: si es naive, asumimos Buenos Aires (NO UTC)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=TZ_AR)  # y mostramos en AR
     return dt.astimezone(TZ_AR).strftime(fmt)
 
 
 # --- Normalizador robusto de datetimes a UTC aware (para comparaciones seguras) ---
-# --- reemplazar ---
 def _parse_dt_utc(value) -> Optional[datetime]:
     """
     Acepta datetime o str (con o sin 'Z') y devuelve datetime con tz UTC.
@@ -225,7 +210,7 @@ def _parse_dt_utc(value) -> Optional[datetime]:
                 return None
 
     if dt.tzinfo is None:
-        # ?? clave: naive ? asumimos AR local
+        # naive → asumimos AR local
         dt = dt.replace(tzinfo=TZ_AR)
     # devolvemos en UTC para comparaciones/orden
     return dt.astimezone(timezone.utc)
@@ -300,7 +285,7 @@ def ensure_chat_tables():
                 """
             )
     except Exception as e:
-        print("?? ensure_chat_tables() no pudo crear tablas:", repr(e))
+        print("· ensure_chat_tables() no pudo crear tablas:", repr(e))
     finally:
         try:
             conn.close()
@@ -314,7 +299,7 @@ inicializar_bd()
 ensure_chat_tables()
 # Inicializa ORM (audit_logs)
 inicializar_bd_orm()
-# ?? Inicializa (si existe) el esquema de la KB en el mismo engine
+# Inicializa (si existe) el esquema de la KB en el mismo engine
 _kb_init_orm()
 
 
@@ -351,9 +336,9 @@ def ensure_default_admin():
                 actor_user_id=None,
                 ip=None,
             )
-            print(f"? Admin inicial creado: {default_email}")
+            print(f"✓ Admin inicial creado: {default_email}")
     except Exception as e:
-        print("?? ensure_default_admin() error:", repr(e))
+        print("· ensure_default_admin() error:", repr(e))
 
 
 ensure_default_admin()
@@ -369,7 +354,7 @@ app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="gene
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["os"] = os
 
-# ? desactivar cache de Jinja y forzar FileSystemLoader (evita plantillas viejas en Render/CDN)
+# desactivar cache de Jinja y forzar FileSystemLoader (evita plantillas viejas en Render/CDN)
 try:
     templates.env.loader = ChoiceLoader([FileSystemLoader("templates")])
     templates.env.auto_reload = True
@@ -389,7 +374,7 @@ def ar_time(value: str) -> str:
 templates.env.filters["ar_time"] = ar_time
 
 
-# ? No-cache para HTML (evita que el browser/CDN te muestre UI vieja)
+# No-cache para HTML (evita que el browser/CDN te muestre UI vieja)
 @app.middleware("http")
 async def _no_cache_html(request, call_next):
     resp = await call_next(request)
@@ -554,12 +539,9 @@ CHAT_MAX_FILES = 10
 CHAT_MAX_TOTAL_MB = 50
 
 
-# ================== Adjuntos de incidencias (?? NUEVO) ==================
-# Definimos el directorio y límites de adjuntos de incidencias aquí (PARTE 1)
-# para que el endpoint /incidencias/crear no falle con NameError.
+# ================== Adjuntos de incidencias ==================
 INCID_ATTACH_DIR = os.path.join("static", "incid_adjuntos")
 os.makedirs(INCID_ATTACH_DIR, exist_ok=True)
-# Reusamos whitelist y seteamos límites específicos
 INCID_ALLOWED_EXT = CHAT_ALLOWED_EXT
 INCID_MAX_FILES = 10
 INCID_MAX_TOTAL_MB = 25
@@ -572,7 +554,7 @@ AVATAR_ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".webp"}
 AVATAR_MAX_MB = 2  # MB
 
 
-# ================== ? Knowledge Base (KB) bootstrap ==================
+# ================== Knowledge Base (KB) bootstrap ==================
 # Carpeta base para almacenar originales de la KB (ingesta por rubro)
 KB_STORAGE_DIR = os.path.join("storage", "kb")
 os.makedirs(KB_STORAGE_DIR, exist_ok=True)
@@ -580,24 +562,102 @@ os.makedirs(KB_STORAGE_DIR, exist_ok=True)
 # Extensiones permitidas para KB (reusa y amplía)
 KB_ALLOWED_EXT = set(CHAT_ALLOWED_EXT) | {".md", ".json", ".yaml", ".yml"}
 
+
 def _kb_slugify(name: str) -> str:
     s = (name or "").strip().lower()
     s = re.sub(r"[^a-z0-9._-]+", "-", s)
     return s.strip("-") or "rubro"
 
+
+def _import_utils_module():
+    """
+    Importa utils como *paquete* para que funcionen imports relativos internos
+    (evita 'attempted relative import with no known parent package').
+    Prueba varios nombres comunes de raíz.
+    """
+    candidates = ["utils", "app.utils", "backend.utils", "server.utils", "src.utils", "sa.utils"]
+    last_err = None
+    for name in candidates:
+        try:
+            return import_module(name)
+        except Exception as e:
+            last_err = e
+    # último intento: devolver el ya importado U (si existe) o propagar
+    try:
+        return U
+    except Exception:
+        print("· KB utils import error:", repr(last_err))
+        return None
+
+
 def _kb_funcs():
-    """Descubre funciones KB en utils.py sin romper si no están todavía."""
+    """Descubre funciones KB en utils.* sin romper si no están todavía."""
+    mod = _import_utils_module()
+    get = (lambda m, n: getattr(m, n, None)) if mod else (lambda *_: None)
     return {
-        "create_or_get_source": getattr(U, "kb_create_or_get_source", None),
-        "ingest_file": getattr(U, "kb_ingest_file", None),
-        "upsert_priority": getattr(U, "kb_upsert_priority", None),
-        "list_sources": getattr(U, "kb_list_sources", None),          # opcional
-        "list_priorities": getattr(U, "kb_list_priorities", None),    # opcional
+        "create_or_get_source": get(mod, "kb_create_or_get_source"),
+        "ingest_file": get(mod, "kb_ingest_file"),
+        "upsert_priority": get(mod, "kb_upsert_priority"),
+        "list_sources": get(mod, "kb_list_sources"),          # opcional
+        "list_priorities": get(mod, "kb_list_priorities"),    # opcional
+        "session": get(mod, "kb_session"),                    # si existe, la usamos abajo
     }
+
 
 def _kb_enabled() -> bool:
     f = _kb_funcs()
     return bool(f["create_or_get_source"] and f["ingest_file"])
+
+
+# ---- kb_session unificada y compatible ----
+@contextmanager
+def kb_session():
+    """
+    Usa utils.kb_session() si existe; si no, devuelve una sesión SQLAlchemy local;
+    y si tampoco, un contexto nulo.
+    """
+    f = _kb_funcs().get("session")
+    if callable(f):
+        # utils expone su propio context manager o fábrica
+        try:
+            with f() as db:
+                yield db
+                return
+        except TypeError:
+            try:
+                db = f()
+                # si no es context manager, intentamos usarlo tal cual
+                try:
+                    yield db
+                finally:
+                    # si tiene close(), lo llamamos
+                    try:
+                        db.close()
+                    except Exception:
+                        pass
+                return
+            except Exception:
+                pass
+
+    # fallback: usar nuestro SessionLocal (mismo engine que ORM)
+    try:
+        db = SessionLocal()
+        try:
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+        return
+    except Exception:
+        pass
+
+    # último recurso: contexto vacío (evita romper endpoints)
+    with nullcontext() as _:
+        yield None
+
 
 # ================== Helpers ==================
 def _actor_info(request: Request):
@@ -979,7 +1039,7 @@ async def cambiar_password_post(
     try:
         actualizar_password(email.lower(), nueva, actor_user_id=actor_user_id, ip=ip)
     except Exception as e:
-        print("? cambiar_password_post:", repr(e))
+        print("· cambiar_password_post:", repr(e))
         return templates.TemplateResponse(
             "cambiar_password.html",
             {"request": request, "error": "No se pudo actualizar la contraseña."},
@@ -1101,7 +1161,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
     if not historial_id:
         h = _buscar_historial_usuario(user, timestamp=payload.timestamp, nombre_pdf=payload.nombre_pdf)
         if h:
-            hid = h.get("historial_id") or h.get("id")  # ? fix: or (no bitwise)
+            hid = h.get("historial_id") or h.get("id")
             if isinstance(hid, int):
                 historial_id = hid
 
@@ -1114,7 +1174,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
-        print("? Error enviar_rating:", repr(e))
+        print("· Error enviar_rating:", repr(e))
         return JSONResponse({"error": "No se pudo registrar la valoración"}, status_code=500)
 
     try:
@@ -1149,7 +1209,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             resp.headers["X-Require-Rating"] = "1"
             return resp
     except Exception as e:
-        print("?? Warning al chequear pendiente:", repr(e))
+        print("· Warning al chequear pendiente:", repr(e))
 
     if not archivos:
         return JSONResponse({"error": "Subí al menos un archivo"}, status_code=400)
@@ -1184,14 +1244,14 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             resumen_texto=resumen,
         )
     except Exception as e:
-        print("? Error iniciar_analisis_historial:", repr(e))
+        print("· Error iniciar_analisis_historial:", repr(e))
         try:
             guardar_en_historial(timestamp, usuario, nombre_archivo_pdf, nombre_archivo_pdf, resumen)
         except Exception:
             pass
         historial_id = None
 
-    # 4) ? (Opcional) KB: guardar copias originales e intentar ingesta si hay helpers disponibles
+    # 4) KB: guardar originales e intentar ingesta si hay helpers disponibles
     saved_paths: List[str] = []
     try:
         # Guardar originales en storage/kb/<usuario>/<timestamp>/
@@ -1205,12 +1265,11 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
                 ext = os.path.splitext(a.filename)[1].lower()
                 dst = os.path.join(user_dir, f"{i:02d}_{base}{ext}")
                 try:
-                    # reset por si el extractor consumió el stream
                     await a.seek(0)
                     await _save_upload_stream(a, dst)
                     saved_paths.append(dst)
                 except Exception as e:
-                    print("?? No se pudo guardar original KB:", a.filename, repr(e))
+                    print("· No se pudo guardar original KB:", a.filename, repr(e))
 
         # Intentar ingesta silenciosa si existen funciones en utils.*
         if saved_paths and _kb_enabled():
@@ -1218,7 +1277,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             src_name = f"default:{_email_safe(usuario)}"
             try:
                 with kb_session() as db:
-                    # create_or_get_source puede diferir por proyecto → tolerante
+                    # create_or_get_source: tolerante a firmas
                     try:
                         source_ref = fns["create_or_get_source"](db, src_name)
                     except TypeError:
@@ -1226,25 +1285,25 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
                             source_ref = fns["create_or_get_source"](db, src_name, {"owner": usuario})
                         except Exception:
                             source_ref = src_name  # fallback: pasar nombre
+                    # Ingestar cada archivo con firmas flexibles
                     for p in saved_paths:
                         try:
-                            # firma flexible: (db, source, path, meta) o (db, source, path)
                             try:
                                 fns["ingest_file"](db, source_ref, p, {"uploaded_by": usuario, "timestamp": timestamp})
                             except TypeError:
                                 fns["ingest_file"](db, source_ref, p)
                         except Exception as ie:
-                            print("?? Ingest fallida para", p, repr(ie))
+                            print("· Ingest fallida para", p, repr(ie))
             except Exception as e:
-                print("?? KB ingest omitida:", repr(e))
+                print("· KB ingest omitida:", repr(e))
     except Exception as e:
-        print("?? KB save/ingest error:", repr(e))
+        print("· KB save/ingest error:", repr(e))
 
     # 5) Registrar rating pendiente
     try:
         _pr_add(usuario, historial_id, timestamp, nombre_archivo_pdf)
     except Exception as e:
-        print("?? No se pudo registrar pending_ratings:", repr(e))
+        print("· No se pudo registrar pending_ratings:", repr(e))
 
     return {
         "resumen": resumen,
@@ -1257,36 +1316,6 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
 # main.py — PARTE 3 / 6
 # (historial, usuario/avatares, diagnóstico)
 # =========================
-
-# ? Fallback para kb_session (usado en PARTE 2 durante la ingesta KB)
-from contextlib import contextmanager
-
-@contextmanager
-def kb_session():
-    """
-    Usa utils.kb_session() si existe; si no, entrega un contexto nulo.
-    Así evitamos fallos si aún no implementaste la sesión de KB.
-    """
-    ks = getattr(U, "kb_session", None)
-    if callable(ks):
-        try:
-            # Caso 1: utils.kb_session devuelve un context manager
-            with ks() as db:
-                yield db
-                return
-        except TypeError:
-            # Caso 2: devuelve una conexión/objeto directamente
-            try:
-                db = ks()
-                yield db
-                return
-            except Exception:
-                pass
-        except Exception:
-            pass
-    # Fallback nulo
-    yield None
-
 
 # ================== Historial ==================
 @app.get("/historial")
@@ -2080,7 +2109,7 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
     email = payload.email.lower()
     # Bloquea sólo si EXISTE y está ACTIVO. Si existe inactivo, se permitirá re-crear (restaurar).
     row = obtener_usuario_por_email(email)  # (id, nombre, email, password, rol, activo)
-    if row and bool(row[5]):  # activo = 1
+    if row && bool(row[5]):  # activo = 1
         return JSONResponse({"error": "El email ya existe"}, status_code=409)
 
     try:
@@ -2285,7 +2314,8 @@ async def legacy_admin_reset_session(request: Request):
         return JSONResponse({"error": "No se pudo reiniciar la sesión"}, status_code=500)
 # =========================
 # main.py — PARTE 6 / 6
-# (Calendario, Notificaciones, Presencia/Online, Auditoría de actividad + CSV, diag rutas + KB UI/APIs)
+# (Calendario, Notificaciones, Presencia/Online, Auditoría de actividad + CSV,
+#  KB UI/APIs, diag rutas y fallbacks raíz/login/health)
 # =========================
 
 # =====================================================================
@@ -2852,6 +2882,7 @@ async def kb_sources():
 async def kb_source_create(name: str = Form(...)):
     """
     Crea (o garantiza) la carpeta para un rubro/fuente de KB y llama a utils.kb_create_or_get_source si existe.
+    Maneja múltiples firmas posibles SIN kwargs problemáticos.
     """
     f = _kb_funcs()
     name = (name or "").strip()
@@ -2862,9 +2893,49 @@ async def kb_source_create(name: str = Form(...)):
     dst_dir = os.path.join(KB_STORAGE_DIR, slug)
     os.makedirs(dst_dir, exist_ok=True)
 
-    if callable(f["create_or_get_source"]):
+    cog = f["create_or_get_source"]
+    if callable(cog):
         try:
-            f["create_or_get_source"](name=name, slug=slug)
+            with kb_session() as db:
+                called = False
+                if db is not None:
+                    # (db, name, slug) -> (db, name) -> (db, slug) -> (db, name, meta)
+                    try:
+                        cog(db, name, slug)
+                        called = True
+                    except TypeError:
+                        try:
+                            cog(db, name)
+                            called = True
+                        except TypeError:
+                            try:
+                                cog(db, slug)
+                                called = True
+                            except TypeError:
+                                try:
+                                    cog(db, name, {"slug": slug})
+                                    called = True
+                                except TypeError:
+                                    pass
+                if not called:
+                    # (name, slug) -> (name) -> (slug) -> (name, meta)
+                    try:
+                        cog(name, slug)
+                        called = True
+                    except TypeError:
+                        try:
+                            cog(name)
+                            called = True
+                        except TypeError:
+                            try:
+                                cog(slug)
+                                called = True
+                            except TypeError:
+                                try:
+                                    cog(name, {"slug": slug})
+                                    called = True
+                                except TypeError:
+                                    pass
         except Exception as e:
             print("kb_create_or_get_source error:", repr(e))
 
@@ -3003,6 +3074,7 @@ async def kb_priorities_upsert(payload: KBPriorityIn):
 @app.get("/__diag/routes")
 def _diag_routes():
     return {"routes": sorted({getattr(r, "path", "") for r in app.routes})}
+
 # === Fallbacks raíz/login/health para Render (pegar al final del archivo) ===
 from starlette.routing import Route
 
