@@ -2954,3 +2954,68 @@ async def kb_priorities_upsert(payload: KBPriorityIn):
 @app.get("/__diag/routes")
 def _diag_routes():
     return {"routes": sorted({getattr(r, "path", "") for r in app.routes})}
+# === Fallbacks raíz/login/health para Render (pegar al final del archivo) ===
+from starlette.routing import Route
+
+def _route_exists(path: str, method: str = "GET") -> bool:
+    try:
+        for r in app.routes:
+            if isinstance(r, Route) and r.path == path and method.upper() in (r.methods or {"GET"}):
+                return True
+    except Exception:
+        pass
+    return False
+
+# Healthcheck de Render: HEAD /
+@app.head("/", include_in_schema=False)
+def _head_root_ok():
+    return Response(status_code=200)
+
+# Raíz de la app: si no existe, crea un fallback que redirige a /login o muestra index.html
+if not _route_exists("/", "GET"):
+    @app.get("/", include_in_schema=False)
+    async def _root_fallback(request: Request):
+        if not request.session.get("usuario"):
+            return RedirectResponse("/login", status_code=307)
+        # Intentar renderizar un index.html si existe; si no, mostrar un HTML simple
+        try:
+            return templates.TemplateResponse(
+                "index.html",
+                {
+                    "request": request,
+                    # valores seguros por si el template los espera
+                    "historial_items": [],
+                    "page": 1, "per_page": 10, "total_pages": 1, "total_items": 0, "q": "",
+                },
+            )
+        except Exception:
+            return HTMLResponse("<h3>Inicio</h3><p>Sistema online.</p>", status_code=200)
+
+# Vista de login por GET: necesaria para las redirecciones a /login
+if not _route_exists("/login", "GET"):
+    @app.get("/login", include_in_schema=False)
+    async def _login_view(request: Request):
+        # Si tenés templates/login.html, lo usa; si no, muestra un form mínimo
+        try:
+            return templates.TemplateResponse("login.html", {"request": request, "error": None, "mensaje": None})
+        except Exception:
+            html = """<!doctype html><meta charset="utf-8">
+            <title>Login</title>
+            <form method="post" action="/login" style="max-width:320px;margin:48px auto;font-family:sans-serif">
+                <h3>Ingresar</h3>
+                <div><input name="email" placeholder="email" style="width:100%;padding:8px;margin:6px 0"></div>
+                <div><input name="password" type="password" placeholder="contraseña" style="width:100%;padding:8px;margin:6px 0"></div>
+                <label><input type="checkbox" name="remember"> Recordarme</label>
+                <div><button style="padding:8px 12px;margin-top:8px">Entrar</button></div>
+            </form>"""
+            return HTMLResponse(html, status_code=200)
+
+# Alias con barra final
+@app.get("/login/", include_in_schema=False)
+def _login_trailing():
+    return RedirectResponse("/login", status_code=307)
+
+# Endpoint simple de health (útil para pruebas manuales)
+@app.get("/healthz", include_in_schema=False)
+def _healthz():
+    return {"ok": True, "ts": now_iso_utc()}
