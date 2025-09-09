@@ -231,7 +231,7 @@
         background: #fff;
         display: grid;
         place-items: center;
-        box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .06);
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, .06) inset;
       }
 
       .side-logo img {
@@ -1070,6 +1070,19 @@
               <i class="bi bi-clock-history"></i>
             </a>
             {% if request.session.get('rol', 'usuario') == 'admin' %}
+            <!-- === NUEVO: Botón Base de conocimiento (solo admins) === -->
+            <a
+              class="side-btn"
+              data-match="/kb"
+              href="/kb"
+              title="Base de conocimiento"
+              data-admin-only
+              aria-label="Base de conocimiento"
+            >
+              <i class="bi bi-collection"></i>
+            </a>
+            <!-- === /NUEVO === -->
+
             <a
               class="side-btn"
               data-match="/auditoria"
@@ -2095,13 +2108,14 @@
           const items = (scope || document).querySelectorAll("button, a, [role='button']");
           const txt = (el) => (el.textContent || "").trim().toLowerCase();
           items.forEach((el) => {
-            const t = txt(el);
             if (!el.hasAttribute("data-cal-view")) {
+              const t = txt(el);
               if (t === "mes") el.setAttribute("data-cal-view", "dayGridMonth");
               if (t === "semana") el.setAttribute("data-cal-view", "timeGridWeek");
               if (t === "lista") el.setAttribute("data-cal-view", "listWeek");
             }
             if (!el.hasAttribute("data-cal-nav")) {
+              const t = txt(el);
               if (t === "hoy") el.setAttribute("data-cal-nav", "today");
               const aria = (el.getAttribute("aria-label") || "").toLowerCase();
               if (aria.includes("anterior") || t === "‹" || t === "<") el.setAttribute("data-cal-nav", "prev");
