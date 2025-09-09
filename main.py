@@ -2876,9 +2876,6 @@ async def kb_upload(
     source: str = Form(...),
     files: List[UploadFile] = File(...),
 ):
-    """
-    Sube 1..N archivos a una fuente/rubro de la KB y, si está disponible, invoca utils.kb_ingest_file.
-    """
     slug = _kb_slugify(source or "")
     if not slug:
         return JSONResponse({"error": "Falta 'source' (rubro)"}, status_code=400)
@@ -2903,10 +2900,32 @@ async def kb_upload(
         written = await _save_upload_stream(fup, path)
         saved.append({"file": safe, "bytes": written})
 
-        if callable(funcs["ingest_file"]):
+        # ---- Ingesta con firma flexible (sin kwargs polémicos)
+        ingester = funcs["ingest_file"]
+        if callable(ingester):
             try:
-                # Llamada síncrona en threadpool para no bloquear
-                await run_in_threadpool(funcs["ingest_file"], source=slug, filepath=path, original_name=orig)
+                with kb_session() as db:
+                    called = False
+                    if db is not None:
+                        try:
+                            ingester(db, slug, path, {"original_name": orig})
+                            called = True
+                        except TypeError:
+                            try:
+                                ingester(db, slug, path)
+                                called = True
+                            except TypeError:
+                                pass
+                    if not called:
+                        try:
+                            ingester(slug, path, {"original_name": orig})
+                            called = True
+                        except TypeError:
+                            try:
+                                ingester(slug, path)
+                                called = True
+                            except TypeError:
+                                pass
             except Exception as e:
                 print("kb_ingest_file error:", repr(e))
 
@@ -2931,21 +2950,51 @@ async def kb_priorities():
 class KBPriorityIn(BaseModel):
     term: str
     weight: int = 1
-    source: Optional[str] = None  # opcional
-
+    source: Optional[str] = None
 
 @app.post("/api/kb/priorities", dependencies=[Depends(require_admin)])
 async def kb_priorities_upsert(payload: KBPriorityIn):
-    """
-    Upsert de prioridad/ponderación de término (si utils.kb_upsert_priority existe).
-    Acepta JSON con: {"term": "...", "weight": 1, "source": "slug" (opcional)}
-    """
     f = _kb_funcs()
-    if not callable(f["upsert_priority"]):
+    up = f["upsert_priority"]
+    if not callable(up):
         return JSONResponse({"error": "Función no disponible en utils"}, status_code=501)
 
     try:
-        f["upsert_priority"](term=payload.term, weight=int(payload.weight), source=payload.source)
+        ok = False
+        with kb_session() as db:
+            # 1) (db, term, weight, source)
+            if not ok and db is not None:
+                try:
+                    up(db, payload.term, int(payload.weight), payload.source)
+                    ok = True
+                except TypeError:
+                    try:
+                        up(db, payload.term, int(payload.weight))
+                        ok = True
+                    except TypeError:
+                        pass
+            # 2) (term, weight, source)
+            if not ok:
+                try:
+                    up(payload.term, int(payload.weight), payload.source)
+                    ok = True
+                except TypeError:
+                    try:
+                        up(payload.term, int(payload.weight))
+                        ok = True
+                    except TypeError:
+                        pass
+            # 3) último intento con nombres alternativos
+            if not ok:
+                try:
+                    up(pattern=payload.term, weight=int(payload.weight), source=payload.source)
+                    ok = True
+                except Exception:
+                    pass
+
+        if not ok:
+            return JSONResponse({"error": "No se pudo invocar kb_upsert_priority con ninguna firma conocida"}, status_code=500)
+
         return {"ok": True}
     except Exception as e:
         return JSONResponse({"error": f"No se pudo guardar: {e}"}, status_code=500)
