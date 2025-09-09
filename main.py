@@ -734,6 +734,128 @@ def _extraer_ts_de_nombre(nombre_pdf: str) -> str:
         return ""
     m = _TS_RE.search(nombre_pdf)
     return m.group(1) if m else ""
+
+
+# ===== Helpers de historial que faltaban (usados en PARTES 2/3) =====
+
+def _paginate(data, page: int, per_page: int):
+    """Pagina listas/iterables con números sanos."""
+    data = list(data or [])
+    per_page = max(1, int(per_page or 20))
+    total_items = len(data)
+    total_pages = max(1, ceil(total_items / per_page))
+    page = max(1, min(int(page or 1), total_pages))
+    i0 = (page - 1) * per_page
+    i1 = i0 + per_page
+    return data[i0:i1], page, per_page, total_pages, total_items
+
+
+def _hist_row_to_dict(r):
+    """Normaliza filas de historial en {'id','usuario','nombre_archivo','fecha','resumen'}."""
+    if isinstance(r, dict):
+        d = dict(r)
+        return {
+            "id": d.get("id") or d.get("historial_id"),
+            "usuario": (d.get("usuario") or d.get("user") or d.get("email") or "").lower(),
+            "nombre_archivo": d.get("nombre_archivo") or d.get("archivo") or d.get("file") or d.get("pdf") or "",
+            "fecha": d.get("fecha") or d.get("created_at") or d.get("timestamp") or d.get("ts") or "",
+            "resumen": d.get("resumen") or d.get("texto") or d.get("contenido") or "",
+        }
+    if isinstance(r, (list, tuple)):
+        vals = list(r)
+        textos = [str(x or "") for x in vals]
+        usuario = next((t for t in textos if "@" in t), "")
+        nombre = next((t for t in textos if t.lower().endswith(".pdf")), "")
+        fecha = next((t for t in textos if re.match(r"\d{4}-\d{2}-\d{2}", t)), "")
+        # heurística simple para resumen
+        resumen = ""
+        for t in textos:
+            if len(t) > 120 or ("\n" in t and len(t) > 40):
+                resumen = t
+                break
+        hid = next((x for x in vals if isinstance(x, int)), None)
+        return {"id": hid, "usuario": usuario.lower(), "nombre_archivo": nombre, "fecha": fecha, "resumen": resumen}
+    return {"id": None, "usuario": "", "nombre_archivo": "", "fecha": "", "resumen": str(r)}
+
+
+def _historial_para_home(email: str, rol: str, q: str = ""):
+    """Devuelve historial (normalizado) filtrando por rol/usuario y término."""
+    try:
+        raw = obtener_historial_completo() or []
+    except Exception:
+        raw = []
+
+    items = [_hist_row_to_dict(x) for x in raw]
+
+    if (rol or "").lower() != "admin":
+        email_l = (email or "").lower()
+        items = [x for x in items if (x.get("usuario") or "") == email_l]
+
+    term = (q or "").strip().lower()
+    if term:
+        items = [
+            x
+            for x in items
+            if term in (x.get("nombre_archivo", "").lower() + " " + x.get("resumen", "").lower())
+        ]
+
+    def _key(x):
+        f = _parse_dt_utc(x.get("fecha")) if x.get("fecha") else None
+        if f:
+            return f
+        ts = _extraer_ts_de_nombre(x.get("nombre_archivo", ""))
+        if ts:
+            try:
+                return datetime.strptime(ts, "%Y%m%d%H%M%S").replace(tzinfo=TZ_AR).astimezone(timezone.utc)
+            except Exception:
+                pass
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+    items.sort(key=_key, reverse=True)
+    return items
+
+
+def _buscar_historial_usuario(user: str, timestamp: Optional[str] = None, nombre_pdf: Optional[str] = None):
+    """Busca el análisis del usuario por timestamp/nombre, o devuelve el último."""
+    items = _historial_para_home(user, rol="usuario", q="")
+    if not items:
+        return None
+
+    if timestamp:
+        for it in items:
+            tsn = _extraer_ts_de_nombre(it.get("nombre_archivo", ""))
+            if tsn == timestamp:
+                return {
+                    "historial_id": it.get("id"),
+                    "timestamp": tsn,
+                    "nombre_pdf": it.get("nombre_archivo"),
+                    "fecha": it.get("fecha"),
+                    "resumen": it.get("resumen"),
+                    "usuario": it.get("usuario"),
+                }
+
+    if nombre_pdf:
+        base = os.path.basename(nombre_pdf)
+        for it in items:
+            if os.path.basename(it.get("nombre_archivo", "")) == base:
+                return {
+                    "historial_id": it.get("id"),
+                    "timestamp": _extraer_ts_de_nombre(it.get("nombre_archivo", "")),
+                    "nombre_pdf": it.get("nombre_archivo"),
+                    "fecha": it.get("fecha"),
+                    "resumen": it.get("resumen"),
+                    "usuario": it.get("usuario"),
+                }
+
+    it = items[0]
+    return {
+        "historial_id": it.get("id"),
+        "timestamp": _extraer_ts_de_nombre(it.get("nombre_archivo", "")),
+        "nombre_pdf": it.get("nombre_archivo"),
+        "fecha": it.get("fecha"),
+        "resumen": it.get("resumen"),
+        "usuario": it.get("usuario"),
+    }
 # =========================
 # main.py — PARTE 2 / 6
 # (login/logout, cambiar password, rating, analizar pliego)
@@ -1316,6 +1438,135 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
 # main.py — PARTE 3 / 6
 # (historial, usuario/avatares, diagnóstico)
 # =========================
+
+# ===== Helpers de historial (normalización, búsqueda y paginado) =====
+
+def _paginate(data, page: int, per_page: int):
+    total_items = len(data or [])
+    per_page = max(1, int(per_page or 20))
+    total_pages = max(1, ceil(total_items / per_page))
+    page = max(1, min(int(page or 1), total_pages))
+    start = (page - 1) * per_page
+    end = start + per_page
+    return (data[start:end], page, per_page, total_pages, total_items)
+
+
+def _historial_para_home(email: str, rol: str, q: str = "") -> List[dict]:
+    """
+    Devuelve una lista ordenada (nuevo->viejo) de dicts con las claves
+    más usadas por la UI: usuario, nombre_archivo, resumen, fecha, timestamp, id/historial_id.
+    Soporta filas tipo dict o tupla.
+    """
+    try:
+        if (rol or "").lower().startswith("admin"):
+            rows = obtener_historial_completo() or []
+        else:
+            rows = obtener_historial(email) or []
+    except Exception as e:
+        print("· _historial_para_home error:", repr(e))
+        rows = []
+
+    def _row_to_dict(r):
+        if isinstance(r, dict):
+            d = dict(r)
+        else:
+            # Best-effort si viene como tupla/lista
+            d = {}
+            try:
+                vals = list(r)
+                # timestamp (14 dígitos) si aparece en algún campo
+                ts = ""
+                for v in vals:
+                    m = _TS_RE.search(str(v or ""))
+                    if m:
+                        ts = m.group(1)
+                        break
+                d["timestamp"] = ts
+
+                # usuario (primer string que parezca email)
+                d["usuario"] = next((str(v) for v in vals if isinstance(v, str) and "@" in v), email)
+
+                # nombre de PDF (primer string que termine en .pdf)
+                d["nombre_archivo"] = next(
+                    (str(v) for v in vals if isinstance(v, str) and v.lower().endswith(".pdf")), ""
+                )
+
+                # resumen (el string más largo)
+                textish = [str(v) for v in vals if isinstance(v, str) and len(str(v)) > 40]
+                d["resumen"] = max(textish, key=len) if textish else ""
+
+                # id/historial_id (primer entero que encontremos)
+                d["id"] = next((v for v in vals if isinstance(v, int)), None)
+                d["historial_id"] = d.get("id")
+
+                # fecha (si no viene, ponemos ahora)
+                d["fecha"] = d.get("fecha") or now_iso_utc()
+            except Exception:
+                # En el peor caso devolvemos lo mínimo
+                d.setdefault("usuario", email)
+                d.setdefault("nombre_archivo", "")
+                d.setdefault("resumen", "")
+                d.setdefault("fecha", now_iso_utc())
+        # Defaults seguros
+        d.setdefault("usuario", email)
+        d.setdefault("nombre_archivo", "")
+        d.setdefault("resumen", "")
+        d.setdefault("fecha", now_iso_utc())
+        d.setdefault("historial_id", d.get("id"))
+        return d
+
+    items = [_row_to_dict(r) for r in rows]
+
+    q = (q or "").strip().lower()
+    if q:
+        items = [
+            it
+            for it in items
+            if q in (it.get("nombre_archivo", "") + " " + it.get("usuario", "") + " " + it.get("resumen", "")).lower()
+        ]
+
+    # Ordenar por fecha (o timestamp embebido en el nombre si aplica)
+    def _key(it):
+        dt = _parse_dt_utc(it.get("fecha"))
+        if dt:
+            return dt
+        ts = it.get("timestamp") or _extraer_ts_de_nombre(it.get("nombre_archivo", ""))
+        if ts:
+            try:
+                dt2 = datetime.strptime(ts, "%Y%m%d%H%M%S").replace(tzinfo=TZ_AR).astimezone(timezone.utc)
+                return dt2
+            except Exception:
+                return datetime.min.replace(tzinfo=timezone.utc)
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+    items.sort(key=_key, reverse=True)
+    return items
+
+
+def _buscar_historial_usuario(email: str, timestamp: Optional[str] = None, nombre_pdf: Optional[str] = None):
+    """
+    Busca, para un usuario, el historial más reciente o el que matchee
+    por timestamp/nombre. Devuelve un dict normalizado (o None).
+    """
+    items = _historial_para_home(email=email, rol="usuario", q="")
+    if not items:
+        return None
+
+    if timestamp:
+        for it in items:
+            ts = it.get("timestamp") or _extraer_ts_de_nombre(it.get("nombre_archivo", ""))
+            if ts and timestamp in ts:
+                return it
+
+    if nombre_pdf:
+        for it in items:
+            if (it.get("nombre_archivo") or "") == nombre_pdf:
+                return it
+
+    # fallback: más reciente del usuario
+    mine = [it for it in items if (it.get("usuario") or "").lower() == (email or "").lower()]
+    return mine[0] if mine else items[0]
+
 
 # ================== Historial ==================
 @app.get("/historial")
