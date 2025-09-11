@@ -1792,3 +1792,381 @@ try:
     __all__.extend(["analizar_anexos", "analizar_anexos_y_pdf"])  # type: ignore
 except Exception:
     pass
+# ========= RAG — ORM + sesión KB + OpenAI helpers =========
+import os, json, math, hashlib, time
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from typing import Optional, List, Tuple
+
+from sqlalchemy import (
+    create_engine, Column, Integer, String, Text, DateTime, ForeignKey, Index
+)
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+
+# Usa la misma BD que el resto del sistema
+try:
+    from database import DB_PATH as _USERS_DB_PATH  # e.g. "usuarios.db"
+    _KB_DB_URL = f"sqlite:///{_USERS_DB_PATH}"
+except Exception:
+    _KB_DB_URL = "sqlite:///usuarios.db"
+
+# ORM local de KB (tablas propias, sin colisionar con otras)
+KBBase = declarative_base()
+
+class KBSource(KBBase):
+    __tablename__ = "kb_sources"
+    id = Column(Integer, primary_key=True)
+    slug = Column(String(200), unique=True, index=True, nullable=False)
+    name = Column(String(250), nullable=False)
+    meta_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    files = relationship("KBFile", back_populates="source")
+
+class KBFile(KBBase):
+    __tablename__ = "kb_files"
+    id = Column(Integer, primary_key=True)
+    source_id = Column(Integer, ForeignKey("kb_sources.id"), nullable=False, index=True)
+    path = Column(Text, nullable=False)
+    size = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    source = relationship("KBSource", back_populates="files")
+    chunks = relationship("KBChunk", back_populates="file")
+
+class KBChunk(KBBase):
+    __tablename__ = "kb_chunks"
+    id = Column(Integer, primary_key=True)
+    source_id = Column(Integer, index=True, nullable=False)
+    file_id = Column(Integer, ForeignKey("kb_files.id"), index=True, nullable=False)
+    ordinal = Column(Integer, nullable=False)
+    text = Column(Text, nullable=False)
+    # guardamos embedding como JSON para portabilidad
+    embedding_json = Column(Text, nullable=False)
+    n_chars = Column(Integer, default=0)
+    md5 = Column(String(64), index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    file = relationship("KBFile", back_populates="chunks")
+
+Index("idx_kbchunk_src_ord", KBChunk.source_id, KBChunk.ordinal)
+
+class KBPriority(KBBase):
+    __tablename__ = "kb_priorities"
+    id = Column(Integer, primary_key=True)
+    term = Column(String(300), index=True, nullable=False)
+    weight = Column(Integer, default=1)
+    source = Column(String(200), nullable=True)  # slug o None (global)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+# Engine & Session (mismo archivo SQLite que el sistema)
+_kb_engine = create_engine(_KB_DB_URL, future=True)
+KBBase.metadata.create_all(bind=_kb_engine)
+KBSess = sessionmaker(bind=_kb_engine, autoflush=False, autocommit=False)
+
+@contextmanager
+def kb_session():
+    """Sesión de KB (usada por main también)."""
+    s = KBSess()
+    try:
+        yield s
+        s.commit()
+    except Exception:
+        s.rollback()
+        raise
+    finally:
+        s.close()
+
+# ---------- OpenAI helpers ----------
+_OPENAI_MODEL_CHAT = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+_OPENAI_MODEL_EMB = os.getenv("OPENAI_EMB_MODEL", "text-embedding-3-small")
+
+try:
+    # SDK nuevo
+    from openai import OpenAI
+    _oa_client = OpenAI()
+except Exception:
+    _oa_client = None
+
+def _embed_texts(texts: List[str]) -> List[List[float]]:
+    """Embeddings con OpenAI (lista de vectores)."""
+    if not _oa_client:
+        raise RuntimeError("OpenAI client no disponible")
+    resp = _oa_client.embeddings.create(model=_OPENAI_MODEL_EMB, input=texts)
+    return [d.embedding for d in resp.data]
+
+def _chat_completion(messages: List[dict], temperature: float = 0.2, max_tokens: int = 1200) -> str:
+    if not _oa_client:
+        raise RuntimeError("OpenAI client no disponible")
+    r = _oa_client.chat.completions.create(
+        model=_OPENAI_MODEL_CHAT,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    return (r.choices[0].message.content or "").strip()
+# ========= RAG — Ingesta & Prioridades =========
+
+def _slugify(name: str) -> str:
+    import re
+    s = (name or "").strip().lower()
+    s = re.sub(r"[^a-z0-9._-]+", "-", s)
+    return s.strip("-") or "kb"
+
+def kb_create_or_get_source(db, name: str, meta: dict = None):
+    """Crea o recupera un rubro/fuente por slug."""
+    slug = _slugify(name)
+    row = db.query(KBSource).filter(KBSource.slug == slug).first()
+    if row:
+        return {"id": row.id, "slug": row.slug, "name": row.name}
+    row = KBSource(slug=slug, name=name, meta_json=json.dumps(meta or {}))
+    db.add(row)
+    db.flush()
+    return {"id": row.id, "slug": row.slug, "name": row.name}
+
+# ---- extracción de texto ----
+def _read_text_from_file(path: str) -> str:
+    """Usa tu extractor si existe; si no, hace fallback simples."""
+    try:
+        # si tenés una función fuerte:
+        if 'extraer_texto_universal' in globals() and callable(globals()['extraer_texto_universal']):
+            return (globals()['extraer_texto_universal'](path) or "").strip()
+    except Exception:
+        pass
+    # Fallbacks mínimos
+    ext = os.path.splitext(path)[1].lower()
+    try:
+        if ext in (".txt", ".md", ".json", ".yaml", ".yml"):
+            return open(path, "r", encoding="utf-8", errors="ignore").read()
+        if ext == ".pdf" and 'extraer_texto_de_pdf' in globals():
+            return (extraer_texto_de_pdf(path) or "").strip()
+    except Exception:
+        return ""
+    return ""
+
+def _chunk_text(text: str, max_chars: int = 1200, overlap: int = 150) -> List[str]:
+    text = (text or "").strip()
+    if not text:
+        return []
+    chunks = []
+    i = 0
+    n = len(text)
+    while i < n:
+        j = min(n, i + max_chars)
+        chunks.append(text[i:j])
+        i = j - overlap
+        if i < 0:
+            i = 0
+        if i >= n:
+            break
+    return chunks
+
+def kb_ingest_file(db, source_ref, path: str, meta: dict = None):
+    """
+    Corta en chunks, genera embeddings y guarda en kb_files/kb_chunks.
+    source_ref puede ser dict {'id','slug'} o el slug directamente.
+    """
+    if isinstance(source_ref, dict):
+        src_id = source_ref.get("id")
+        src_slug = source_ref.get("slug")
+    else:
+        src_slug = _slugify(str(source_ref))
+        src_row = db.query(KBSource).filter(KBSource.slug == src_slug).first()
+        if not src_row:
+            src_row = KBSource(slug=src_slug, name=src_slug)
+            db.add(src_row)
+            db.flush()
+        src_id = src_row.id
+
+    text = _read_text_from_file(path)
+    if not text:
+        return {"ok": False, "reason": "sin_texto"}
+
+    size = 0
+    try:
+        size = os.path.getsize(path)
+    except Exception:
+        pass
+
+    f = KBFile(source_id=src_id, path=path, size=size)
+    db.add(f)
+    db.flush()
+
+    parts = _chunk_text(text)
+    if not parts:
+        return {"ok": False, "reason": "sin_chunks"}
+
+    vecs = _embed_texts(parts)
+    for k, (chunk, emb) in enumerate(zip(parts, vecs), start=1):
+        md5 = hashlib.md5(chunk.encode("utf-8", errors="ignore")).hexdigest()
+        db.add(
+            KBChunk(
+                source_id=src_id,
+                file_id=f.id,
+                ordinal=k,
+                text=chunk,
+                embedding_json=json.dumps(emb),
+                n_chars=len(chunk),
+                md5=md5,
+            )
+        )
+    return {"ok": True, "n_chunks": len(parts), "file_id": f.id, "source_id": src_id}
+
+# ---- prioridades ----
+def kb_upsert_priority(db, term: str, weight: int = 1, source: Optional[str] = None):
+    term = (term or "").strip()
+    if not term:
+        raise ValueError("term requerido")
+    weight = int(weight or 1)
+    source_slug = _slugify(source) if source else None
+
+    row = (
+        db.query(KBPriority)
+        .filter(KBPriority.term == term)
+        .filter(KBPriority.source == source_slug)
+        .first()
+    )
+    if row:
+        row.weight = weight
+        return {"ok": True, "updated": True}
+    db.add(KBPriority(term=term, weight=weight, source=source_slug))
+    return {"ok": True, "updated": False}
+
+def kb_list_sources():
+    with kb_session() as db:
+        rows = db.query(KBSource).order_by(KBSource.slug.asc()).all()
+        return [{"id": r.id, "slug": r.slug, "name": r.name} for r in rows]
+
+def kb_list_priorities():
+    with kb_session() as db:
+        rows = db.query(KBPriority).order_by(KBPriority.weight.desc(), KBPriority.term.asc()).all()
+        return [{"id": r.id, "term": r.term, "weight": r.weight, "source": r.source} for r in rows]
+# ========= RAG — Recuperación + Uso en Chat y Análisis =========
+import numpy as _np
+
+def _cosine(a: List[float], b: List[float]) -> float:
+    va = _np.array(a, dtype=_np.float32)
+    vb = _np.array(b, dtype=_np.float32)
+    na = max(1e-8, _np.linalg.norm(va))
+    nb = max(1e-8, _np.linalg.norm(vb))
+    return float(_np.dot(va, vb) / (na * nb))
+
+def _load_priorities(db, source_slug: Optional[str]):
+    q = db.query(KBPriority)
+    rows = q.all()
+    global_terms = {r.term: r.weight for r in rows if not r.source}
+    scoped_terms = {r.term: r.weight for r in rows if r.source == (source_slug or None)}
+    return global_terms, scoped_terms
+
+def rag_retrieve(query: str, top_k: int = 8, source: Optional[str] = None) -> List[dict]:
+    """Busca los chunks más similares (aplica bonus por prioridades)."""
+    if not query or not query.strip():
+        return []
+
+    with kb_session() as db:
+        q_emb = _embed_texts([query])[0]
+        # Para performance básica: limitar a últimos N chunks
+        N = int(os.getenv("KB_MAX_CHUNKS_SEARCH", "4000"))
+        base = db.query(KBChunk).order_by(KBChunk.id.desc()).limit(N)
+        if source:
+            base = base.filter(KBChunk.source_id == db.query(KBSource.id).filter(KBSource.slug == _slugify(source)).scalar_subquery())
+        rows = list(reversed(base.all()))  # ascendente
+
+        gprio, sprio = _load_priorities(db, _slugify(source) if source else None)
+
+        scored = []
+        for r in rows:
+            emb = json.loads(r.embedding_json)
+            score = _cosine(q_emb, emb)
+
+            # bonus por prioridades si el término aparece en el texto
+            txt_lower = (r.text or "").lower()
+            bonus = 0.0
+            for t, w in gprio.items():
+                if t.lower() in txt_lower:
+                    bonus += 0.03 * max(1, int(w))
+            for t, w in sprio.items():
+                if t.lower() in txt_lower:
+                    bonus += 0.05 * max(1, int(w))
+            score = score + bonus
+
+            scored.append((score, r))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        out = []
+        for s, r in scored[:top_k]:
+            src = db.query(KBSource).filter(KBSource.id == r.source_id).first()
+            fil = db.query(KBFile).filter(KBFile.id == r.file_id).first()
+            out.append({
+                "score": round(float(s), 4),
+                "source": src.slug if src else "",
+                "file": fil.path if fil else "",
+                "ordinal": r.ordinal,
+                "text": r.text,
+            })
+        return out
+
+def build_kb_context(query: str, source: Optional[str] = None, top_k: int = 8) -> str:
+    """Arma un bloque de contexto listo para el prompt."""
+    hits = rag_retrieve(query=query, top_k=top_k, source=source)
+    if not hits:
+        return "(KB: sin coincidencias relevantes)"
+    lines = ["[KB] Extractos relevantes (priorizar estos datos):"]
+    for h in hits:
+        head = f"Fuente: {h['source'] or '-'} | Archivo: {os.path.basename(h['file'] or '')} | Chunk #{h['ordinal']} | score={h['score']}"
+        body = (h["text"] or "").strip()
+        lines.append(f"--- {head}\n{body}\n")
+    return "\n".join(lines)
+
+# --------- Chat KB-aware ---------
+def responder_chat_openai(mensaje: str, contexto_historial: str, usuario_actual: str) -> str:
+    """
+    Reemplazo KB-aware:
+    1) Busca contexto en KB con el mensaje del usuario.
+    2) Arma prompt que prioriza KB.
+    3) Responde.
+    """
+    kb_ctx = build_kb_context(query=mensaje, source=None, top_k=8)
+    sys = (
+        "Sos un asistente técnico. Prioriza SIEMPRE la información de [KB] para responder. "
+        "Si algo no está en [KB], podés razonar con lo demás, pero marcá la incertidumbre."
+    )
+    usr = (
+        f"{kb_ctx}\n\n"
+        f"[Historial resumido]\n{contexto_historial}\n\n"
+        f"[Consulta del usuario]\n{mensaje}\n\n"
+        "Instrucciones: contesta citando pasajes de [KB] cuando corresponda (paráfrasis), "
+        "y si hay conflicto entre KB y otras señales, gana la KB."
+    )
+    return _chat_completion(
+        messages=[{"role": "system", "content": sys}, {"role": "user", "content": usr}],
+        temperature=0.1,
+        max_tokens=900,
+    )
+
+# --------- Análisis de pliego KB-aware ---------
+def analizar_y_generar_informe(corpus: str, varios_anexos: bool = False) -> str:
+    """
+    Toma el texto extraído de los anexos y busca soporte en la KB antes de redactar.
+    """
+    # consulta para RAG: usamos un resumen del corpus (primeros 1500 chars)
+    query = (corpus or "").strip()[:1500]
+    kb_ctx = build_kb_context(query=query, source=None, top_k=10)
+
+    sys = (
+        "Sos un analista de licitaciones. Tu tarea es crear un informe claro y accionable.\n"
+        "PRIORIDAD: Corroborar con [KB] y destacar coincidencias/discrepancias."
+    )
+    usr = (
+        f"{kb_ctx}\n\n"
+        f"[Anexos recibidos]\n{corpus}\n\n"
+        "Redactá el informe con esta estructura:\n"
+        "1) Resumen ejecutivo\n"
+        "2) Requisitos clave (con referencias a [KB] si aplica)\n"
+        "3) Plazos/garantías/forma de presentación\n"
+        "4) Riesgos y dudas\n"
+        "5) Recomendaciones\n"
+        "Usá viñetas breves, títulos y lenguaje simple. Señalá explícitamente si algo no está respaldado por la KB."
+    )
+    return _chat_completion(
+        messages=[{"role": "system", "content": sys}, {"role": "user", "content": usr}],
+        temperature=0.2,
+        max_tokens=1400,
+    )
+
