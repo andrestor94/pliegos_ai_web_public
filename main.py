@@ -693,6 +693,8 @@ def kb_session():
                 yield db
                 return
         except TypeError:
+
+CAL_DB = "calendar.sqlite3"
            
 # =========================
 # main.py — PARTE 2 / 6
@@ -703,7 +705,7 @@ def kb_session():
 # ========================== CALENDARIO (DB utilitaria) ===============
 # =====================================================================
 
-CAL_DB = "calendar.sqlite3"
+
 
 
 def cal_conn():
