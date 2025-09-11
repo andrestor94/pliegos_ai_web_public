@@ -9,6 +9,8 @@ import uuid
 import asyncio
 import re
 import json
+import logging  # PATCH: logging básico para mejor trazabilidad
+from functools import partial  # PATCH: lo usaremos con run_in_threadpool (Parte 2)
 from importlib import import_module  # import robusto para utils/Kb
 from math import ceil
 from typing import List, Optional, Dict, Set
@@ -277,6 +279,14 @@ if _trusted:
         print("· TrustedHost no disponible:", repr(_ehost))
 
 app = FastAPI(middleware=_middlewares)
+
+# PATCH: Configuración de logging (nivel via env LOG_LEVEL)
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("app")
 
 
 # ---------- Garantizar tablas de chat si faltan (fix 'no such table: mensajes') ----------
@@ -683,241 +693,7 @@ def kb_session():
                 yield db
                 return
         except TypeError:
-            try:
-                db = f()
-                # si no es context manager, intentamos usarlo tal cual
-                try:
-                    yield db
-                finally:
-                    # si tiene close(), lo llamamos
-                    try:
-                        db.close()
-                    except Exception:
-                        pass
-                return
-            except Exception:
-                pass
-
-    # fallback: usar nuestro SessionLocal (mismo engine que ORM)
-    try:
-        db = SessionLocal()
-        try:
-            yield db
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            db.close()
-        return
-    except Exception:
-        pass
-
-    # último recurso: contexto vacío (evita romper endpoints)
-    with nullcontext() as _:
-        yield None
-
-
-# ================== Helpers ==================
-def _actor_info(request: Request):
-    email = request.session.get("usuario")
-    row = obtener_usuario_por_email(email) if email else None
-    actor_user_id = row[0] if row else None
-
-    # IP real detrás de proxy (X-Forwarded-For), cae a client.host
-    ip_hdr = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    ip = ip_hdr or (request.client.host if request.client else None)
-    return actor_user_id, ip
-
-
-def _safe_basename(name: str) -> str:
-    base = os.path.splitext(name or "archivo")[0]
-    base = "".join(c for c in base if c.isalnum() or c in ("-", "_", "."))
-    base = base[:50] or "file"
-    return base
-
-
-def _email_safe(s: str) -> str:
-    return (s or "anon").replace("@", "_at_").replace(".", "_dot_")
-
-
-async def _save_upload_stream(upload: UploadFile, dst_path: str) -> int:
-    size = 0
-    with open(dst_path, "wb") as f:
-        while True:
-            chunk = await upload.read(1024 * 1024)
-            if not chunk:
-                break
-            size += len(chunk)
-            f.write(chunk)
-    await upload.seek(0)
-    return size
-
-
-def _validate_ext(filename: str):
-    ext = os.path.splitext(filename or "")[1].lower()
-    if ext not in CHAT_ALLOWED_EXT:
-        raise HTTPException(status_code=400, detail=f"Tipo de archivo no permitido: {ext}")
-
-
-def _build_audit_filters(q, filtros):
-    if not filtros:
-        return q
-
-    acc = (filtros.get("accion") or "").strip()
-    d = (filtros.get("desde") or "").strip()
-    h = (filtros.get("hasta") or "").strip()
-    term = (filtros.get("term") or "").strip()
-
-    if acc and hasattr(AuditLog, "accion"):
-        q = q.filter(AuditLog.accion == acc)
-    if d and hasattr(AuditLog, "fecha"):
-        q = q.filter(AuditLog.fecha >= f"{d} 00:00:00")
-    if h and hasattr(AuditLog, "fecha"):
-        q = q.filter(AuditLog.fecha <= f"{h} 23:59:59")
-
-    if term:
-        like = f"%{term}%"
-        ors = []
-        for col in ("usuario", "nombre", "accion", "entidad", "entidad_id", "ip", "before", "after"):
-            if hasattr(AuditLog, col):
-                ors.append(getattr(AuditLog, col).like(like))
-        if ors:
-            q = q.filter(or_(*ors))
-    return q
-
-
-# --- helpers extra para rating/identificación por timestamp/nombre ---
-_TS_RE = re.compile(r"(\d{14})")
-
-
-def _extraer_ts_de_nombre(nombre_pdf: str) -> str:
-    if not nombre_pdf:
-        return ""
-    m = _TS_RE.search(nombre_pdf)
-    return m.group(1) if m else ""
-
-
-# ===== Helpers de historial usados por PARTES 2/3 (defínelos una sola vez aquí) =====
-
-def _paginate(data, page: int, per_page: int):
-    """Pagina listas/iterables con números sanos."""
-    data = list(data or [])
-    per_page = max(1, int(per_page or 20))
-    total_items = len(data)
-    total_pages = max(1, ceil(total_items / per_page))
-    page = max(1, min(int(page or 1), total_pages))
-    i0 = (page - 1) * per_page
-    i1 = i0 + per_page
-    return data[i0:i1], page, per_page, total_pages, total_items
-
-
-def _hist_row_to_dict(r):
-    """Normaliza filas de historial en {'id','usuario','nombre_archivo','fecha','resumen'}."""
-    if isinstance(r, dict):
-        d = dict(r)
-        return {
-            "id": d.get("id") or d.get("historial_id"),
-            "usuario": (d.get("usuario") or d.get("user") or d.get("email") or "").lower(),
-            "nombre_archivo": d.get("nombre_archivo") or d.get("archivo") or d.get("file") or d.get("pdf") or "",
-            "fecha": d.get("fecha") or d.get("created_at") or d.get("timestamp") or d.get("ts") or "",
-            "resumen": d.get("resumen") or d.get("texto") or d.get("contenido") or "",
-        }
-    if isinstance(r, (list, tuple)):
-        vals = list(r)
-        textos = [str(x or "") for x in vals]
-        usuario = next((t for t in textos if "@" in t), "")
-        nombre = next((t for t in textos if t.lower().endswith(".pdf")), "")
-        fecha = next((t for t in textos if re.match(r"\d{4}-\d{2}-\d{2}", t)), "")
-        # heurística simple para resumen
-        resumen = ""
-        for t in textos:
-            if len(t) > 120 or ("\n" in t and len(t) > 40):
-                resumen = t
-                break
-        hid = next((x for x in vals if isinstance(x, int)), None)
-        return {"id": hid, "usuario": usuario.lower(), "nombre_archivo": nombre, "fecha": fecha, "resumen": resumen}
-    return {"id": None, "usuario": "", "nombre_archivo": "", "fecha": "", "resumen": str(r)}
-
-
-def _historial_para_home(email: str, rol: str, q: str = ""):
-    """Devuelve historial (normalizado) filtrando por rol/usuario y término."""
-    try:
-        raw = obtener_historial_completo() or []
-    except Exception:
-        raw = []
-
-    items = [_hist_row_to_dict(x) for x in raw]
-
-    if (rol or "").lower() != "admin":
-        email_l = (email or "").lower()
-        items = [x for x in items if (x.get("usuario") or "") == email_l]
-
-    term = (q or "").strip().lower()
-    if term:
-        items = [
-            x
-            for x in items
-            if term in (x.get("nombre_archivo", "").lower() + " " + x.get("resumen", "").lower())
-        ]
-
-    def _key(x):
-        f = _parse_dt_utc(x.get("fecha")) if x.get("fecha") else None
-        if f:
-            return f
-        ts = _extraer_ts_de_nombre(x.get("nombre_archivo", ""))
-        if ts:
-            try:
-                return datetime.strptime(ts, "%Y%m%d%H%M%S").replace(tzinfo=TZ_AR).astimezone(timezone.utc)
-            except Exception:
-                pass
-        return datetime.min.replace(tzinfo=timezone.utc)
-
-    items.sort(key=_key, reverse=True)
-    return items
-
-
-def _buscar_historial_usuario(user: str, timestamp: Optional[str] = None, nombre_pdf: Optional[str] = None):
-    """Busca el análisis del usuario por timestamp/nombre, o devuelve el último."""
-    items = _historial_para_home(user, rol="usuario", q="")
-    if not items:
-        return None
-
-    if timestamp:
-        for it in items:
-            tsn = _extraer_ts_de_nombre(it.get("nombre_archivo", ""))
-            if tsn == timestamp:
-                return {
-                    "historial_id": it.get("id"),
-                    "timestamp": tsn,
-                    "nombre_pdf": it.get("nombre_archivo"),
-                    "fecha": it.get("fecha"),
-                    "resumen": it.get("resumen"),
-                    "usuario": it.get("usuario"),
-                }
-
-    if nombre_pdf:
-        base = os.path.basename(nombre_pdf)
-        for it in items:
-            if os.path.basename(it.get("nombre_archivo", "")) == base:
-                return {
-                    "historial_id": it.get("id"),
-                    "timestamp": _extraer_ts_de_nombre(it.get("nombre_archivo", "")),
-                    "nombre_pdf": it.get("nombre_archivo"),
-                    "fecha": it.get("fecha"),
-                    "resumen": it.get("resumen"),
-                    "usuario": it.get("usuario"),
-                }
-
-    it = items[0]
-    return {
-        "historial_id": it.get("id"),
-        "timestamp": _extraer_ts_de_nombre(it.get("nombre_archivo", "")),
-        "nombre_pdf": it.get("nombre_archivo"),
-        "fecha": it.get("fecha"),
-        "resumen": it.get("resumen"),
-        "usuario": it.get("usuario"),
-    }
+           
 # =========================
 # main.py — PARTE 2 / 6
 # (login/logout, cambiar password, rating, analizar pliego)
@@ -1409,14 +1185,27 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     try:
         resumen = await run_in_threadpool(analizar_anexos, archivos)
     except Exception as e:
+        logger.exception("Error en /analizar-pliego -> analizar_anexos")
         return JSONResponse({"error": f"Fallo en el análisis: {e}"}, status_code=500)
 
-    # 2) Generar PDF
+    # 2) Generar PDF (FIX: pasar nombre_archivo_pdf como keyword; fallback con partial)
     try:
         timestamp = now_stamp_ar()
         nombre_archivo_pdf = f"resumen_{timestamp}.pdf"
-        await run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo_pdf)
+
+        try:
+            # Starlette/fastapi recientes: soportan kwargs en run_in_threadpool
+            await run_in_threadpool(
+                generar_pdf_con_plantilla, resumen, nombre_archivo_pdf=nombre_archivo_pdf
+            )
+        except TypeError:
+            # Fallback para versiones que no aceptan kwargs: usamos partial
+            await run_in_threadpool(
+                partial(generar_pdf_con_plantilla, resumen, nombre_archivo_pdf=nombre_archivo_pdf)
+            )
+
     except Exception as e:
+        logger.exception("Error en /analizar-pliego -> generar_pdf_con_plantilla")
         return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
 
     # 3) Guardar en historial
@@ -1737,13 +1526,38 @@ def _build_chat_context(historial: List[dict], usuario_actual: str, max_items: i
 
 
 async def _call_chat_llm(mensaje: str, usuario_actual: str) -> str:
+    """
+    Llama al puente utils.responder_chat_openai en un threadpool con timeout configurable.
+    CHAT_LLM_TIMEOUT (seg) por env, default 60.
+    """
     try:
         historial = obtener_historial_completo() or []
     except Exception:
         historial = []
     contexto = _build_chat_context(historial, usuario_actual)
-    # Ejecutamos el puente a OpenAI en threadpool para no bloquear el loop
-    return await run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual)
+
+    # Timeout configurable por env (por ej. 45 o 60). Acepta float.
+    try:
+        CHAT_LLM_TIMEOUT = float(os.getenv("CHAT_LLM_TIMEOUT", "60"))
+    except Exception:
+        CHAT_LLM_TIMEOUT = 60.0
+
+    try:
+        # Log básico para diagnóstico
+        logger.info("Chat LLM: usuario=%s, len(mensaje)=%d, timeout=%.1fs", usuario_actual, len(mensaje or ""), CHAT_LLM_TIMEOUT)
+
+        # Ejecutamos el puente a OpenAI en threadpool para no bloquear el loop
+        return await asyncio.wait_for(
+            run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual),
+            timeout=CHAT_LLM_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Chat LLM timeout (%.1fs) para usuario=%s", CHAT_LLM_TIMEOUT, usuario_actual)
+        return "Estoy tardando más de lo normal en responder. Probá de nuevo en un momento."
+    except Exception as e:
+        logger.exception("Error en _call_chat_llm")
+        # Mensaje de error “amable” hacia el usuario
+        return f"[Error de chat] {e}"
 
 
 # ================== API puente (Chat OpenAI) ==================
@@ -1756,6 +1570,11 @@ async def chat_openai(request: Request):
     if not mensaje:
         return JSONResponse({"respuesta": "Decime qué necesitás revisar del pliego ??"})
 
+    # Chequeo rápido de clave (evita silencio si falta)
+    if not (os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY_1") or os.getenv("OPENAI_API_BASE")):
+        logger.error("OPENAI_API_KEY no está configurada en el servidor")
+        return JSONResponse({"respuesta": "No puedo responder porque falta la configuración del proveedor de IA (OPENAI_API_KEY). Avisá al admin."}, status_code=503)
+
     respuesta = await _call_chat_llm(mensaje, usuario_actual)
     return JSONResponse({"respuesta": respuesta})
 
@@ -1767,6 +1586,10 @@ async def api_chat_openai(request: Request, payload: dict = Body(...)):
 
     if not mensaje:
         return JSONResponse({"reply": "Decime qué necesitás revisar del pliego ??"})
+
+    if not (os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY_1") or os.getenv("OPENAI_API_BASE")):
+        logger.error("OPENAI_API_KEY no está configurada en el servidor (API)")
+        return JSONResponse({"reply": "No puedo responder porque falta la configuración del proveedor de IA (OPENAI_API_KEY)."}, status_code=503)
 
     respuesta = await _call_chat_llm(mensaje, usuario_actual)
     return JSONResponse({"reply": respuesta})
@@ -2504,6 +2327,23 @@ async def legacy_admin_reset_session(request: Request):
 # (Calendario, Notificaciones, Presencia/Online, Auditoría de actividad + CSV,
 #  KB UI/APIs, diag rutas y fallbacks raíz/login/health)
 # =========================
+
+# --- Compat: define logger y partial si no estaban definidos en partes previas ---
+try:
+    logger  # type: ignore[name-defined]
+except NameError:
+    import logging
+    logger = logging.getLogger("app")
+    if not logger.handlers:
+        _h = logging.StreamHandler()
+        _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        logger.addHandler(_h)
+    logger.setLevel(logging.INFO)
+
+try:
+    partial  # type: ignore[name-defined]
+except NameError:
+    from functools import partial  # usado en PARTE 2
 
 # =====================================================================
 # ========================== CALENDARIO (endpoints) ===================
