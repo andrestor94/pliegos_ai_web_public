@@ -3213,13 +3213,12 @@ class KBPriorityIn(BaseModel):
 @app.post("/api/kb/priorities", dependencies=[Depends(require_admin)])
 async def kb_priorities_upsert(payload: KBPriorityIn):
     """
-    Upsert de prioridades sin depender de context managers externos.
-    1) Intenta primero las firmas SIN db.
-    2) Si falla por TypeError (faltó db), abre SessionLocal y reintenta con db.
-    3) Cualquier otro error se devuelve como mensaje entendible por la UI.
+    Upsert de prioridades con firmas flexibles.
+    1) Intenta sin DB (up(term, weight[, source])).
+    2) Si falta DB, intenta con SessionLocal (up(db, term, weight[, source])).
     """
     f = _kb_funcs()
-    up = f["upsert_priority"]
+    up = f.get("upsert_priority")
     if not callable(up):
         return JSONResponse({"error": "Función no disponible en utils"}, status_code=501)
 
@@ -3228,55 +3227,45 @@ async def kb_priorities_upsert(payload: KBPriorityIn):
         return JSONResponse({"error": "Término requerido"}, status_code=400)
 
     weight = int(payload.weight or 1)
-    source = (payload.source or None) or None
+    source = (payload.source or "").strip() or None
 
-    # --- 1) Intento sin DB ---
     try:
+        # ---- Intentos sin DB ----
         try:
             up(term, weight, source)
+            return {"ok": True}
         except TypeError:
+            pass
+        try:
             up(term, weight)
-        return {"ok": True}
-    except TypeError:
-        # Posiblemente la función requiere db como primer parámetro -> pasamos al plan B
-        pass
-    except Exception as e:
-        # Error real de la función utils; mostrarlo a la UI
-        return JSONResponse({"error": f"No se pudo guardar: {e}"}, status_code=500)
-
-    # --- 2) Intento con DB propia (SessionLocal) ---
-    db = None
-    try:
-        db = SessionLocal()
-        try:
-            up(db, term, weight, source)
+            return {"ok": True}
         except TypeError:
-            up(db, term, weight)
-        # Si la sesión soporta commit, lo ejecutamos
-        try:
-            db.commit()
-        except Exception:
-            pass
-        return {"ok": True}
-    except Exception as e:
-        # rollback seguro si existe
-        try:
-            if db is not None and hasattr(db, "rollback"):
-                db.rollback()
-        except Exception:
-            pass
-        return JSONResponse({"error": f"No se pudo guardar: {e}"}, status_code=500)
-    finally:
-        try:
-            if db is not None and hasattr(db, "close"):
-                db.close()
-        except Exception:
             pass
 
-        if not ok:
+        # ---- Intentos con DB ----
+        db = None
+        try:
+            db = SessionLocal()
+            try:
+                up(db, term, weight, source)
+                db.commit()
+                return {"ok": True}
+            except TypeError:
+                pass
+            try:
+                up(db, term, weight)
+                db.commit()
+                return {"ok": True}
+            except TypeError:
+                pass
+            # Si llegamos acá, ninguna firma calzó
             return JSONResponse({"error": "No se pudo invocar kb_upsert_priority con ninguna firma conocida"}, status_code=500)
-
-        return {"ok": True}
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:
+                    pass
     except Exception as e:
         return JSONResponse({"error": f"No se pudo guardar: {e}"}, status_code=500)
 
