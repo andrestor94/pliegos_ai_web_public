@@ -1998,7 +1998,7 @@ async def chat_enviar_archivos(
         except Exception as e:
             print("? Error guardar_adjunto:", repr(e))
 
-    await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=(texto o "[Adjuntos]"))
+    await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=(texto or "[Adjuntos]"))
     return JSONResponse({"ok": True, "id": msg_id})
 
 
