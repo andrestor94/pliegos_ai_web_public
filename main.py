@@ -694,7 +694,11 @@ def kb_session():
                 return
         except TypeError:
 
-CAL_DB = "calendar.sqlite3"
+except Exception as e:
+    # Evita romper en despliegue si falla el bloque anterior
+    print("· Excepción ignorada en bootstrap:", repr(e))
+    pass
+
            
 # =========================
 # main.py — PARTE 2 / 6
@@ -705,7 +709,7 @@ CAL_DB = "calendar.sqlite3"
 # ========================== CALENDARIO (DB utilitaria) ===============
 # =====================================================================
 
-
+CAL_DB = "calendar.sqlite3"
 
 
 def cal_conn():
