@@ -2736,7 +2736,7 @@ async def mark_read(request: Request):
     ids = data.get("ids")
 
     with cal_conn() as c:
-        if isinstance(ids, list) && ids:
+        if isinstance(ids, list) and ids:
             placeholders = ",".join("?" for _ in ids)
             c.execute(
                 f"UPDATE notificaciones SET leida=1 WHERE user=? AND id IN ({placeholders})",
