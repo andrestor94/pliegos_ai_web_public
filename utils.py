@@ -7,6 +7,7 @@ Módulo utilitario para:
 - Normalizaciones y helpers varios
 - Pipeline de análisis con modelos OpenAI
 - Ingesta de Base de Conocimiento (KB): subir/leer archivos, trocear y embebidos
+- (En Partes 3 y 4) RAG: recuperación de KB y uso en chat/análisis SIN dependencia de numpy.
 
 Notas:
 - Se usa lazy-import para evitar ciclos (p.ej. con prompts.py o modelos SQLAlchemy).
@@ -54,7 +55,8 @@ EMBEDDINGS_MODEL = (
 )
 
 # ========================= Base de Conocimiento (KB) =========================
-# Lazy-import de modelos para evitar registrar tablas dos veces en SQLAlchemy.
+# ATENCIÓN: estas funciones usan los modelos definidos en models.py.
+# Se importan de forma diferida para no registrar las tablas dos veces.
 def _kb_models():
     try:
         from models import (
@@ -79,6 +81,7 @@ def _kb_clean_text(s: str) -> str:
 
 
 def _kb_chunk_text(text: str, max_chars: int = 1500, overlap: int = 200) -> Iterator[str]:
+    """Corta texto en bloques superpuestos para embebidos."""
     if not text:
         return iter(())
     n = len(text)
@@ -112,6 +115,7 @@ def _kb_detect_content_type(filename: str) -> str:
 
 
 def _kb_extract_text_from_path(path: str) -> Tuple[str, Dict[str, Any]]:
+    """Extracción mínima para ingesta offline (la extracción ‘seria’ está más abajo)."""
     ext = os.path.splitext(path)[1].lower()
     meta: Dict[str, Any] = {}
     if ext in [".txt", ".md", ".csv", ".log"]:
@@ -144,6 +148,13 @@ def _kb_embed(text: str, _client: Optional[OpenAI] = None) -> List[float]:
 
 
 def kb_create_or_get_source(db, name: str, storage_path: str, scope: Dict[str, Any]):
+    """
+    Crea (si no existe) o actualiza una fuente/rubro en la KB.
+    - db: sesión SQLAlchemy del sistema (models.py)
+    - name: nombre legible de la fuente
+    - storage_path: carpeta donde se guardarán los archivos subidos
+    - scope: metadatos/alcance (dict)
+    """
     KBSource, _, _, _ = _kb_models()
     src = db.query(KBSource).filter_by(name=name).first()
     if src:
@@ -178,20 +189,32 @@ def kb_ingest_file(
     chunk_chars: int = 1500,
     overlap: int = 200,
 ) -> int:
+    """
+    Ingesta un archivo en la KB:
+    - Copia el archivo a storage_path.
+    - Extrae texto básico (rápido).
+    - Trocea y guarda chunks + embeddings (como JSON).
+    Devuelve el ID del KBFile.
+    """
     KBSource, KBFile, KBChunk, _ = _kb_models()
     if not os.path.isfile(local_path):
         raise FileNotFoundError(f"No existe el archivo: {local_path}")
     os.makedirs(source.storage_path or ".", exist_ok=True)
+
+    # Evitar duplicados por hash
     sha = _kb_sha256_path(local_path)
     existing = db.query(KBFile).filter_by(hash_sha256=sha).first()
     if existing:
         return existing.id
+
     dest = os.path.join(source.storage_path or ".", os.path.basename(local_path))
     if os.path.abspath(dest) != os.path.abspath(local_path):
         shutil.copy2(local_path, dest)
+
     size = os.path.getsize(dest)
     ctype = _kb_detect_content_type(dest)
     text, meta_extra = _kb_extract_text_from_path(dest)
+
     kbfile = KBFile(
         source_id=source.id,
         filename=os.path.basename(dest),
@@ -203,6 +226,8 @@ def kb_ingest_file(
     )
     db.add(kbfile)
     db.flush()
+
+    # Indexar chunks si hay texto
     if (text or "").strip():
         text_norm = _kb_clean_text(text)
         ord_idx = 0
@@ -213,17 +238,22 @@ def kb_ingest_file(
                     file_id=kbfile.id,
                     ord=ord_idx,
                     text=chunk,
-                    embedding=json.dumps(vec),
+                    embedding=json.dumps(vec),  # guardado como JSON string
                     span={},
                     meta={},
                 )
             )
             ord_idx += 1
+
     db.commit()
     return kbfile.id
 
 
 def kb_upsert_priority(db, rubric: str, label: str, details: str = "", weight: float = 1.0) -> None:
+    """
+    Crea o actualiza una prioridad de búsqueda en la KB (por rubro/etiqueta).
+    Se usa luego para aumentar score durante la recuperación (RAG).
+    """
     _, _, _, KBPriority = _kb_models()
     from sqlalchemy import and_
 
@@ -1300,7 +1330,7 @@ def _enforce_output_policy(informe: str) -> str:
     out = re.sub(r"\n{3,}", "\n\n", out).strip()
     return out
 # -*- coding: utf-8 -*-
-# utils.py — Parte 4/4 (Pipeline de análisis + PDF + helpers finales)
+# utils.py — Parte 4/4 (Pipeline de análisis + PDF + helpers finales + RAG opcional)
 
 # ==================== Mensajería al modelo ====================
 def _mk_temperature() -> Optional[float]:
@@ -1317,19 +1347,30 @@ def _pick_model(final_pass: bool = False) -> str:
         return FAST_FORCE_MODEL
     return MODEL_ANALISIS
 
-def _craft_system_prompt(varios_anexos: bool, texto_hints: str = "") -> str:
+def _craft_system_prompt(varios_anexos: bool, texto_hints: str = "", kb_context: str = "") -> str:
+    """
+    Arma el prompt de sistema con reglas, sinónimos, política de salida y opcionalmente
+    un bloque de contexto KB (si viene no-vacío).
+    """
     base = prompt_andres(varios_anexos)
     bloques = [base]
+
     sinos = _sinonimos_text()
     if sinos:
         bloques.append(sinos)
+
+    if kb_context.strip():
+        bloques.append("\n=== CONTEXTO KB (priorizar) ===\n" + kb_context.strip())
+
     bloques.append(_output_policy_block())
+
     if (texto_hints or "").strip():
         bloques.append("\n=== HINTS DETECTADOS (útiles para recall) ===\n" + texto_hints.strip())
+
     return "\n\n".join(b for b in bloques if b).strip()
 
-def _msg_single_block(varios_anexos: bool, texto_fuente: str, texto_hints: str = "", titulo: str = "") -> List[Dict[str, Any]]:
-    sys = _craft_system_prompt(varios_anexos, texto_hints=texto_hints)
+def _msg_single_block(varios_anexos: bool, texto_fuente: str, texto_hints: str = "", titulo: str = "", kb_context: str = "") -> List[Dict[str, Any]]:
+    sys = _craft_system_prompt(varios_anexos, texto_hints=texto_hints, kb_context=kb_context)
     user = []
     if titulo:
         user.append(f"TÍTULO/BLOQUE: {titulo}")
@@ -1352,21 +1393,143 @@ def _call_chat(messages: List[Dict[str, Any]], model: Optional[str] = None, max_
     resp = _chat_create_safe(**payload)
     return (resp.choices[0].message.content or "").strip()
 
-# ==================== Análisis: single/multi-pass ====================
-def _resumen_parcial(chunk_text: str, varios_anexos: bool, idx: int, total: int, texto_hints: str = "") -> str:
+# ==================== RAG liviano sobre KB (sin NumPy) ====================
+def _cosine_py(a: List[float], b: List[float]) -> float:
+    # Cosine similarity sin dependencias externas
+    if not a or not b:
+        return 0.0
+    n = min(len(a), len(b))
+    dot = 0.0
+    na = 0.0
+    nb = 0.0
+    for i in range(n):
+        x = float(a[i])
+        y = float(b[i])
+        dot += x * y
+        na += x * x
+        nb += y * y
+    na = (na ** 0.5) or 1e-8
+    nb = (nb ** 0.5) or 1e-8
+    return float(dot / (na * nb))
+
+def _kb_try_open_session():
+    """
+    Intenta abrir una sesión SQLAlchemy del proyecto (database.SessionLocal).
+    Si no existe, devuelve None y el RAG se desactiva silenciosamente.
+    """
+    try:
+        from database import SessionLocal as _SessionLocal
+        return _SessionLocal()
+    except Exception:
+        return None
+
+def _kb_build_context_from_db(query: str, source_slug: Optional[str] = None, top_k: int = 8) -> str:
+    """
+    Recupera chunks de KB similares a la consulta y arma un bloque de contexto legible.
+    Usa las tablas del proyecto (models.KBChunk/KBFile/KBSource) que ya se usan en la ingesta.
+    """
+    if not (query or "").strip():
+        return ""
+
+    # Embedding de la consulta
+    try:
+        q_emb = _kb_embed(query)
+    except Exception:
+        return ""
+
+    db = _kb_try_open_session()
+    if not db:
+        return ""  # sin DB, sin contexto
+
+    KBSource, KBFile, KBChunk, KBPriority = _kb_models()
+    try:
+        # Limitar por performance
+        N = int(os.getenv("KB_MAX_CHUNKS_SEARCH", "4000"))
+
+        q = db.query(KBChunk).order_by(KBChunk.id.desc()).limit(N)
+        if source_slug:
+            # filtrar por fuente si se pide
+            src = db.query(KBSource).filter(KBSource.name == source_slug).first()
+            if src:
+                files_ids = [f.id for f in db.query(KBFile.id).filter(KBFile.source_id == src.id).all()]
+                if files_ids:
+                    q = q.filter(KBChunk.file_id.in_(files_ids))
+        rows = list(q.all())[::-1]  # ascendente
+
+        # Cargar prioridades (si existen en tu modelo)
+        try:
+            # globales
+            gprio = {r.label.lower(): float(r.weight) for r in db.query(KBPriority).all()}  # type: ignore[attr-defined]
+        except Exception:
+            gprio = {}
+
+        scored: List[Tuple[float, Any]] = []
+        for r in rows:
+            try:
+                emb = json.loads(r.embedding)  # en tu ingesta guardamos json.dumps(vec)
+            except Exception:
+                continue
+            score = _cosine_py(q_emb, emb)
+
+            # BONUS por prioridades si algún término aparece
+            txt_low = (r.text or "").lower()
+            bonus = 0.0
+            for t, w in gprio.items():
+                if t in txt_low:
+                    bonus += 0.03 * max(1.0, float(w))
+            score += bonus
+
+            scored.append((score, r))
+
+        scored.sort(key=lambda t: t[0], reverse=True)
+        if not scored:
+            return ""
+
+        lines = ["[KB] Extractos relevantes (priorizá estos datos si hay conflicto):"]
+        take = scored[:max(1, int(top_k))]
+        for s, r in take:
+            try:
+                f = db.query(KBFile).filter(KBFile.id == r.file_id).first()
+                src = db.query(KBSource).filter(KBSource.id == f.source_id).first() if f else None
+                head = f"Fuente: {src.name if src else '-'} | Archivo: {getattr(f, 'filename', getattr(f, 'path', ''))} | Chunk #{getattr(r, 'ord', getattr(r, 'ordinal', 0))} | score={round(float(s), 4)}"
+            except Exception:
+                head = f"Chunk | score={round(float(s), 4)}"
+            body = (r.text or "").strip()
+            lines.append(f"--- {head}\n{body}\n")
+        return "\n".join(lines).strip()
+    except Exception:
+        return ""
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+def build_kb_context(query: str, source: Optional[str] = None, top_k: int = 8) -> str:
+    """
+    Wrapper público: si hay DB y KB cargada, devuelve un bloque de contexto;
+    si no, devuelve cadena vacía (el pipeline lo manejará).
+    """
+    try:
+        return _kb_build_context_from_db(query=query, source_slug=source, top_k=top_k) or ""
+    except Exception:
+        return ""
+
+# ==================== Análisis: single/multi-pass (con KB opcional) ====================
+def _resumen_parcial(chunk_text: str, varios_anexos: bool, idx: int, total: int, texto_hints: str = "", kb_context: str = "") -> str:
     """
     Produce un resumen estructurado (mini-informe) del bloque.
     """
     titulo = f"Bloque {idx}/{total}"
-    msgs = _msg_single_block(varios_anexos, chunk_text, texto_hints=texto_hints, titulo=titulo)
+    msgs = _msg_single_block(varios_anexos, chunk_text, texto_hints=texto_hints, titulo=titulo, kb_context=kb_context)
     out = _call_chat(msgs, model=_pick_model(final_pass=False), max_tokens=NOTAS_MAX_TOKENS)
     return out
 
-def _agregar_y_consolidar(parciales: List[str], varios_anexos: bool, texto_hints: str = "") -> str:
+def _agregar_y_consolidar(parciales: List[str], varios_anexos: bool, texto_hints: str = "", kb_context: str = "") -> str:
     """
     Funde los parciales en un informe único, aplicando la guía de salida.
     """
-    sys = _craft_system_prompt(varios_anexos, texto_hints=texto_hints)
+    sys = _craft_system_prompt(varios_anexos, texto_hints=texto_hints, kb_context=kb_context)
     corpus = "\n\n".join([f"=== PARCIAL {i+1} ===\n{p}" for i, p in enumerate(parciales) if (p or "").strip()])
     user = (
         "Integrá TODOS los parciales anteriores en un ÚNICO informe final, sin repetir texto, "
@@ -1399,11 +1562,13 @@ def analizar_y_generar_informe(
     *,
     varios_anexos: Optional[bool] = None,
     force_multi: Optional[bool] = None,
+    prefer_source: Optional[str] = None,
 ) -> str:
     """
     Pipeline principal para obtener el informe desde el texto crudo (paginado).
     - Limpia/normaliza.
-    - Opcionalmente genera HINTS para recall.
+    - Arma un bloque de CONTEXTO KB (si hay KB).
+    - Opcionalmente genera HINTS regex para recall.
     - Decide single vs multi-pass y consolida.
     - Aplica post-procesos determinísticos.
     """
@@ -1421,11 +1586,15 @@ def analizar_y_generar_informe(
     # Hints regex (opcionales)
     hints = _build_regex_hints(raw) if ENABLE_REGEX_HINTS else ""
 
+    # Contexto KB (opcional y silencioso si no hay DB/KB)
+    kb_query = raw[:1500]
+    kb_ctx = build_kb_context(query=kb_query, source=prefer_source, top_k=10)
+
     # Elección single vs multi
     multi = bool(force_multi) or (len(raw) > MAX_SINGLE_PASS_CHARS)
 
     if not multi:
-        msgs = _msg_single_block(varios_anexos, raw, texto_hints=hints)
+        msgs = _msg_single_block(varios_anexos, raw, texto_hints=hints, kb_context=kb_ctx)
         borrador = _call_chat(msgs, model=_pick_model(final_pass=True), max_tokens=MAX_COMPLETION_TOKENS_SALIDA)
         final = _postproceso_final(borrador, raw, varios_anexos)
         _log_tiempo("pipeline_single_pass", t0)
@@ -1436,7 +1605,7 @@ def analizar_y_generar_informe(
     parciales: List[str] = []
 
     def _work(i_chunk: int, total: int, texto: str) -> str:
-        return _resumen_parcial(texto, varios_anexos, i_chunk, total, texto_hints=hints)
+        return _resumen_parcial(texto, varios_anexos, i_chunk, total, texto_hints=hints, kb_context=kb_ctx)
 
     t1 = _t()
     with ThreadPoolExecutor(max_workers=max(1, ANALISIS_CONCURRENCY)) as ex:
@@ -1451,7 +1620,7 @@ def analizar_y_generar_informe(
 
     # Consolidación
     t2 = _t()
-    borrador = _agregar_y_consolidar(parciales, varios_anexos, texto_hints=hints)
+    borrador = _agregar_y_consolidar(parciales, varios_anexos, texto_hints=hints, kb_context=kb_ctx)
     final = _postproceso_final(borrador, raw, varios_anexos)
     _log_tiempo("consolidacion_multi_pass", t2)
     _log_tiempo("pipeline_multi_pass_total", t0)
@@ -1561,6 +1730,7 @@ def generar_informe_y_pdf(
     force_multi: Optional[bool] = None,
     export_pdf: bool = True,
     ruta_pdf: Optional[str] = None,
+    prefer_source: Optional[str] = None,
 ) -> Tuple[str, Optional[str]]:
     """
     Atajo: corre el pipeline de análisis y, opcionalmente, exporta a PDF.
@@ -1570,6 +1740,7 @@ def generar_informe_y_pdf(
         texto_fuente,
         varios_anexos=varios_anexos,
         force_multi=force_multi,
+        prefer_source=prefer_source,
     )
     pdf_path = generar_pdf_informe(informe, out_path=ruta_pdf) if export_pdf else None
     return informe, pdf_path
@@ -1584,25 +1755,38 @@ def responder_chat_openai(
     system: Optional[str] = None,
     tools: Optional[List[Dict[str, Any]]] = None,
     tool_choice: Optional[Any] = None,
+    prefer_source: Optional[str] = None,
     **kwargs,
 ) -> str:
     """
-    Wrapper legacy para chat simple.
+    Wrapper legacy para chat simple, ahora con KB opcional:
+      - Busca contexto en KB usando el contenido del prompt.
+      - Inserta ese contexto en el system prompt.
     Acepta string (prompt) o lista de mensajes estilo OpenAI.
-    Ignora kwargs extra y usa _chat_create_safe para compatibilidad de tokens.
     """
     # Normaliza mensajes
     if isinstance(prompt_or_messages, str):
+        query_for_kb = prompt_or_messages[:1000]
+        kb_ctx = build_kb_context(query=query_for_kb, source=prefer_source, top_k=8)
         messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
+        sys = (system or "")
+        sys = (_craft_system_prompt(False, texto_hints="", kb_context=kb_ctx) if kb_ctx else (system or ""))
+        if sys:
+            messages.append({"role": "system", "content": sys})
         messages.append({"role": "user", "content": prompt_or_messages})
     else:
-        messages = list(prompt_or_messages or [])
-        if system:
-            # Insertar system al principio si no está
+        # si viene lista, intentamos armar query a partir del último user
+        msgs = list(prompt_or_messages or [])
+        last_user = next((m.get("content", "") for m in reversed(msgs) if m.get("role") == "user"), "")
+        kb_ctx = build_kb_context(query=(last_user or "")[:1000], source=prefer_source, top_k=8)
+        messages = msgs[:]
+        if kb_ctx:
+            # inserta/inyecta system al principio con el KB (sin romper otros system si existen)
+            sys_block = _craft_system_prompt(False, texto_hints="", kb_context=kb_ctx)
             if not messages or messages[0].get("role") != "system":
-                messages = [{"role": "system", "content": system}] + messages
+                messages = [{"role": "system", "content": sys_block}] + messages
+            else:
+                messages[0]["content"] = (messages[0].get("content") or "") + "\n\n" + sys_block
 
     # Modelo y temperatura
     use_model = (model or _pick_model(final_pass=False))
@@ -1629,16 +1813,18 @@ def analizar_con_openai(
     *,
     varios_anexos: Optional[bool] = None,
     force_multi: Optional[bool] = None,
+    prefer_source: Optional[str] = None,
     **kwargs,
 ) -> str:
     """
-    Alias legacy hacia analizar_y_generar_informe.
+    Alias legacy hacia analizar_y_generar_informe (con KB opcional).
     Ignora kwargs extra (p.ej. de APIs viejas).
     """
     return analizar_y_generar_informe(
         texto_fuente,
         varios_anexos=varios_anexos,
         force_multi=force_multi,
+        prefer_source=prefer_source,
     )
 
 def generar_pdf(informe_texto: str, ruta_pdf: Optional[str] = None) -> str:
@@ -1650,7 +1836,8 @@ def analizar_y_pdf(
     *,
     varios_anexos: Optional[bool] = None,
     force_multi: Optional[bool] = None,
-    ruta_pdf: Optional[str] = None
+    ruta_pdf: Optional[str] = None,
+    prefer_source: Optional[str] = None,
 ) -> Tuple[str, Optional[str]]:
     """Alias cómodo equivalente a generar_informe_y_pdf."""
     return generar_informe_y_pdf(
@@ -1659,6 +1846,7 @@ def analizar_y_pdf(
         force_multi=force_multi,
         export_pdf=True,
         ruta_pdf=ruta_pdf,
+        prefer_source=prefer_source,
     )
 
 # ==================== Compat extra (plantillas) ====================
@@ -1679,494 +1867,20 @@ def generar_pdf_con_plantilla(
     return generar_pdf_informe(informe_texto, out_path=salida)
 
 # ==================== __all__ ====================
-__all__ = [
-    # nuevas
-    "analizar_y_generar_informe", "generar_informe_y_pdf", "generar_pdf_informe",
-    # compat
-    "analizar_con_openai", "analizar_y_pdf", "generar_pdf", "generar_pdf_con_plantilla",
-    "responder_chat_openai",
-    # helpers útiles
-    "extraer_texto_universal", "preparar_texto_para_pdf",
-]
-# ==================== Compat: analizar_anexos (multi-archivo) ====================
-
-class _FauxUpload:
-    """Wrapper simple para paths/bytes -> objeto tipo UploadFile (lo mínimo que usamos)."""
-    def __init__(self, *, filename: str, data: bytes):
-        self.filename = filename
-        self._data = data
-        self.file = io.BytesIO(data)
-    def read(self) -> bytes:
-        return self._data
-
-def _coerce_uploadlike(x) -> Any:
-    """
-    Devuelve un objeto con .filename y .file/.read para poder pasarlo a extraer_texto_universal.
-    Admite:
-      - Starlette UploadFile / file-like con .filename
-      - str path a archivo
-      - dict {"filename":..., "bytes":...} o {"path":...}
-      - bytes (se nombra como 'anexo.bin')
-    """
-    # Tiene .filename y .file/.read -> ya sirve
-    if hasattr(x, "filename") and (hasattr(x, "file") or hasattr(x, "read")):
-        return x
-
-    # Path en str
-    if isinstance(x, str) and os.path.isfile(x):
-        with open(x, "rb") as f:
-            data = f.read()
-        return _FauxUpload(filename=os.path.basename(x), data=data)
-
-    # Dict con path
-    if isinstance(x, dict) and "path" in x and os.path.isfile(str(x["path"])):
-        p = str(x["path"])
-        with open(p, "rb") as f:
-            data = f.read()
-        return _FauxUpload(filename=os.path.basename(p), data=data)
-
-    # Dict con bytes
-    if isinstance(x, dict) and "bytes" in x:
-        fn = x.get("filename") or "anexo.bin"
-        data = x["bytes"] if isinstance(x["bytes"], (bytes, bytearray)) else bytes(x["bytes"])
-        return _FauxUpload(filename=str(fn), data=data)
-
-    # Bytes sueltos
-    if isinstance(x, (bytes, bytearray)):
-        return _FauxUpload(filename="anexo.bin", data=bytes(x))
-
-    # Último recurso: string no existente -> vacío
-    return _FauxUpload(filename="anexo_desconocido", data=b"")
-
-def analizar_anexos(
-    anexos: List[Any],
-    *,
-    varios_anexos: Optional[bool] = None,
-    force_multi: Optional[bool] = None,
-    **kwargs,
-) -> str:
-    """
-    Toma múltiples archivos (PDF/DOCX/imagen/texto), extrae su texto y genera UN informe consolidado.
-    Compatible con firmas antiguas que usaban `analizar_anexos`.
-    """
-    anexos = anexos or []
-    partes: List[str] = []
-    for i, raw in enumerate(anexos, start=1):
-        f = _coerce_uploadlike(raw)
-        try:
-            texto = extraer_texto_universal(f)
-        except Exception as e:
-            texto = f"[ERROR al extraer Anexo {i}: {e}]"
-        nombre = getattr(f, "filename", f"Anexo_{i}")
-        nombre = (nombre or f"Anexo_{i}").strip()
-        partes.append(f"=== ANEXO {i} — {nombre}\n{texto}\n")
-
-    corpus = "\n\n".join(partes).strip()
-    # Fuerza el modo multi-anexo para que el prompt cite como (Anexo X, p. N)
-    return analizar_y_generar_informe(
-        corpus,
-        varios_anexos=True if varios_anexos is None else bool(varios_anexos),
-        force_multi=force_multi,
-    )
-
-def analizar_anexos_y_pdf(
-    anexos: List[Any],
-    *,
-    varios_anexos: Optional[bool] = None,
-    force_multi: Optional[bool] = None,
-    ruta_pdf: Optional[str] = None,
-) -> Tuple[str, Optional[str]]:
-    """
-    Igual que analizar_anexos pero además exporta a PDF.
-    """
-    texto = analizar_anexos(
-        anexos,
-        varios_anexos=varios_anexos,
-        force_multi=force_multi,
-    )
-    pdf_path = generar_pdf_informe(texto, out_path=ruta_pdf)
-    return texto, pdf_path
-
-# Exportar símbolos para imports antiguos
 try:
-    __all__.extend(["analizar_anexos", "analizar_anexos_y_pdf"])  # type: ignore
+    __all__  # type: ignore
+except NameError:
+    __all__ = []
+
+try:
+    __all__.extend([
+        # nuevas
+        "analizar_y_generar_informe", "generar_informe_y_pdf", "generar_pdf_informe",
+        # compat
+        "analizar_con_openai", "analizar_y_pdf", "generar_pdf", "generar_pdf_con_plantilla",
+        "responder_chat_openai",
+        # RAG helpers
+        "build_kb_context",
+    ])
 except Exception:
     pass
-# ========= RAG — ORM + sesión KB + OpenAI helpers =========
-import os, json, math, hashlib, time
-from contextlib import contextmanager
-from datetime import datetime, timezone
-from typing import Optional, List, Tuple
-
-from sqlalchemy import (
-    create_engine, Column, Integer, String, Text, DateTime, ForeignKey, Index
-)
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
-
-# Usa la misma BD que el resto del sistema
-try:
-    from database import DB_PATH as _USERS_DB_PATH  # e.g. "usuarios.db"
-    _KB_DB_URL = f"sqlite:///{_USERS_DB_PATH}"
-except Exception:
-    _KB_DB_URL = "sqlite:///usuarios.db"
-
-# ORM local de KB (tablas propias, sin colisionar con otras)
-KBBase = declarative_base()
-
-class KBSource(KBBase):
-    __tablename__ = "kb_sources"
-    id = Column(Integer, primary_key=True)
-    slug = Column(String(200), unique=True, index=True, nullable=False)
-    name = Column(String(250), nullable=False)
-    meta_json = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    files = relationship("KBFile", back_populates="source")
-
-class KBFile(KBBase):
-    __tablename__ = "kb_files"
-    id = Column(Integer, primary_key=True)
-    source_id = Column(Integer, ForeignKey("kb_sources.id"), nullable=False, index=True)
-    path = Column(Text, nullable=False)
-    size = Column(Integer, default=0)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    source = relationship("KBSource", back_populates="files")
-    chunks = relationship("KBChunk", back_populates="file")
-
-class KBChunk(KBBase):
-    __tablename__ = "kb_chunks"
-    id = Column(Integer, primary_key=True)
-    source_id = Column(Integer, index=True, nullable=False)
-    file_id = Column(Integer, ForeignKey("kb_files.id"), index=True, nullable=False)
-    ordinal = Column(Integer, nullable=False)
-    text = Column(Text, nullable=False)
-    # guardamos embedding como JSON para portabilidad
-    embedding_json = Column(Text, nullable=False)
-    n_chars = Column(Integer, default=0)
-    md5 = Column(String(64), index=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    file = relationship("KBFile", back_populates="chunks")
-
-Index("idx_kbchunk_src_ord", KBChunk.source_id, KBChunk.ordinal)
-
-class KBPriority(KBBase):
-    __tablename__ = "kb_priorities"
-    id = Column(Integer, primary_key=True)
-    term = Column(String(300), index=True, nullable=False)
-    weight = Column(Integer, default=1)
-    source = Column(String(200), nullable=True)  # slug o None (global)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-# Engine & Session (mismo archivo SQLite que el sistema)
-_kb_engine = create_engine(_KB_DB_URL, future=True)
-KBBase.metadata.create_all(bind=_kb_engine)
-KBSess = sessionmaker(bind=_kb_engine, autoflush=False, autocommit=False)
-
-@contextmanager
-def kb_session():
-    """Sesión de KB (usada por main también)."""
-    s = KBSess()
-    try:
-        yield s
-        s.commit()
-    except Exception:
-        s.rollback()
-        raise
-    finally:
-        s.close()
-
-# ---------- OpenAI helpers ----------
-_OPENAI_MODEL_CHAT = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
-_OPENAI_MODEL_EMB = os.getenv("OPENAI_EMB_MODEL", "text-embedding-3-small")
-
-try:
-    # SDK nuevo
-    from openai import OpenAI
-    _oa_client = OpenAI()
-except Exception:
-    _oa_client = None
-
-def _embed_texts(texts: List[str]) -> List[List[float]]:
-    """Embeddings con OpenAI (lista de vectores)."""
-    if not _oa_client:
-        raise RuntimeError("OpenAI client no disponible")
-    resp = _oa_client.embeddings.create(model=_OPENAI_MODEL_EMB, input=texts)
-    return [d.embedding for d in resp.data]
-
-def _chat_completion(messages: List[dict], temperature: float = 0.2, max_tokens: int = 1200) -> str:
-    if not _oa_client:
-        raise RuntimeError("OpenAI client no disponible")
-    r = _oa_client.chat.completions.create(
-        model=_OPENAI_MODEL_CHAT,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    return (r.choices[0].message.content or "").strip()
-# ========= RAG — Ingesta & Prioridades =========
-
-def _slugify(name: str) -> str:
-    import re
-    s = (name or "").strip().lower()
-    s = re.sub(r"[^a-z0-9._-]+", "-", s)
-    return s.strip("-") or "kb"
-
-def kb_create_or_get_source(db, name: str, meta: dict = None):
-    """Crea o recupera un rubro/fuente por slug."""
-    slug = _slugify(name)
-    row = db.query(KBSource).filter(KBSource.slug == slug).first()
-    if row:
-        return {"id": row.id, "slug": row.slug, "name": row.name}
-    row = KBSource(slug=slug, name=name, meta_json=json.dumps(meta or {}))
-    db.add(row)
-    db.flush()
-    return {"id": row.id, "slug": row.slug, "name": row.name}
-
-# ---- extracción de texto ----
-def _read_text_from_file(path: str) -> str:
-    """Usa tu extractor si existe; si no, hace fallback simples."""
-    try:
-        # si tenés una función fuerte:
-        if 'extraer_texto_universal' in globals() and callable(globals()['extraer_texto_universal']):
-            return (globals()['extraer_texto_universal'](path) or "").strip()
-    except Exception:
-        pass
-    # Fallbacks mínimos
-    ext = os.path.splitext(path)[1].lower()
-    try:
-        if ext in (".txt", ".md", ".json", ".yaml", ".yml"):
-            return open(path, "r", encoding="utf-8", errors="ignore").read()
-        if ext == ".pdf" and 'extraer_texto_de_pdf' in globals():
-            return (extraer_texto_de_pdf(path) or "").strip()
-    except Exception:
-        return ""
-    return ""
-
-def _chunk_text(text: str, max_chars: int = 1200, overlap: int = 150) -> List[str]:
-    text = (text or "").strip()
-    if not text:
-        return []
-    chunks = []
-    i = 0
-    n = len(text)
-    while i < n:
-        j = min(n, i + max_chars)
-        chunks.append(text[i:j])
-        i = j - overlap
-        if i < 0:
-            i = 0
-        if i >= n:
-            break
-    return chunks
-
-def kb_ingest_file(db, source_ref, path: str, meta: dict = None):
-    """
-    Corta en chunks, genera embeddings y guarda en kb_files/kb_chunks.
-    source_ref puede ser dict {'id','slug'} o el slug directamente.
-    """
-    if isinstance(source_ref, dict):
-        src_id = source_ref.get("id")
-        src_slug = source_ref.get("slug")
-    else:
-        src_slug = _slugify(str(source_ref))
-        src_row = db.query(KBSource).filter(KBSource.slug == src_slug).first()
-        if not src_row:
-            src_row = KBSource(slug=src_slug, name=src_slug)
-            db.add(src_row)
-            db.flush()
-        src_id = src_row.id
-
-    text = _read_text_from_file(path)
-    if not text:
-        return {"ok": False, "reason": "sin_texto"}
-
-    size = 0
-    try:
-        size = os.path.getsize(path)
-    except Exception:
-        pass
-
-    f = KBFile(source_id=src_id, path=path, size=size)
-    db.add(f)
-    db.flush()
-
-    parts = _chunk_text(text)
-    if not parts:
-        return {"ok": False, "reason": "sin_chunks"}
-
-    vecs = _embed_texts(parts)
-    for k, (chunk, emb) in enumerate(zip(parts, vecs), start=1):
-        md5 = hashlib.md5(chunk.encode("utf-8", errors="ignore")).hexdigest()
-        db.add(
-            KBChunk(
-                source_id=src_id,
-                file_id=f.id,
-                ordinal=k,
-                text=chunk,
-                embedding_json=json.dumps(emb),
-                n_chars=len(chunk),
-                md5=md5,
-            )
-        )
-    return {"ok": True, "n_chunks": len(parts), "file_id": f.id, "source_id": src_id}
-
-# ---- prioridades ----
-def kb_upsert_priority(db, term: str, weight: int = 1, source: Optional[str] = None):
-    term = (term or "").strip()
-    if not term:
-        raise ValueError("term requerido")
-    weight = int(weight or 1)
-    source_slug = _slugify(source) if source else None
-
-    row = (
-        db.query(KBPriority)
-        .filter(KBPriority.term == term)
-        .filter(KBPriority.source == source_slug)
-        .first()
-    )
-    if row:
-        row.weight = weight
-        return {"ok": True, "updated": True}
-    db.add(KBPriority(term=term, weight=weight, source=source_slug))
-    return {"ok": True, "updated": False}
-
-def kb_list_sources():
-    with kb_session() as db:
-        rows = db.query(KBSource).order_by(KBSource.slug.asc()).all()
-        return [{"id": r.id, "slug": r.slug, "name": r.name} for r in rows]
-
-def kb_list_priorities():
-    with kb_session() as db:
-        rows = db.query(KBPriority).order_by(KBPriority.weight.desc(), KBPriority.term.asc()).all()
-        return [{"id": r.id, "term": r.term, "weight": r.weight, "source": r.source} for r in rows]
-# ========= RAG — Recuperación + Uso en Chat y Análisis =========
-import numpy as _np
-
-def _cosine(a: List[float], b: List[float]) -> float:
-    va = _np.array(a, dtype=_np.float32)
-    vb = _np.array(b, dtype=_np.float32)
-    na = max(1e-8, _np.linalg.norm(va))
-    nb = max(1e-8, _np.linalg.norm(vb))
-    return float(_np.dot(va, vb) / (na * nb))
-
-def _load_priorities(db, source_slug: Optional[str]):
-    q = db.query(KBPriority)
-    rows = q.all()
-    global_terms = {r.term: r.weight for r in rows if not r.source}
-    scoped_terms = {r.term: r.weight for r in rows if r.source == (source_slug or None)}
-    return global_terms, scoped_terms
-
-def rag_retrieve(query: str, top_k: int = 8, source: Optional[str] = None) -> List[dict]:
-    """Busca los chunks más similares (aplica bonus por prioridades)."""
-    if not query or not query.strip():
-        return []
-
-    with kb_session() as db:
-        q_emb = _embed_texts([query])[0]
-        # Para performance básica: limitar a últimos N chunks
-        N = int(os.getenv("KB_MAX_CHUNKS_SEARCH", "4000"))
-        base = db.query(KBChunk).order_by(KBChunk.id.desc()).limit(N)
-        if source:
-            base = base.filter(KBChunk.source_id == db.query(KBSource.id).filter(KBSource.slug == _slugify(source)).scalar_subquery())
-        rows = list(reversed(base.all()))  # ascendente
-
-        gprio, sprio = _load_priorities(db, _slugify(source) if source else None)
-
-        scored = []
-        for r in rows:
-            emb = json.loads(r.embedding_json)
-            score = _cosine(q_emb, emb)
-
-            # bonus por prioridades si el término aparece en el texto
-            txt_lower = (r.text or "").lower()
-            bonus = 0.0
-            for t, w in gprio.items():
-                if t.lower() in txt_lower:
-                    bonus += 0.03 * max(1, int(w))
-            for t, w in sprio.items():
-                if t.lower() in txt_lower:
-                    bonus += 0.05 * max(1, int(w))
-            score = score + bonus
-
-            scored.append((score, r))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        out = []
-        for s, r in scored[:top_k]:
-            src = db.query(KBSource).filter(KBSource.id == r.source_id).first()
-            fil = db.query(KBFile).filter(KBFile.id == r.file_id).first()
-            out.append({
-                "score": round(float(s), 4),
-                "source": src.slug if src else "",
-                "file": fil.path if fil else "",
-                "ordinal": r.ordinal,
-                "text": r.text,
-            })
-        return out
-
-def build_kb_context(query: str, source: Optional[str] = None, top_k: int = 8) -> str:
-    """Arma un bloque de contexto listo para el prompt."""
-    hits = rag_retrieve(query=query, top_k=top_k, source=source)
-    if not hits:
-        return "(KB: sin coincidencias relevantes)"
-    lines = ["[KB] Extractos relevantes (priorizar estos datos):"]
-    for h in hits:
-        head = f"Fuente: {h['source'] or '-'} | Archivo: {os.path.basename(h['file'] or '')} | Chunk #{h['ordinal']} | score={h['score']}"
-        body = (h["text"] or "").strip()
-        lines.append(f"--- {head}\n{body}\n")
-    return "\n".join(lines)
-
-# --------- Chat KB-aware ---------
-def responder_chat_openai(mensaje: str, contexto_historial: str, usuario_actual: str) -> str:
-    """
-    Reemplazo KB-aware:
-    1) Busca contexto en KB con el mensaje del usuario.
-    2) Arma prompt que prioriza KB.
-    3) Responde.
-    """
-    kb_ctx = build_kb_context(query=mensaje, source=None, top_k=8)
-    sys = (
-        "Sos un asistente técnico. Prioriza SIEMPRE la información de [KB] para responder. "
-        "Si algo no está en [KB], podés razonar con lo demás, pero marcá la incertidumbre."
-    )
-    usr = (
-        f"{kb_ctx}\n\n"
-        f"[Historial resumido]\n{contexto_historial}\n\n"
-        f"[Consulta del usuario]\n{mensaje}\n\n"
-        "Instrucciones: contesta citando pasajes de [KB] cuando corresponda (paráfrasis), "
-        "y si hay conflicto entre KB y otras señales, gana la KB."
-    )
-    return _chat_completion(
-        messages=[{"role": "system", "content": sys}, {"role": "user", "content": usr}],
-        temperature=0.1,
-        max_tokens=900,
-    )
-
-# --------- Análisis de pliego KB-aware ---------
-def analizar_y_generar_informe(corpus: str, varios_anexos: bool = False) -> str:
-    """
-    Toma el texto extraído de los anexos y busca soporte en la KB antes de redactar.
-    """
-    # consulta para RAG: usamos un resumen del corpus (primeros 1500 chars)
-    query = (corpus or "").strip()[:1500]
-    kb_ctx = build_kb_context(query=query, source=None, top_k=10)
-
-    sys = (
-        "Sos un analista de licitaciones. Tu tarea es crear un informe claro y accionable.\n"
-        "PRIORIDAD: Corroborar con [KB] y destacar coincidencias/discrepancias."
-    )
-    usr = (
-        f"{kb_ctx}\n\n"
-        f"[Anexos recibidos]\n{corpus}\n\n"
-        "Redactá el informe con esta estructura:\n"
-        "1) Resumen ejecutivo\n"
-        "2) Requisitos clave (con referencias a [KB] si aplica)\n"
-        "3) Plazos/garantías/forma de presentación\n"
-        "4) Riesgos y dudas\n"
-        "5) Recomendaciones\n"
-        "Usá viñetas breves, títulos y lenguaje simple. Señalá explícitamente si algo no está respaldado por la KB."
-    )
-    return _chat_completion(
-        messages=[{"role": "system", "content": sys}, {"role": "user", "content": usr}],
-        temperature=0.2,
-        max_tokens=1400,
-    )
-
