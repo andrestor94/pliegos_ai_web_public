@@ -218,18 +218,65 @@ def _parse_dt_utc(value) -> Optional[datetime]:
 
 # ================== App & Middlewares ==================
 SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-in-prod")
+SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "session")
+SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "0") == "1"  # https_only
 
-app = FastAPI(
-    middleware=[
-        # Cookie de sesión más robusta y persistente
-        Middleware(
-            SessionMiddleware,
-            secret_key=SESSION_SECRET,
-            same_site="lax",
-            max_age=60 * 60 * 24 * 30,  # 30 días
+if SESSION_SECRET == "change-this-in-prod":
+    print("⚠️  SESSION_SECRET por defecto: configurá SESSION_SECRET en producción.")
+
+_middlewares: List[Middleware] = [
+    # Cookie de sesión más robusta y persistente
+    Middleware(
+        SessionMiddleware,
+        secret_key=SESSION_SECRET,
+        same_site="lax",
+        max_age=60 * 60 * 24 * 30,  # 30 días
+        https_only=SESSION_COOKIE_SECURE,
+        session_cookie=SESSION_COOKIE_NAME,
+    )
+]
+
+# (Opcional) compresión de respuestas
+if os.getenv("ENABLE_GZIP", "1") == "1":
+    try:
+        from starlette.middleware.gzip import GZipMiddleware
+
+        _middlewares.append(Middleware(GZipMiddleware, minimum_size=1024))
+    except Exception as _egzip:
+        print("· GZip no disponible:", repr(_egzip))
+
+# (Opcional) CORS para frontends externos
+if os.getenv("ENABLE_CORS", "0") == "1":
+    try:
+        from fastapi.middleware.cors import CORSMiddleware
+
+        _origins_env = os.getenv("CORS_ORIGINS", "*")
+        _origins = [o.strip() for o in _origins_env.split(",") if o.strip()]
+        _middlewares.append(
+            Middleware(
+                CORSMiddleware,
+                allow_origins=_origins if _origins else ["*"],
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
         )
-    ]
-)
+    except Exception as _ecors:
+        print("· CORS no disponible:", repr(_ecors))
+
+# (Opcional) Trusted Host para evitar Host header attacks
+_trusted = os.getenv("TRUSTED_HOSTS", "").strip()
+if _trusted:
+    try:
+        from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+        _hosts = [h.strip() for h in _trusted.split(",") if h.strip()]
+        if _hosts:
+            _middlewares.append(Middleware(TrustedHostMiddleware, allowed_hosts=_hosts))
+    except Exception as _ehost:
+        print("· TrustedHost no disponible:", repr(_ehost))
+
+app = FastAPI(middleware=_middlewares)
 
 
 # ---------- Garantizar tablas de chat si faltan (fix 'no such table: mensajes') ----------
@@ -386,6 +433,16 @@ async def _no_cache_html(request, call_next):
     return resp
 
 
+# Headers de seguridad básicos
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer-when-downgrade")
+    return resp
+
+
 # ================== Guardas/Dependencias de auth/roles ==================
 def require_auth(request: Request):
     if not request.session.get("usuario"):
@@ -444,7 +501,7 @@ class ConnectionManager:
         try:
             if email in self._by_user and websocket in self._by_user[email]:
                 self._by_user[email].remove(websocket)
-            if not self._by_user[email]:
+            if email in self._by_user and not self._by_user[email]:
                 del self._by_user[email]
         except Exception:
             pass
@@ -605,6 +662,8 @@ def _kb_funcs():
 
 
 def _kb_enabled() -> bool:
+    if os.getenv("KB_ENABLED", "1") != "1":
+        return False
     f = _kb_funcs()
     return bool(f["create_or_get_source"] and f["ingest_file"])
 
@@ -664,7 +723,10 @@ def _actor_info(request: Request):
     email = request.session.get("usuario")
     row = obtener_usuario_por_email(email) if email else None
     actor_user_id = row[0] if row else None
-    ip = request.client.host if request.client else None
+
+    # IP real detrás de proxy (X-Forwarded-For), cae a client.host
+    ip_hdr = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    ip = ip_hdr or (request.client.host if request.client else None)
     return actor_user_id, ip
 
 
@@ -736,7 +798,7 @@ def _extraer_ts_de_nombre(nombre_pdf: str) -> str:
     return m.group(1) if m else ""
 
 
-# ===== Helpers de historial que faltaban (usados en PARTES 2/3) =====
+# ===== Helpers de historial usados por PARTES 2/3 (defínelos una sola vez aquí) =====
 
 def _paginate(data, page: int, per_page: int):
     """Pagina listas/iterables con números sanos."""
@@ -1040,7 +1102,9 @@ async def login(
         sid = uuid.uuid4().hex
         request.session["sid"] = sid
         nombre_s = request.session.get("nombre") or usuario[1] or usuario[2]
-        ip_s = request.client.host if request.client else None
+        # IP robusta (X-Forwarded-For o client.host)
+        ip_hdr = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        ip_s = ip_hdr or (request.client.host if request.client else None)
         ua_s = request.headers.get("user-agent", "")
         now_iso = now_iso_utc()
 
@@ -1439,136 +1503,8 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
 # (historial, usuario/avatares, diagnóstico)
 # =========================
 
-# ===== Helpers de historial (normalización, búsqueda y paginado) =====
+# ===== Historial (usa helpers definidos en PARTE 1) =====
 
-def _paginate(data, page: int, per_page: int):
-    total_items = len(data or [])
-    per_page = max(1, int(per_page or 20))
-    total_pages = max(1, ceil(total_items / per_page))
-    page = max(1, min(int(page or 1), total_pages))
-    start = (page - 1) * per_page
-    end = start + per_page
-    return (data[start:end], page, per_page, total_pages, total_items)
-
-
-def _historial_para_home(email: str, rol: str, q: str = "") -> List[dict]:
-    """
-    Devuelve una lista ordenada (nuevo->viejo) de dicts con las claves
-    más usadas por la UI: usuario, nombre_archivo, resumen, fecha, timestamp, id/historial_id.
-    Soporta filas tipo dict o tupla.
-    """
-    try:
-        if (rol or "").lower().startswith("admin"):
-            rows = obtener_historial_completo() or []
-        else:
-            rows = obtener_historial(email) or []
-    except Exception as e:
-        print("· _historial_para_home error:", repr(e))
-        rows = []
-
-    def _row_to_dict(r):
-        if isinstance(r, dict):
-            d = dict(r)
-        else:
-            # Best-effort si viene como tupla/lista
-            d = {}
-            try:
-                vals = list(r)
-                # timestamp (14 dígitos) si aparece en algún campo
-                ts = ""
-                for v in vals:
-                    m = _TS_RE.search(str(v or ""))
-                    if m:
-                        ts = m.group(1)
-                        break
-                d["timestamp"] = ts
-
-                # usuario (primer string que parezca email)
-                d["usuario"] = next((str(v) for v in vals if isinstance(v, str) and "@" in v), email)
-
-                # nombre de PDF (primer string que termine en .pdf)
-                d["nombre_archivo"] = next(
-                    (str(v) for v in vals if isinstance(v, str) and v.lower().endswith(".pdf")), ""
-                )
-
-                # resumen (el string más largo)
-                textish = [str(v) for v in vals if isinstance(v, str) and len(str(v)) > 40]
-                d["resumen"] = max(textish, key=len) if textish else ""
-
-                # id/historial_id (primer entero que encontremos)
-                d["id"] = next((v for v in vals if isinstance(v, int)), None)
-                d["historial_id"] = d.get("id")
-
-                # fecha (si no viene, ponemos ahora)
-                d["fecha"] = d.get("fecha") or now_iso_utc()
-            except Exception:
-                # En el peor caso devolvemos lo mínimo
-                d.setdefault("usuario", email)
-                d.setdefault("nombre_archivo", "")
-                d.setdefault("resumen", "")
-                d.setdefault("fecha", now_iso_utc())
-        # Defaults seguros
-        d.setdefault("usuario", email)
-        d.setdefault("nombre_archivo", "")
-        d.setdefault("resumen", "")
-        d.setdefault("fecha", now_iso_utc())
-        d.setdefault("historial_id", d.get("id"))
-        return d
-
-    items = [_row_to_dict(r) for r in rows]
-
-    q = (q or "").strip().lower()
-    if q:
-        items = [
-            it
-            for it in items
-            if q in (it.get("nombre_archivo", "") + " " + it.get("usuario", "") + " " + it.get("resumen", "")).lower()
-        ]
-
-    # Ordenar por fecha (o timestamp embebido en el nombre si aplica)
-    def _key(it):
-        dt = _parse_dt_utc(it.get("fecha"))
-        if dt:
-            return dt
-        ts = it.get("timestamp") or _extraer_ts_de_nombre(it.get("nombre_archivo", ""))
-        if ts:
-            try:
-                dt2 = datetime.strptime(ts, "%Y%m%d%H%M%S").replace(tzinfo=TZ_AR).astimezone(timezone.utc)
-                return dt2
-            except Exception:
-                return datetime.min.replace(tzinfo=timezone.utc)
-        return datetime.min.replace(tzinfo=timezone.utc)
-
-    items.sort(key=_key, reverse=True)
-    return items
-
-
-def _buscar_historial_usuario(email: str, timestamp: Optional[str] = None, nombre_pdf: Optional[str] = None):
-    """
-    Busca, para un usuario, el historial más reciente o el que matchee
-    por timestamp/nombre. Devuelve un dict normalizado (o None).
-    """
-    items = _historial_para_home(email=email, rol="usuario", q="")
-    if not items:
-        return None
-
-    if timestamp:
-        for it in items:
-            ts = it.get("timestamp") or _extraer_ts_de_nombre(it.get("nombre_archivo", ""))
-            if ts and timestamp in ts:
-                return it
-
-    if nombre_pdf:
-        for it in items:
-            if (it.get("nombre_archivo") or "") == nombre_pdf:
-                return it
-
-    # fallback: más reciente del usuario
-    mine = [it for it in items if (it.get("usuario") or "").lower() == (email or "").lower()]
-    return mine[0] if mine else items[0]
-
-
-# ================== Historial ==================
 @app.get("/historial")
 async def ver_historial(
     request: Request,
@@ -2062,7 +1998,7 @@ async def chat_enviar_archivos(
         except Exception as e:
             print("? Error guardar_adjunto:", repr(e))
 
-    await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=(texto or "[Adjuntos]"))
+    await emit_chat_new_message(para_email=para, de_email=de, msg_id=msg_id, preview=(texto o "[Adjuntos]"))
     return JSONResponse({"ok": True, "id": msg_id})
 
 
@@ -2800,7 +2736,7 @@ async def mark_read(request: Request):
     ids = data.get("ids")
 
     with cal_conn() as c:
-        if isinstance(ids, list) and ids:
+        if isinstance(ids, list) && ids:
             placeholders = ",".join("?" for _ in ids)
             c.execute(
                 f"UPDATE notificaciones SET leida=1 WHERE user=? AND id IN ({placeholders})",
