@@ -3279,65 +3279,76 @@ def _diag_routes():
 
 def _fallback_kb_upsert_priority(term: str, weight: int, source: Optional[str] = None):
     """
-    Upsert directo en models.KBPriority, mapeando nombres de columnas
-    variables (term/pattern/patron, weight/peso, source/fuente/rubro).
-    Devuelve (ok: bool, error: Optional[str]).
+    Upsert sin importar `models.py`: refleja las tablas y busca una que tenga
+    columnas (term|pattern|patron|keyword|texto) y (weight|peso|score|priority)
+    y opcionalmente (source|fuente|rubro|category).
     """
     try:
-        import models as KBM  # debe existir por _kb_init_orm()
-    except Exception as e:
-        return False, f"models import error: {e}"
+        from sqlalchemy import inspect as sa_inspect, MetaData, Table, select, update, insert, and_, null
+        with SessionLocal() as s:
+            engine = s.get_bind()
+            insp = sa_inspect(engine)
 
-    Model = getattr(KBM, "KBPriority", None) or getattr(KBM, "Priority", None)
-    if Model is None:
-        return False, "Modelo KBPriority no encontrado en models.py"
+            all_tables = insp.get_table_names()
+            # Preferencias de nombre, pero si no están, probamos cualquier tabla compatible
+            preferred = ["kb_priorities", "kbpriority", "kb_priority", "priorities", "priority"] + all_tables
 
-    cols = Model.__table__.c.keys()  # nombres de columnas
-    # detectar nombres reales
-    def pick(cands):
-        for c in cands:
-            if c in cols:
-                return c
-        return None
+            term_cands   = ["term", "pattern", "patron", "keyword", "texto"]
+            weight_cands = ["weight", "peso", "score", "priority"]
+            source_cands = ["source", "fuente", "rubro", "category"]
 
-    term_col   = pick(["term", "pattern", "patron", "keyword", "texto"])
-    weight_col = pick(["weight", "peso", "score", "priority"])
-    source_col = pick(["source", "fuente", "rubro", "category"])
+            chosen = None
+            chosen_cols = None
+            for name in preferred:
+                if name not in all_tables:
+                    continue
+                cols = [c["name"] for c in insp.get_columns(name)]
+                if any(c in cols for c in term_cands) and any(c in cols for c in weight_cands):
+                    chosen, chosen_cols = name, cols
+                    break
 
-    if not term_col or not weight_col:
-        return False, f"Columnas requeridas no halladas (term=?, weight=?). Definidas: {cols}"
+            if not chosen:
+                return False, f"No encontré tabla compatible (disponibles: {all_tables})."
 
-    db = SessionLocal()
-    try:
-        q = db.query(Model).filter(getattr(Model, term_col) == term)
-        if source_col:
-            if source is None:
-                q = q.filter(getattr(Model, source_col) == None)  # noqa: E711
-            else:
-                q = q.filter(getattr(Model, source_col) == source)
-        row = q.first()
+            md = MetaData()
+            T = Table(chosen, md, autoload_with=engine)
 
-        if row:
-            setattr(row, weight_col, int(weight))
+            def pick(cands):
+                for c in cands:
+                    if c in T.c:
+                        return c
+                return None
+
+            term_col   = pick(term_cands)
+            weight_col = pick(weight_cands)
+            source_col = pick(source_cands)
+
+            if not term_col or not weight_col:
+                return False, f"Faltan columnas requeridas en '{chosen}'. Tiene: {list(T.c.keys())}"
+
+            where = [T.c[term_col] == term]
             if source_col:
-                setattr(row, source_col, source)
-        else:
-            kwargs = {term_col: term, weight_col: int(weight)}
-            if source_col:
-                kwargs[source_col] = source
-            row = Model(**kwargs)
-            db.add(row)
+                if source is None:
+                    where.append(T.c[source_col].is_(None))
+                else:
+                    where.append(T.c[source_col] == source)
 
-        db.commit()
+            with engine.begin() as conn:
+                row = conn.execute(select(T).where(and_(*where))).first()
+                if row:
+                    vals = {weight_col: int(weight)}
+                    if source_col:
+                        vals[source_col] = source
+                    conn.execute(update(T).where(and_(*where)).values(**vals))
+                else:
+                    vals = {term_col: term, weight_col: int(weight)}
+                    if source_col:
+                        vals[source_col] = source
+                    conn.execute(insert(T).values(**vals))
+
         return True, None
     except Exception as e:
-        db.rollback()
         return False, str(e)
-    finally:
-        try:
-            db.close()
-        except Exception:
-            pass
 
 
 # === Fallbacks raíz/login/health para Render (pegar al final del archivo) ===
