@@ -8,6 +8,7 @@ import os
 import re
 import sqlite3
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -95,7 +96,7 @@ def _get_conn() -> sqlite3.Connection:
     NOTA: Cada llamada abre una conexión nueva (patrón recomendado con SQLite).
     """
     _ensure_db_dir(DB_PATH)
-    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn = sqlite3.connect(DB_PATH, timeout=10, check_same_thread=False)
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=5000;")  # 5s de espera si está locked
@@ -116,6 +117,37 @@ def _with_retry(callable_fn, retries: int = 5, base_delay: float = 0.15):
                 time.sleep(base_delay * (i + 1))
                 continue
             raise
+
+
+# =========================
+# Context manager SEGURO para transacciones KB
+# (evita "generator didn't stop after throw()")
+# =========================
+
+@contextmanager
+def kb_session():
+    """
+    Context manager transaccional para operaciones de la Base de Conocimiento.
+    Garantiza:
+      - commit en éxito
+      - rollback en error (y re-lanza la excepción)
+      - cierre de conexión SIEMPRE
+
+    Uso:
+        with kb_session() as conn:
+            cur = conn.cursor()
+            cur.execute("...")
+    """
+    conn = _get_conn()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        # CLAVE: rollback + re-lanzar; sin esto aparece el RuntimeError del generador.
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 # =========================
@@ -183,6 +215,10 @@ def inicializar_bd() -> None:
     # Hilos ocultos & Adjuntos
     crear_tabla_hilos_ocultos()
     crear_tabla_adjuntos()
+
+    # KB Priorities (NUEVO)
+    crear_tabla_kb_prioridades()
+    _crear_indices_kb_prioridades()
 
 
 # ----- Usuarios --------------------------------------------------------------
@@ -404,6 +440,136 @@ def crear_tabla_adjuntos() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_adj_mensaje ON mensajes_adjuntos (mensaje_id)"
         )
+
+
+# =========================
+# NUEVO — Base de Conocimiento: Prioridades
+# =========================
+
+def crear_tabla_kb_prioridades() -> None:
+    """Tabla simple para prioridades de la KB."""
+    with _get_conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kb_priorities (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                term    TEXT NOT NULL,
+                weight  INTEGER NOT NULL,
+                source  TEXT
+            )
+            """
+        )
+
+
+def _crear_indices_kb_prioridades() -> None:
+    """Índices útiles. No usamos UNIQUE con expresión para máxima compatibilidad."""
+    with _get_conn() as conn:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kb_priorities_term ON kb_priorities(term)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kb_priorities_term_source ON kb_priorities(term, source)"
+        )
+
+
+def kb_upsert_prioridad(term: str, weight: int, source: Optional[str]) -> int:
+    """
+    UPSERT "manual" (UPDATE primero; si no afectó filas, INSERT).
+    Devuelve el id del registro afectado/creado.
+    """
+    term = (term or "").strip()
+    if not term:
+        raise ValueError("El término no puede estar vacío")
+    try:
+        weight = int(weight)
+    except Exception:
+        raise ValueError("El peso debe ser un entero")
+    if weight < 0 or weight > 100:
+        raise ValueError("El peso debe estar entre 0 y 100")
+
+    with kb_session() as conn:
+        cur = conn.cursor()
+
+        # 1) UPDATE según source sea NULL o string
+        if source is None or str(source).strip() == "":
+            cur.execute(
+                "UPDATE kb_priorities SET weight=? WHERE term=? AND source IS NULL",
+                (weight, term),
+            )
+        else:
+            src = str(source).strip()
+            cur.execute(
+                "UPDATE kb_priorities SET weight=? WHERE term=? AND source=?",
+                (weight, term, src),
+            )
+
+        # 2) Si no actualizó, INSERT
+        if cur.rowcount == 0:
+            cur.execute(
+                "INSERT INTO kb_priorities(term, weight, source) VALUES (?, ?, ?)",
+                (term, weight, (None if not source or str(source).strip() == "" else str(source).strip())),
+            )
+
+        # 3) Seleccionar id para devolver
+        if source is None or str(source).strip() == "":
+            cur = conn.execute(
+                "SELECT id FROM kb_priorities WHERE term=? AND source IS NULL",
+                (term,),
+            )
+        else:
+            cur = conn.execute(
+                "SELECT id FROM kb_priorities WHERE term=? AND source=?",
+                (term, str(source).strip()),
+            )
+        row = cur.fetchone()
+        if not row:
+            raise RuntimeError("No se pudo recuperar la prioridad recién guardada.")
+        return int(row[0])
+
+
+def kb_get_prioridad(term: str, source: Optional[str]) -> Optional[Dict[str, Any]]:
+    term = (term or "").strip()
+    if not term:
+        return None
+    with _get_conn() as conn:
+        if source is None or str(source).strip() == "":
+            cur = conn.execute(
+                "SELECT id, term, weight, source FROM kb_priorities WHERE term=? AND source IS NULL",
+                (term,),
+            )
+        else:
+            cur = conn.execute(
+                "SELECT id, term, weight, source FROM kb_priorities WHERE term=? AND source=?",
+                (term, str(source).strip()),
+            )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {"id": row[0], "term": row[1], "weight": row[2], "source": row[3]}
+
+
+def kb_list_prioridades(limit: int = 200, source: Optional[str] = None) -> List[Dict[str, Any]]:
+    with _get_conn() as conn:
+        if source is None or str(source).strip() == "":
+            cur = conn.execute(
+                "SELECT id, term, weight, source FROM kb_priorities ORDER BY term ASC LIMIT ?",
+                (limit,),
+            )
+        else:
+            cur = conn.execute(
+                "SELECT id, term, weight, source FROM kb_priorities WHERE source=? ORDER BY term ASC LIMIT ?",
+                (str(source).strip(), limit),
+            )
+        return [
+            {"id": r[0], "term": r[1], "weight": r[2], "source": r[3]}
+            for r in cur.fetchall()
+        ]
+
+
+def kb_delete_prioridad(priority_id: int) -> bool:
+    with kb_session() as conn:
+        cur = conn.execute("DELETE FROM kb_priorities WHERE id = ?", (priority_id,))
+        return cur.rowcount > 0
 
 
 # =========================
@@ -1359,7 +1525,3 @@ def obtener_auditoria(limit: int = 50):
                 }
             )
         return resultado
-
-
-
-
