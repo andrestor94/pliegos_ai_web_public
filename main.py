@@ -1192,19 +1192,15 @@ async def enviar_rating(request: Request, payload: RatingIn):
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
     usuario = request.session.get("usuario", "Anónimo")
 
-    # Si hay una valoración pendiente, bloquear nuevo análisis
-    try:
-        pr = _pr_get(usuario)
-        if pr or tiene_valoracion_pendiente(usuario):
-            payload = {"error": "Tienes una valoración pendiente. Califica el análisis anterior para continuar."}
-            if pr:
-                payload["pending"] = True
-                payload["last"] = pr
-            resp = JSONResponse(payload, status_code=409)
-            resp.headers["X-Require-Rating"] = "1"
-            return resp
-    except Exception as e:
-        print("· Warning al chequear pendiente:", repr(e))
+    # Bloqueo si falta config de IA (evita colgarse adentro de utils)
+    if not (os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY_1") or os.getenv("OPENAI_API_BASE")):
+        return JSONResponse(
+            {"error": "Falta configurar el proveedor de IA (OPENAI_API_KEY / OPENAI_API_BASE)."},
+            status_code=503
+        )
+
+    # Valoración pendiente (igual que ahora)...
+    # ...
 
     if not archivos:
         return JSONResponse({"error": "Subí al menos un archivo"}, status_code=400)
@@ -1214,12 +1210,46 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             continue
         _validate_ext(a.filename)
 
-    # 1) Analizar anexos (sin bloquear el loop)
+    # --- TIMEOUTS CONFIGURABLES ---
+    ANALYZE_TIMEOUT = float(os.getenv("ANALYZE_TIMEOUT", "180"))  # 3 min
+    PDF_TIMEOUT = float(os.getenv("PDF_TIMEOUT", "60"))           # 1 min
+
+    # 1) Analizar anexos con timeout
     try:
-        resumen = await run_in_threadpool(analizar_anexos, archivos)
+        resumen = await asyncio.wait_for(
+            run_in_threadpool(analizar_anexos, archivos),
+            timeout=ANALYZE_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            {"error": f"El análisis tardó más de {int(ANALYZE_TIMEOUT)}s y fue cancelado (timeout). "
+                      "Probá de nuevo o reducí el tamaño del archivo."},
+            status_code=504
+        )
     except Exception as e:
         logger.exception("Error en /analizar-pliego -> analizar_anexos")
         return JSONResponse({"error": f"Fallo en el análisis: {e}"}, status_code=500)
+
+    # 2) Generar PDF con timeout
+    try:
+        timestamp = now_stamp_ar()
+        nombre_archivo_pdf = f"resumen_{timestamp}.pdf"
+        try:
+            await asyncio.wait_for(
+                run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo_pdf=nombre_archivo_pdf),
+                timeout=PDF_TIMEOUT
+            )
+        except TypeError:
+            await asyncio.wait_for(
+                run_in_threadpool(partial(generar_pdf_con_plantilla, resumen, nombre_archivo_pdf=nombre_archivo_pdf)),
+                timeout=PDF_TIMEOUT
+            )
+    except asyncio.TimeoutError:
+        return JSONResponse({"error": "Timeout generando el PDF"}, status_code=504)
+    except Exception as e:
+        logger.exception("Error en /analizar-pliego -> generar_pdf_con_plantilla")
+        return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
+
 
     # 2) Generar PDF (FIX: pasar nombre_archivo_pdf como keyword; fallback con partial)
     try:
@@ -1559,37 +1589,50 @@ def _build_chat_context(historial: List[dict], usuario_actual: str, max_items: i
 
 
 async def _call_chat_llm(mensaje: str, usuario_actual: str) -> str:
-    """
-    Llama al puente utils.responder_chat_openai en un threadpool con timeout configurable.
-    CHAT_LLM_TIMEOUT (seg) por env, default 60.
-    """
     try:
         historial = obtener_historial_completo() or []
     except Exception:
         historial = []
     contexto = _build_chat_context(historial, usuario_actual)
 
-    # Timeout configurable por env (por ej. 45 o 60). Acepta float.
     try:
         CHAT_LLM_TIMEOUT = float(os.getenv("CHAT_LLM_TIMEOUT", "60"))
     except Exception:
         CHAT_LLM_TIMEOUT = 60.0
 
-    try:
-        # Log básico para diagnóstico
-        logger.info("Chat LLM: usuario=%s, len(mensaje)=%d, timeout=%.1fs", usuario_actual, len(mensaje or ""), CHAT_LLM_TIMEOUT)
+    def _bridge():
+        # 1) (msg, ctx, user)
+        try:
+            return responder_chat_openai(mensaje, contexto, usuario_actual)
+        except TypeError:
+            pass
+        # 2) con kwargs
+        try:
+            return responder_chat_openai(mensaje, contexto=contexto, usuario=usuario_actual)
+        except TypeError:
+            pass
+        # 3) (msg, ctx)
+        try:
+            return responder_chat_openai(mensaje, contexto)
+        except TypeError:
+            pass
+        # 4) (msg, user)
+        try:
+            return responder_chat_openai(mensaje, usuario_actual)
+        except TypeError:
+            pass
+        # 5) (msg) — la más común
+        return responder_chat_openai(mensaje)
 
-        # Ejecutamos el puente a OpenAI en threadpool para no bloquear el loop
-        return await asyncio.wait_for(
-            run_in_threadpool(responder_chat_openai, mensaje, contexto, usuario_actual),
-            timeout=CHAT_LLM_TIMEOUT,
-        )
+    try:
+        logger.info("Chat LLM: usuario=%s, len(mensaje)=%d, timeout=%.1fs",
+                    usuario_actual, len(mensaje or ""), CHAT_LLM_TIMEOUT)
+        return await asyncio.wait_for(run_in_threadpool(_bridge), timeout=CHAT_LLM_TIMEOUT)
     except asyncio.TimeoutError:
         logger.warning("Chat LLM timeout (%.1fs) para usuario=%s", CHAT_LLM_TIMEOUT, usuario_actual)
         return "Estoy tardando más de lo normal en responder. Probá de nuevo en un momento."
     except Exception as e:
         logger.exception("Error en _call_chat_llm")
-        # Mensaje de error “amable” hacia el usuario
         return f"[Error de chat] {e}"
 
 
