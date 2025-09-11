@@ -3212,67 +3212,133 @@ class KBPriorityIn(BaseModel):
 
 @app.post("/api/kb/priorities", dependencies=[Depends(require_admin)])
 async def kb_priorities_upsert(payload: KBPriorityIn):
-    """
-    Upsert de prioridades con firmas flexibles.
-    1) Intenta sin DB (up(term, weight[, source])).
-    2) Si falta DB, intenta con SessionLocal (up(db, term, weight[, source])).
-    """
     f = _kb_funcs()
     up = f.get("upsert_priority")
-    if not callable(up):
-        return JSONResponse({"error": "Función no disponible en utils"}, status_code=501)
 
     term = (payload.term or "").strip()
     if not term:
         return JSONResponse({"error": "Término requerido"}, status_code=400)
-
     weight = int(payload.weight or 1)
     source = (payload.source or "").strip() or None
 
-    try:
-        # ---- Intentos sin DB ----
+    # 1) Intentos vía utils (sin y con DB)
+    if callable(up):
         try:
-            up(term, weight, source)
-            return {"ok": True}
-        except TypeError:
-            pass
-        try:
-            up(term, weight)
-            return {"ok": True}
-        except TypeError:
-            pass
+            try:
+                up(term, weight, source)   # (term, weight, source)
+                return {"ok": True}
+            except TypeError:
+                pass
+            try:
+                up(term, weight)           # (term, weight)
+                return {"ok": True}
+            except TypeError:
+                pass
 
-        # ---- Intentos con DB ----
-        db = None
-        try:
-            db = SessionLocal()
+            db = None
             try:
-                up(db, term, weight, source)
-                db.commit()
-                return {"ok": True}
-            except TypeError:
-                pass
-            try:
-                up(db, term, weight)
-                db.commit()
-                return {"ok": True}
-            except TypeError:
-                pass
-            # Si llegamos acá, ninguna firma calzó
-            return JSONResponse({"error": "No se pudo invocar kb_upsert_priority con ninguna firma conocida"}, status_code=500)
-        finally:
-            if db is not None:
+                db = SessionLocal()
                 try:
-                    db.close()
-                except Exception:
+                    up(db, term, weight, source)  # (db, term, weight, source)
+                    db.commit()
+                    return {"ok": True}
+                except TypeError:
                     pass
-    except Exception as e:
-        return JSONResponse({"error": f"No se pudo guardar: {e}"}, status_code=500)
+                try:
+                    up(db, term, weight)          # (db, term, weight)
+                    db.commit()
+                    return {"ok": True}
+                except TypeError:
+                    pass
+            finally:
+                if db is not None:
+                    try:
+                        db.close()
+                    except Exception:
+                        pass
+
+        except Exception as e:
+            # Error típico: "attempted relative import with no known parent package"
+            msg = str(e)
+            if "attempted relative import" not in msg and "No module named" not in msg:
+                # otro error real: lo exponemos
+                return JSONResponse({"error": f"No se pudo guardar: {e}"}, status_code=500)
+            # si fue error de import relativo, caemos al fallback local
+            print("· kb_upsert_priority via utils falló por import relativo; usando fallback:", repr(e))
+
+    # 2) Fallback local contra models.KBPriority
+    ok, err = _fallback_kb_upsert_priority(term, weight, source)
+    if ok:
+        return {"ok": True}
+    return JSONResponse({"error": f"No se pudo guardar: {err}"}, status_code=500)
 
 # (Opcional) diagnóstico de rutas
 @app.get("/__diag/routes")
 def _diag_routes():
     return {"routes": sorted({getattr(r, "path", "") for r in app.routes})}
+
+def _fallback_kb_upsert_priority(term: str, weight: int, source: Optional[str] = None):
+    """
+    Upsert directo en models.KBPriority, mapeando nombres de columnas
+    variables (term/pattern/patron, weight/peso, source/fuente/rubro).
+    Devuelve (ok: bool, error: Optional[str]).
+    """
+    try:
+        import models as KBM  # debe existir por _kb_init_orm()
+    except Exception as e:
+        return False, f"models import error: {e}"
+
+    Model = getattr(KBM, "KBPriority", None) or getattr(KBM, "Priority", None)
+    if Model is None:
+        return False, "Modelo KBPriority no encontrado en models.py"
+
+    cols = Model.__table__.c.keys()  # nombres de columnas
+    # detectar nombres reales
+    def pick(cands):
+        for c in cands:
+            if c in cols:
+                return c
+        return None
+
+    term_col   = pick(["term", "pattern", "patron", "keyword", "texto"])
+    weight_col = pick(["weight", "peso", "score", "priority"])
+    source_col = pick(["source", "fuente", "rubro", "category"])
+
+    if not term_col or not weight_col:
+        return False, f"Columnas requeridas no halladas (term=?, weight=?). Definidas: {cols}"
+
+    db = SessionLocal()
+    try:
+        q = db.query(Model).filter(getattr(Model, term_col) == term)
+        if source_col:
+            if source is None:
+                q = q.filter(getattr(Model, source_col) == None)  # noqa: E711
+            else:
+                q = q.filter(getattr(Model, source_col) == source)
+        row = q.first()
+
+        if row:
+            setattr(row, weight_col, int(weight))
+            if source_col:
+                setattr(row, source_col, source)
+        else:
+            kwargs = {term_col: term, weight_col: int(weight)}
+            if source_col:
+                kwargs[source_col] = source
+            row = Model(**kwargs)
+            db.add(row)
+
+        db.commit()
+        return True, None
+    except Exception as e:
+        db.rollback()
+        return False, str(e)
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
 
 # === Fallbacks raíz/login/health para Render (pegar al final del archivo) ===
 from starlette.routing import Route
