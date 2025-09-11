@@ -686,18 +686,45 @@ def kb_session():
     y si tampoco, un contexto nulo.
     """
     f = _kb_funcs().get("session")
+
+    # 1) Si utils.kb_session existe, intentar usarlo
     if callable(f):
-        # utils expone su propio context manager o fábrica
         try:
+            # Caso A: f() devuelve un context manager
             with f() as db:
                 yield db
                 return
         except TypeError:
+            # Caso B: f() devuelve una sesión simple (no context manager)
+            try:
+                db = f()
+                try:
+                    yield db
+                finally:
+                    try:
+                        close = getattr(db, "close", None)
+                        if callable(close):
+                            close()
+                    except Exception:
+                        pass
+                return
+            except Exception as e:
+                print("· kb_session(): utils.kb_session() no usable:", repr(e))
+        except Exception as e:
+            # Cualquier otro error: seguir con fallbacks
+            print("· kb_session(): error usando utils.kb_session():", repr(e))
 
-except Exception as e:
-    # Evita romper en despliegue si falla el bloque anterior
-    print("· Excepción ignorada en bootstrap:", repr(e))
-    pass
+    # 2) Fallback: usar SessionLocal() si existe
+    try:
+        with SessionLocal() as db:
+            yield db
+            return
+    except Exception as e:
+        print("· kb_session(): fallback SessionLocal() no disponible:", repr(e))
+
+    # 3) Último recurso: devolver None en un contexto nulo
+    with nullcontext() as _:
+        yield None
 
            
 # =========================
