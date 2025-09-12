@@ -23,6 +23,7 @@ except Exception:
 
 class Usuario(Base):
     __tablename__ = "usuarios"
+    __table_args__ = {"extend_existing": True}  # ✅ tolera doble registro
 
     id = Column(Integer, primary_key=True, index=True)
 
@@ -62,6 +63,11 @@ class Evento(Base):
     - visibilidad: 'privado' | 'equipo' (por si luego querés compartir)
     """
     __tablename__ = "eventos"
+    __table_args__ = (
+        Index("ix_eventos_usuario", "usuario_id"),
+        Index("ix_eventos_inicio", "inicio"),
+        {"extend_existing": True},  # ✅
+    )
 
     id = Column(Integer, primary_key=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
@@ -81,11 +87,6 @@ class Evento(Base):
 
     usuario = relationship("Usuario", back_populates="eventos")
 
-    __table_args__ = (
-        Index("ix_eventos_usuario", "usuario_id"),
-        Index("ix_eventos_inicio", "inicio"),
-    )
-
     def __repr__(self) -> str:
         return f"<Evento id={self.id} usuario_id={self.usuario_id} titulo={self.titulo!r}>"
 
@@ -98,6 +99,11 @@ class Notificacion(Base):
     - metadata JSON para payload libre (ids, etc.)
     """
     __tablename__ = "notificaciones"
+    __table_args__ = (
+        Index("ix_notif_usuario_leida", "usuario_id", "leida"),
+        Index("ix_notif_creado_en", "creado_en"),
+        {"extend_existing": True},  # ✅
+    )
 
     id = Column(Integer, primary_key=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
@@ -110,16 +116,13 @@ class Notificacion(Base):
     leida = Column(Boolean, default=False, nullable=False)
     leida_en = Column(DateTime(timezone=True))
 
-    metadata = Column(JSON)           # datos extra opcionales
+    # ⚠️ 'metadata' es nombre reservado en SQLAlchemy. Usamos atributo 'meta'
+    #     pero la columna en BD sigue llamándose "metadata".
+    meta = Column("metadata", JSON, default=dict)  # ✅ nombre de columna preservado
 
     creado_en = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     usuario = relationship("Usuario", back_populates="notificaciones")
-
-    __table_args__ = (
-        Index("ix_notif_usuario_leida", "usuario_id", "leida"),
-        Index("ix_notif_creado_en", "creado_en"),
-    )
 
     def __repr__(self) -> str:
         return f"<Notificacion id={self.id} usuario_id={self.usuario_id} tipo={self.tipo} leida={self.leida}>"
@@ -135,10 +138,11 @@ class KBSource(Base):
     y define dónde se almacenan físicamente en el servidor (Render Disk).
     """
     __tablename__ = "kb_sources"
+    __table_args__ = {"extend_existing": True}  # ✅
 
     id = Column(Integer, primary_key=True)
     name = Column(String(128), unique=True, index=True)   # ej. "Salud-AR Base", "Normativa ANMAT"
-    scope = Column(JSON, default={})                      # {"rubro":"salud","organismo":"ANMAT", ...}
+    scope = Column(JSON, default=dict)                    # {"rubro":"salud","organismo":"ANMAT", ...}
     storage_path = Column(String(512), nullable=True)     # carpeta base donde se guardan los archivos
     creado_en = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -153,6 +157,10 @@ class KBFile(Base):
     Archivo cargado a la BD de Conocimiento.
     """
     __tablename__ = "kb_files"
+    __table_args__ = (
+        Index("ix_kbfile_source_name", "source_id", "filename"),
+        {"extend_existing": True},  # ✅
+    )
 
     id = Column(Integer, primary_key=True)
     source_id = Column(Integer, ForeignKey("kb_sources.id", ondelete="CASCADE"), index=True, nullable=False)
@@ -162,15 +170,11 @@ class KBFile(Base):
     bytes = Column(Integer, default=0)
     hash_sha256 = Column(String(64), index=True)          # deduplicación
     stored_path = Column(String(512))                     # ruta absoluta donde quedó el archivo
-    meta = Column(JSON, default={})                       # {"rubro": "...", "tags": [...], ...}
+    meta = Column(JSON, default=dict)                     # {"rubro": "...", "tags": [...], ...}
     creado_en = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     source = relationship("KBSource", back_populates="files")
     chunks = relationship("KBChunk", back_populates="file", cascade="all, delete-orphan")
-
-    __table_args__ = (
-        Index("ix_kbfile_source_name", "source_id", "filename"),
-    )
 
     def __repr__(self) -> str:
         return f"<KBFile id={self.id} filename={self.filename!r} source_id={self.source_id}>"
@@ -181,6 +185,10 @@ class KBChunk(Base):
     Fragmentos (chunks) textuales con embedding para RAG.
     """
     __tablename__ = "kb_chunks"
+    __table_args__ = (
+        Index("ix_kbchunk_file_ord", "file_id", "ord"),
+        {"extend_existing": True},  # ✅
+    )
 
     id = Column(Integer, primary_key=True)
     file_id = Column(Integer, ForeignKey("kb_files.id", ondelete="CASCADE"), index=True, nullable=False)
@@ -188,15 +196,11 @@ class KBChunk(Base):
     ord = Column(Integer, nullable=False)                 # orden dentro del archivo
     text = Column(Text, nullable=False)                   # fragmento normalizado
     embedding = Column(Text)                              # json.dumps(list[float]) si no usas pgvector
-    span = Column(JSON, default={})                       # {"page": 3, "from": 120, "to": 480}
-    meta = Column(JSON, default={})
+    span = Column(JSON, default=dict)                     # {"page": 3, "from": 120, "to": 480}
+    meta = Column(JSON, default=dict)
     creado_en = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     file = relationship("KBFile", back_populates="chunks")
-
-    __table_args__ = (
-        Index("ix_kbchunk_file_ord", "file_id", "ord"),
-    )
 
     def __repr__(self) -> str:
         return f"<KBChunk id={self.id} file_id={self.file_id} ord={self.ord}>"
@@ -208,6 +212,10 @@ class KBPriority(Base):
     No es restrictivo: guía de prioridades por rubro.
     """
     __tablename__ = "kb_priorities"
+    __table_args__ = (
+        UniqueConstraint("rubric", "label", name="uq_kbprio"),
+        {"extend_existing": True},  # ✅
+    )
 
     id = Column(Integer, primary_key=True)
     rubric = Column(String(128), index=True)              # ej. "salud", "medicamentos", "descartables"
@@ -215,10 +223,6 @@ class KBPriority(Base):
     details = Column(Text)                                # explicación breve/reglas suaves
     weight = Column(Float, default=1.0)
     creado_en = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-    __table_args__ = (
-        UniqueConstraint("rubric", "label", name="uq_kbprio"),
-    )
 
     def __repr__(self) -> str:
         return f"<KBPriority id={self.id} rubric={self.rubric!r} label={self.label!r} weight={self.weight}>"
