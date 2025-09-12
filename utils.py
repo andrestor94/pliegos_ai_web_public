@@ -1701,18 +1701,18 @@ def generar_pdf_informe(texto_markdown: str, out_path: Optional[str] = None) -> 
     # Normaliza a texto plano para PDF
     contenido = preparar_texto_para_pdf(texto_markdown or "")
 
+    # Si no pasaron ruta, generamos una con el formato que espera /descargar:
+    # resumen_YYYYMMDDHHMMSS.pdf  (SIN guión bajo entre fecha y hora)
     if not out_path:
-    try:
-        tz = ZoneInfo("America/Argentina/Buenos_Aires")
-    except Exception:
-        tz = None
-    ts = datetime.now(tz=tz).strftime("%Y%m%d_%H%M%S")
-    # 🔧 Usá el mismo prefijo que espera tu ruta /descargar
-    out_path = os.path.abspath(f"resumen_{ts}.pdf")
+        try:
+            tz = ZoneInfo("America/Argentina/Buenos_Aires")
+        except Exception:
+            tz = None
+        ts = datetime.now(tz=tz).strftime("%Y%m%d%H%M%S")
+        out_path = os.path.abspath(f"resumen_{ts}.pdf")
 
-# (opcional) log visible en Render para debug
-print(f"[PDF] generado en: {out_path}")
-
+    # (opcional) log visible en Render para debug
+    print(f"[PDF] generado en: {out_path}")
 
     c = canvas.Canvas(out_path, pagesize=A4)
     width, height = A4
@@ -1743,7 +1743,6 @@ print(f"[PDF] generado en: {out_path}")
 
     # Cuerpo
     lines = _wrap_lines(contenido, max_chars=110)
-
     for ln in lines:
         if y < bottom + 15 * mm:
             c.showPage()
@@ -1756,6 +1755,7 @@ print(f"[PDF] generado en: {out_path}")
     c.showPage()
     c.save()
     return out_path
+
 
 # ==================== Helpers de alto nivel ====================
 def generar_informe_y_pdf(
