@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# utils.py — Parte 1/4 (Base + Ingesta KB)
+# utils.py — Parte 1/4 (Base + Ingesta KB) — versión mejorada
 
 """
 Módulo utilitario para:
@@ -11,7 +11,7 @@ Módulo utilitario para:
 
 Notas:
 - Se usa lazy-import para evitar ciclos (p.ej. con prompts.py o modelos SQLAlchemy).
-- Wrapper de Chat Completions compatible con max_completion_tokens / max_tokens.
+- Wrapper de Chat Completions compatible con max_completion_tokens / max_tokens (en Parte 2).
 - Esta es la PARTE 1/4: Base + funciones de KB. Las demás partes completan el módulo.
 """
 
@@ -45,13 +45,18 @@ from zoneinfo import ZoneInfo
 load_dotenv()
 
 # ========================= OpenAI client =========================
+# Importante: el timeout del cliente global no siempre se aplica a cada request.
+# Creamos un alias "client_timed" con timeout efectivo por request.
 OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "90"))
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=OPENAI_TIMEOUT)
+_API_KEY = os.getenv("OPENAI_API_KEY")  # Render -> Environment Variables
+client = OpenAI(api_key=_API_KEY)
+client_timed = client.with_options(timeout=OPENAI_TIMEOUT)
 
 # ========================= Embeddings model ======================
+# Para costo/latencia: por defecto usamos text-embedding-3-small (suficiente para RAG liviano).
 EMBEDDINGS_MODEL = (
-    os.getenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-large").strip()
-    or "text-embedding-3-large"
+    os.getenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-small").strip()
+    or "text-embedding-3-small"
 )
 
 # ========================= Base de Conocimiento (KB) =========================
@@ -142,7 +147,11 @@ def _kb_extract_text_from_path(path: str) -> Tuple[str, Dict[str, Any]]:
 
 
 def _kb_embed(text: str, _client: Optional[OpenAI] = None) -> List[float]:
-    cli = _client or client
+    """
+    Embedding con timeout efectivo por request.
+    Sugerencia de costo: usar EMBEDDINGS_MODEL = text-embedding-3-small salvo que necesites más recall.
+    """
+    cli = _client or client_timed
     resp = cli.embeddings.create(model=EMBEDDINGS_MODEL, input=text)
     return resp.data[0].embedding  # type: ignore
 
@@ -270,7 +279,7 @@ def kb_upsert_priority(db, rubric: str, label: str, details: str = "", weight: f
         row.weight = weight
     db.commit()
 # -*- coding: utf-8 -*-
-# utils.py — Parte 2/4 (Prompts + Extracción base)
+# utils.py — Parte 2/4 (Prompts + Extracción base) — versión mejorada
 
 # ========================= Prompts (lazy import) =========================
 _prom = None
@@ -394,10 +403,11 @@ def _rasterizar_pagina(page: fitz.Page, dpi: int = VISION_DPI) -> bytes:
 
 def _chat_create_safe(**kw):
     """
-    Wrapper para compatibilidad:
+    Wrapper para compatibilidad + timeout efectivo por request:
       - Prefiere max_completion_tokens (modelos nuevos).
       - Si falla, intenta con max_tokens (legacy).
       - Nunca envía temperature=None.
+      - Usa client_timed (ver Parte 1) para respetar OPENAI_TIMEOUT.
     """
     if kw.get("temperature", None) is None:
         kw.pop("temperature", None)
@@ -415,15 +425,16 @@ def _chat_create_safe(**kw):
     last_err = None
     for payload in intents:
         try:
-            return client.chat.completions.create(**payload)
+            return client_timed.chat.completions.create(**payload)
         except Exception as e:
             last_err = e
+            time.sleep(0.2)
             continue
 
     # último intento sin temperature
     payload = dict(intents[0])
     payload.pop("temperature", None)
-    return client.chat.completions.create(**payload)
+    return client_timed.chat.completions.create(**payload)
 
 def _ocr_openai_imagen_b64(b64_img: str, mime: str = "image/png") -> str:
     prompt = (
