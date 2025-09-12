@@ -2325,7 +2325,7 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
     email = payload.email.lower()
     # Bloquea sólo si EXISTE y está ACTIVO. Si existe inactivo, se permitirá re-crear (restaurar).
     row = obtener_usuario_por_email(email)  # (id, nombre, email, password, rol, activo)
-    if row && bool(row[5]):  # activo = 1
+    if row and bool(row[5]):  # activo = 1
         return JSONResponse({"error": "El email ya existe"}, status_code=409)
 
     try:
