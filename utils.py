@@ -1604,19 +1604,37 @@ def analizar_y_generar_informe(
     # Elección single vs multi
     multi = bool(force_multi) or (len(raw) > MAX_SINGLE_PASS_CHARS)
 
+    # --- ✅ BLOQUE QUE FALTABA (single-pass) ---
     if not multi:
-        msgs = _msg_single_block(varios_anexos, raw, texto_hints=hints, kb_context=kb_ctx)
-        borrador = _call_chat(msgs, model=_pick_model(final_pass=True), max_tokens=MAX_COMPLETION_TOKENS_SALIDA)
+        msgs = _msg_single_block(
+            varios_anexos,
+            raw,
+            texto_hints=hints,
+            kb_context=kb_ctx
+        )
+        borrador = _call_chat(
+            msgs,
+            model=_pick_model(final_pass=True),
+            max_tokens=MAX_COMPLETION_TOKENS_SALIDA
+        )
         final = _postproceso_final(borrador, raw, varios_anexos)
         _log_tiempo("pipeline_single_pass", t0)
         return final
+    # --- ✅ FIN BLOQUE ---
 
     # Multi-pass (parciales en paralelo)
     partes = _particionar(raw, max_chars=CHUNK_SIZE_BASE)
     parciales: List[str] = []
 
     def _work(i_chunk: int, total: int, texto: str) -> str:
-        return _resumen_parcial(texto, varios_anexos, i_chunk, total, texto_hints=hints, kb_context=kb_ctx)
+        return _resumen_parcial(
+            texto,
+            varios_anexos,
+            i_chunk,
+            total,
+            texto_hints=hints,
+            kb_context=kb_ctx
+        )
 
     t1 = _t()
     with ThreadPoolExecutor(max_workers=max(1, ANALISIS_CONCURRENCY)) as ex:
@@ -1636,6 +1654,7 @@ def analizar_y_generar_informe(
     _log_tiempo("consolidacion_multi_pass", t2)
     _log_tiempo("pipeline_multi_pass_total", t0)
     return final
+
 
 # ==================== Exportar a PDF (ReportLab) ====================
 def _wrap_lines(s: str, max_chars: int = 110) -> List[str]:
