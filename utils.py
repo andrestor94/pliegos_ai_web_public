@@ -1683,12 +1683,17 @@ def generar_pdf_informe(texto_markdown: str, out_path: Optional[str] = None) -> 
     contenido = preparar_texto_para_pdf(texto_markdown or "")
 
     if not out_path:
-        try:
-            tz = ZoneInfo("America/Argentina/Buenos_Aires")
-        except Exception:
-            tz = None  # usa timezone local por defecto
-        ts = datetime.now(tz=tz).strftime("%Y%m%d_%H%M%S")
-        out_path = os.path.abspath(f"informe_{ts}.pdf")
+    try:
+        tz = ZoneInfo("America/Argentina/Buenos_Aires")
+    except Exception:
+        tz = None
+    ts = datetime.now(tz=tz).strftime("%Y%m%d_%H%M%S")
+    # 🔧 Usá el mismo prefijo que espera tu ruta /descargar
+    out_path = os.path.abspath(f"resumen_{ts}.pdf")
+
+# (opcional) log visible en Render para debug
+print(f"[PDF] generado en: {out_path}")
+
 
     c = canvas.Canvas(out_path, pagesize=A4)
     width, height = A4
