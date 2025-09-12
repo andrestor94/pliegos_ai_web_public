@@ -9,11 +9,12 @@ import uuid
 import asyncio
 import re
 import json
+import unicodedata  # PATCH: para normalizar en _email_safe
 import logging  # PATCH: logging básico para mejor trazabilidad
 from functools import partial  # PATCH: lo usaremos con run_in_threadpool (Parte 2)
 from importlib import import_module  # import robusto para utils/Kb
 from math import ceil
-from typing import List, Optional, Dict, Set
+from typing import List, Optional, Dict, Set, Iterable, Tuple
 from contextlib import contextmanager, nullcontext  # kb_session fallback
 
 from fastapi import (
@@ -66,7 +67,97 @@ try:
 except Exception:
     _analizar_anexos = None
 
+# ==== Ident / email safe ======================================================
+# Intentamos importar desde utils si existe; si falla, usamos fallback local.
+try:
+    from utils.ident import email_safe as _email_safe  # type: ignore
+except Exception:
+    def _email_safe(email: Optional[str]) -> str:
+        """
+        Devuelve una versión segura para IDs/rutas a partir de un email.
+        - Normaliza acentos
+        - Lowercase
+        - Reemplaza '@' y '+' por tokens
+        - Deja solo [a-z0-9_-], todo lo demás -> '_'
+        - Corta a 120 chars por seguridad
+        """
+        if not email:
+            return "anon"
+        s = str(email).strip().lower()
+        s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+        s = s.replace("@", "_at_").replace("+", "_plus_")
+        s = re.sub(r"[^a-z0-9_-]+", "_", s)
+        return s[:120]
 
+# ==== Helpers de archivos / seguridad =========================================
+def _safe_basename(name: str) -> str:
+    """Nombre base sin ruta ni extensión, saneado para usar en archivos."""
+    if not name:
+        return "archivo"
+    base = os.path.basename(name)
+    base = os.path.splitext(base)[0]
+    base = unicodedata.normalize("NFKD", base).encode("ascii", "ignore").decode("ascii")
+    base = re.sub(r"[^a-zA-Z0-9._-]+", "_", base).strip("._-")
+    return base or "archivo"
+
+def _get_allowed_ext() -> Set[str]:
+    """
+    Junta las extensiones permitidas declaradas más abajo (CHAT/INCID/KB).
+    Si aún no están definidas (orden de carga), usa un set razonable por defecto.
+    """
+    acc: Set[str] = set()
+    for key in ("CHAT_ALLOWED_EXT", "INCID_ALLOWED_EXT", "KB_ALLOWED_EXT"):
+        val = globals().get(key)
+        if isinstance(val, (set, list, tuple)):
+            acc |= set(val)
+    if not acc:
+        acc = {
+            ".pdf", ".png", ".jpg", ".jpeg", ".webp",
+            ".txt", ".csv", ".xlsx", ".xls", ".docx", ".doc", ".pptx",
+            ".md", ".json", ".yaml", ".yml"
+        }
+    return {e.lower() for e in acc}
+
+def _validate_ext(filename: str):
+    ext = os.path.splitext(filename or "")[1].lower()
+    if not ext:
+        raise HTTPException(status_code=400, detail="Archivo sin extensión")
+    allowed = _get_allowed_ext()
+    if ext not in allowed:
+        raise HTTPException(status_code=400, detail=f"Extensión no permitida: {ext}")
+
+async def _save_upload_stream(fup: UploadFile, dst_path: str, chunk_size: int = 1024 * 1024) -> int:
+    """
+    Guarda un UploadFile a disco por streams (asíncrono). Devuelve bytes escritos.
+    """
+    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+    written = 0
+    with open(dst_path, "wb") as out:
+        while True:
+            chunk = await fup.read(chunk_size)
+            if not chunk:
+                break
+            out.write(chunk)
+            written += len(chunk)
+    return written
+
+# ==== Helpers de actor/req =====================================================
+def _actor_info(request: Request) -> Tuple[Optional[int], Optional[str]]:
+    """
+    Devuelve (actor_user_id, ip) para auditoría.
+    actor_user_id viene de la tabla usuarios (columna id).
+    """
+    email = request.session.get("usuario")
+    ip_hdr = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    ip = ip_hdr or (request.client.host if request.client else None)
+    try:
+        row = obtener_usuario_por_email(email) if email else None
+        uid = int(row[0]) if (isinstance(row, (list, tuple)) and len(row) >= 1 and row[0] is not None) else None
+    except Exception:
+        uid = None
+    return uid, ip
+
+# ==== Anexos (puente) ==========================================================
 def analizar_anexos(archivos: List[UploadFile]) -> str:
     """
     Síncrona (para run_in_threadpool). Si utils.analizar_anexos existe, delega.
@@ -97,7 +188,6 @@ def analizar_anexos(archivos: List[UploadFile]) -> str:
         return U.analizar_y_generar_informe(corpus, varios_anexos=varios)
     except Exception as e:
         return f"[Error de análisis] {e}"
-
 
 from database import (
     DB_PATH,
@@ -138,7 +228,6 @@ from database import (
 # ORM (audit_logs)
 from db_orm import inicializar_bd_orm, SessionLocal, AuditLog
 
-
 # ---------- KB: init ORM si hay models.py ----------
 def _kb_init_orm():
     """
@@ -158,18 +247,14 @@ def _kb_init_orm():
         # si no está models.py o falla algo, no frenamos la app
         print("· KB init omitido:", repr(e))
 
-
 # ================== TZ & helpers ==================
 TZ_AR = ZoneInfo("America/Argentina/Buenos_Aires")
-
 
 def now_iso_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-
 def now_stamp_ar() -> str:
     return datetime.now(TZ_AR).strftime("%Y%m%d%H%M%S")
-
 
 def iso_utc_to_ar_str(iso_utc: str, fmt: str = "%d/%m/%Y %H:%M") -> str:
     if not iso_utc:
@@ -188,7 +273,6 @@ def iso_utc_to_ar_str(iso_utc: str, fmt: str = "%d/%m/%Y %H:%M") -> str:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=TZ_AR)  # y mostramos en AR
     return dt.astimezone(TZ_AR).strftime(fmt)
-
 
 # --- Normalizador robusto de datetimes a UTC aware (para comparaciones seguras) ---
 def _parse_dt_utc(value) -> Optional[datetime]:
@@ -216,7 +300,6 @@ def _parse_dt_utc(value) -> Optional[datetime]:
         dt = dt.replace(tzinfo=TZ_AR)
     # devolvemos en UTC para comparaciones/orden
     return dt.astimezone(timezone.utc)
-
 
 # ================== App & Middlewares ==================
 SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-in-prod")
@@ -288,7 +371,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("app")
 
-
 # ---------- Garantizar tablas de chat si faltan (fix 'no such table: mensajes') ----------
 def ensure_chat_tables():
     """Crea tablas de chat si no existen en usuarios.db (robustez en Render)."""
@@ -349,7 +431,6 @@ def ensure_chat_tables():
         except Exception:
             pass
 
-
 # Inicializa BD SQLite (usuarios, historial, tickets, mensajes, hilos_ocultos, adjuntos)
 inicializar_bd()
 # Asegurar explícitamente las tablas de chat (por si el módulo de DB venía sin creadoras)
@@ -358,7 +439,6 @@ ensure_chat_tables()
 inicializar_bd_orm()
 # Inicializa (si existe) el esquema de la KB en el mismo engine
 _kb_init_orm()
-
 
 # ---------- Bootstrap de admin si DB está vacía ----------
 def ensure_default_admin():
@@ -397,10 +477,8 @@ def ensure_default_admin():
     except Exception as e:
         print("· ensure_default_admin() error:", repr(e))
 
-
 ensure_default_admin()
 # ---------- fin bootstrap ----------
-
 
 # Static
 os.makedirs("static", exist_ok=True)
@@ -419,7 +497,6 @@ try:
 except Exception:
     pass
 
-
 # Filtro Jinja para mostrar UTC como hora local AR
 def ar_time(value: str) -> str:
     try:
@@ -427,9 +504,7 @@ def ar_time(value: str) -> str:
     except Exception:
         return value
 
-
 templates.env.filters["ar_time"] = ar_time
-
 
 # No-cache para HTML (evita que el browser/CDN te muestre UI vieja)
 @app.middleware("http")
@@ -442,7 +517,6 @@ async def _no_cache_html(request, call_next):
         resp.headers["Expires"] = "0"
     return resp
 
-
 # Headers de seguridad básicos
 @app.middleware("http")
 async def _security_headers(request: Request, call_next):
@@ -452,14 +526,12 @@ async def _security_headers(request: Request, call_next):
     resp.headers.setdefault("Referrer-Policy", "no-referrer-when-downgrade")
     return resp
 
-
 # ================== Guardas/Dependencias de auth/roles ==================
 def require_auth(request: Request):
     if not request.session.get("usuario"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado"
         )
-
 
 def require_admin(request: Request):
     email = request.session.get("usuario")
@@ -478,7 +550,6 @@ def require_admin(request: Request):
         pass
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admins")
 
-
 # ================== Preferencias de respuesta (HTML/JSON) ==================
 def wants_json(request: Request) -> bool:
     """
@@ -491,11 +562,9 @@ def wants_json(request: Request) -> bool:
         request.query_params.get("_json") == "1"
     )
 
-
 def _wants_html(req: Request) -> bool:
     acc = (req.headers.get("accept") or "").lower()
     return "text/html" in acc and "application/json" not in acc
-
 
 # ================== Alert/WS manager ==================
 class ConnectionManager:
@@ -533,9 +602,7 @@ class ConnectionManager:
         for email in list(self._by_user.keys()):
             await self.send_to_user(email, payload)
 
-
 manager = ConnectionManager()
-
 
 def _get_ws_email(websocket: WebSocket) -> str:
     email = None
@@ -546,7 +613,6 @@ def _get_ws_email(websocket: WebSocket) -> str:
     if not email:
         email = websocket.query_params.get("email")
     return email or "anon"
-
 
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket):
@@ -564,13 +630,11 @@ async def ws_endpoint(websocket: WebSocket):
     except Exception:
         manager.disconnect(websocket, email)
 
-
 async def emit_alert(email: str, title: str, body: str = "", extra: dict = None):
     payload = {"event": "alert:new", "title": title, "body": body, "ts": now_iso_utc()}
     if extra:
         payload["extra"] = extra
     await manager.send_to_user(email, payload)
-
 
 async def emit_chat_new_message(para_email: str, de_email: str, msg_id: int, preview: str = ""):
     payload = {
@@ -581,7 +645,6 @@ async def emit_chat_new_message(para_email: str, de_email: str, msg_id: int, pre
         "ts": now_iso_utc(),
     }
     await manager.send_to_user(para_email, payload)
-
 
 # ================== Archivos de chat (adjuntos) ==================
 CHAT_ATTACH_DIR = os.path.join("static", "chat_adjuntos")
@@ -605,7 +668,6 @@ CHAT_ALLOWED_EXT = {
 CHAT_MAX_FILES = 10
 CHAT_MAX_TOTAL_MB = 50
 
-
 # ================== Adjuntos de incidencias ==================
 INCID_ATTACH_DIR = os.path.join("static", "incid_adjuntos")
 os.makedirs(INCID_ATTACH_DIR, exist_ok=True)
@@ -613,13 +675,11 @@ INCID_ALLOWED_EXT = CHAT_ALLOWED_EXT
 INCID_MAX_FILES = 10
 INCID_MAX_TOTAL_MB = 25
 
-
 # ================== Avatares (perfil) ==================
 AVATAR_DIR = os.path.join("static", "avatars")
 os.makedirs(AVATAR_DIR, exist_ok=True)
 AVATAR_ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".webp"}
 AVATAR_MAX_MB = 2  # MB
-
 
 # ================== Knowledge Base (KB) bootstrap ==================
 # Carpeta base para almacenar originales de la KB (ingesta por rubro)
@@ -629,12 +689,10 @@ os.makedirs(KB_STORAGE_DIR, exist_ok=True)
 # Extensiones permitidas para KB (reusa y amplía)
 KB_ALLOWED_EXT = set(CHAT_ALLOWED_EXT) | {".md", ".json", ".yaml", ".yml"}
 
-
 def _kb_slugify(name: str) -> str:
     s = (name or "").strip().lower()
     s = re.sub(r"[^a-z0-9._-]+", "-", s)
     return s.strip("-") or "rubro"
-
 
 def _import_utils_module():
     """
@@ -656,7 +714,6 @@ def _import_utils_module():
         print("· KB utils import error:", repr(last_err))
         return None
 
-
 def _kb_funcs():
     """Descubre funciones KB en utils.* sin romper si no están todavía."""
     mod = _import_utils_module()
@@ -670,13 +727,11 @@ def _kb_funcs():
         "session": get(mod, "kb_session"),                    # si existe, la usamos abajo
     }
 
-
 def _kb_enabled() -> bool:
     if os.getenv("KB_ENABLED", "1") != "1":
         return False
     f = _kb_funcs()
     return bool(f["create_or_get_source"] and f["ingest_file"])
-
 
 # ---- kb_session unificada y compatible ----
 @contextmanager
@@ -726,7 +781,100 @@ def kb_session():
     with nullcontext() as _:
         yield None
 
-           
+# =========================
+# Helpers de historial/paginación (usados en Partes 2/3)
+# =========================
+def _paginate(items: List[dict], page: int, per_page: int) -> Tuple[List[dict], int, int, int, int]:
+    total_items = len(items)
+    total_pages = max(1, ceil(total_items / per_page)) if per_page else 1
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * per_page
+    end = start + per_page
+    return items[start:end], page, per_page, total_pages, total_items
+
+def _extraer_ts_de_nombre(nombre: str) -> Optional[str]:
+    """
+    Busca patrones tipo 'resumen_YYYYMMDDHHMMSS.pdf' y devuelve el timestamp.
+    """
+    m = re.search(r"resumen_(\d{14})\.pdf$", (nombre or "").strip(), flags=re.I)
+    return m.group(1) if m else None
+
+def _historial_para_home(email: str, rol: str, q: str = "") -> List[dict]:
+    """
+    Agrega una capa de filtrado/búsqueda para la vista/endpoint de historial.
+    Si es admin, puede ver todo; si no, solo su propio historial.
+    """
+    q = (q or "").strip().lower()
+    try:
+        if (rol or "").lower().startswith("admin"):
+            data = obtener_historial_completo() or []
+        else:
+            data = obtener_historial(email) or []
+    except Exception:
+        data = []
+
+    out = []
+    for h in data:
+        # normalizamos claves mínimas esperadas
+        item = {
+            "id": h.get("id") if isinstance(h, dict) else (h[0] if isinstance(h, (list, tuple)) and len(h) > 0 else None),
+            "historial_id": h.get("historial_id") if isinstance(h, dict) else None,
+            "usuario": h.get("usuario") if isinstance(h, dict) else (h[1] if isinstance(h, (list, tuple)) and len(h) > 1 else email),
+            "nombre_archivo": h.get("nombre_archivo") if isinstance(h, dict) else (h[2] if isinstance(h, (list, tuple)) and len(h) > 2 else ""),
+            "ruta_pdf": h.get("ruta_pdf") if isinstance(h, dict) else (h[3] if isinstance(h, (list, tuple)) and len(h) > 3 else ""),
+            "resumen": h.get("resumen") if isinstance(h, dict) else (h[4] if isinstance(h, (list, tuple)) and len(h) > 4 else ""),
+            "fecha": h.get("fecha") if isinstance(h, dict) else (h[5] if isinstance(h, (list, tuple)) and len(h) > 5 else ""),
+        }
+        text = f"{item['usuario']} {item['nombre_archivo']} {item['resumen']}".lower()
+        if q and q not in text:
+            continue
+        out.append(item)
+
+    # orden nuevo→viejo usando fecha si existe
+    out.sort(key=lambda x: _parse_dt_utc(x.get("fecha")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    return out
+
+def _buscar_historial_usuario(user: str, timestamp: Optional[str] = None, nombre_pdf: Optional[str] = None) -> Optional[dict]:
+    """
+    Localiza el análisis del usuario por timestamp y/o nombre de PDF.
+    Sirve para asociar la valoración cuando el front no envía el id.
+    """
+    try:
+        data = obtener_historial(user) or []
+    except Exception:
+        data = []
+    if not data:
+        return None
+
+    # normalizamos a dict
+    norm: List[dict] = []
+    for h in data:
+        if isinstance(h, dict):
+            norm.append(h)
+        elif isinstance(h, (list, tuple)):
+            norm.append({
+                "id": h[0] if len(h) > 0 else None,
+                "usuario": h[1] if len(h) > 1 else user,
+                "nombre_archivo": h[2] if len(h) > 2 else "",
+                "ruta_pdf": h[3] if len(h) > 3 else "",
+                "resumen": h[4] if len(h) > 4 else "",
+                "fecha": h[5] if len(h) > 5 else "",
+            })
+
+    if nombre_pdf:
+        for h in norm:
+            if (h.get("nombre_archivo") or "").strip().lower() == nombre_pdf.strip().lower():
+                return h
+
+    if timestamp:
+        for h in norm:
+            ts = _extraer_ts_de_nombre(h.get("nombre_archivo") or "")
+            if ts and ts == timestamp:
+                return h
+
+    # fallback: el más reciente
+    norm.sort(key=lambda x: _parse_dt_utc(x.get("fecha")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    return norm[0] if norm else None
 # =========================
 # main.py — PARTE 2 / 6
 # (login/logout, cambiar password, rating, analizar pliego)
@@ -1199,9 +1347,6 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             status_code=503
         )
 
-    # Valoración pendiente (igual que ahora)...
-    # ...
-
     if not archivos:
         return JSONResponse({"error": "Subí al menos un archivo"}, status_code=400)
 
@@ -1230,10 +1375,11 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         logger.exception("Error en /analizar-pliego -> analizar_anexos")
         return JSONResponse({"error": f"Fallo en el análisis: {e}"}, status_code=500)
 
-    # 2) Generar PDF con timeout
+    # 2) Generar PDF con timeout (una sola vez)
+    timestamp = now_stamp_ar()
+    nombre_archivo_pdf = f"resumen_{timestamp}.pdf"
     try:
-        timestamp = now_stamp_ar()
-        nombre_archivo_pdf = f"resumen_{timestamp}.pdf"
+        # algunos run_in_threadpool no aceptan kwargs; probamos y caemos al partial
         try:
             await asyncio.wait_for(
                 run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo_pdf=nombre_archivo_pdf),
@@ -1246,27 +1392,6 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             )
     except asyncio.TimeoutError:
         return JSONResponse({"error": "Timeout generando el PDF"}, status_code=504)
-    except Exception as e:
-        logger.exception("Error en /analizar-pliego -> generar_pdf_con_plantilla")
-        return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
-
-
-    # 2) Generar PDF (FIX: pasar nombre_archivo_pdf como keyword; fallback con partial)
-    try:
-        timestamp = now_stamp_ar()
-        nombre_archivo_pdf = f"resumen_{timestamp}.pdf"
-
-        try:
-            # Starlette/fastapi recientes: soportan kwargs en run_in_threadpool
-            await run_in_threadpool(
-                generar_pdf_con_plantilla, resumen, nombre_archivo_pdf=nombre_archivo_pdf
-            )
-        except TypeError:
-            # Fallback para versiones que no aceptan kwargs: usamos partial
-            await run_in_threadpool(
-                partial(generar_pdf_con_plantilla, resumen, nombre_archivo_pdf=nombre_archivo_pdf)
-            )
-
     except Exception as e:
         logger.exception("Error en /analizar-pliego -> generar_pdf_con_plantilla")
         return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
@@ -1423,10 +1548,15 @@ async def eliminar_archivo(timestamp: str):
 # ================== Usuario actual ==================
 @app.get("/usuario-actual")
 async def usuario_actual(request: Request):
+    """
+    Devuelve info del usuario logueado para el topbar:
+    email, rol, nombre legible y url de avatar (si existe).
+    """
     email = request.session.get("usuario", "")
     rol = request.session.get("rol", "usuario")
     row = obtener_usuario_por_email(email) if email else None
-    nombre = (row[1] if row else None) or request.session.get("nombre") or (email or "Desconocido")
+    # nombre preferente: DB.nombre -> session['nombre'] -> email -> 'Desconocido'
+    nombre = (row[1] if (row and len(row) > 1) else None) or request.session.get("nombre") or (email or "Desconocido")
 
     # Buscar avatar si existe
     avatar_url = ""
@@ -1449,8 +1579,7 @@ async def usuario_actual(request: Request):
 # ===== Subir/actualizar avatar =====
 @app.post("/perfil/avatar")
 async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
-    email = request.session.get("usuario")
-    if not email:
+    if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
 
     orig = avatar.filename or ""
@@ -1463,6 +1592,7 @@ async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
     if size_mb > AVATAR_MAX_MB:
         return JSONResponse({"error": f"Máximo {AVATAR_MAX_MB} MB"}, status_code=400)
 
+    email = request.session.get("usuario")
     prefix = _email_safe(email)
     dst = os.path.join(AVATAR_DIR, prefix + ext)
 
@@ -2195,7 +2325,7 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
     email = payload.email.lower()
     # Bloquea sólo si EXISTE y está ACTIVO. Si existe inactivo, se permitirá re-crear (restaurar).
     row = obtener_usuario_por_email(email)  # (id, nombre, email, password, rol, activo)
-    if row and bool(row[5]):  # activo = 1
+    if row && bool(row[5]):  # activo = 1
         return JSONResponse({"error": "El email ya existe"}, status_code=409)
 
     try:
