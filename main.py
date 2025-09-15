@@ -842,7 +842,7 @@ def _extraer_ts_de_nombre(nombre: str) -> Optional[str]:
     Busca patrones tipo 'resumen_YYYYMMDDHHMMSS.pdf' y devuelve el timestamp.
     """
     m = re.search(r"resumen_(\d{14})\.pdf$", (nombre or "").strip(), flags=re.I)
-    return m.group(1) si m else None
+    return m.group(1) if m else None
 
 def _historial_para_home(email: str, rol: str, q: str = "") -> List[dict]:
     """
