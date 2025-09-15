@@ -16,6 +16,8 @@ from importlib import import_module  # import robusto para utils/Kb
 from math import ceil
 from typing import List, Optional, Dict, Set, Iterable, Tuple
 from contextlib import contextmanager, nullcontext  # kb_session fallback
+from pathlib import Path  # PATCH: paths robustos
+import shutil  # PATCH: copy2 para reubicar PDFs
 
 from fastapi import (
     FastAPI,
@@ -240,7 +242,7 @@ def _kb_init_orm():
         # obtener engine desde una sesión viva
         with SessionLocal() as s:
             engine = s.get_bind()
-        if engine is not None and hasattr(KBM, "Base"):
+        if engine is not None y hasattr(KBM, "Base"):
             KBM.Base.metadata.create_all(bind=engine)
             print("✓ KB: tablas verificadas/creadas")
     except Exception as e:
@@ -325,7 +327,6 @@ _middlewares: List[Middleware] = [
 if os.getenv("ENABLE_GZIP", "1") == "1":
     try:
         from starlette.middleware.gzip import GZipMiddleware
-
         _middlewares.append(Middleware(GZipMiddleware, minimum_size=1024))
     except Exception as _egzip:
         print("· GZip no disponible:", repr(_egzip))
@@ -334,7 +335,6 @@ if os.getenv("ENABLE_GZIP", "1") == "1":
 if os.getenv("ENABLE_CORS", "0") == "1":
     try:
         from fastapi.middleware.cors import CORSMiddleware
-
         _origins_env = os.getenv("CORS_ORIGINS", "*")
         _origins = [o.strip() for o in _origins_env.split(",") if o.strip()]
         _middlewares.append(
@@ -354,7 +354,6 @@ _trusted = os.getenv("TRUSTED_HOSTS", "").strip()
 if _trusted:
     try:
         from starlette.middleware.trustedhost import TrustedHostMiddleware
-
         _hosts = [h.strip() for h in _trusted.split(",") if h.strip()]
         if _hosts:
             _middlewares.append(Middleware(TrustedHostMiddleware, allowed_hosts=_hosts))
@@ -480,11 +479,57 @@ def ensure_default_admin():
 ensure_default_admin()
 # ---------- fin bootstrap ----------
 
-# Static
+# ================== Static & PDFs (UNIFICACIÓN DE RUTAS) ==================
 os.makedirs("static", exist_ok=True)
-os.makedirs("generated_pdfs", exist_ok=True)
+
+# Canon: servimos SIEMPRE desde /opt/render/project/src/generated_pdfs (raíz src)
+# Puedes overridear con env: PDF_DIR=/ruta/absoluta
+APP_DIR = Path(__file__).resolve().parent                  # .../src/backend
+ROOT_DIR = APP_DIR.parent                                  # .../src
+PDF_SERVE_DIR = Path(os.getenv("PDF_DIR", ROOT_DIR / "generated_pdfs")).resolve()
+
+# Otros lugares donde podría estar escribiendo utils.generar_pdf_con_plantilla
+PDF_CANDIDATE_DIRS = [
+    PDF_SERVE_DIR,
+    ROOT_DIR / "generated_pdfs",
+    APP_DIR / "generated_pdfs",
+    Path.cwd() / "generated_pdfs",
+    ROOT_DIR / "backend" / "generated_pdfs",
+]
+for _d in PDF_CANDIDATE_DIRS:
+    try:
+        _d.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+def _pdf_candidates(filename: str) -> List[Path]:
+    fn = os.path.basename(filename)
+    return [d / fn for d in PDF_CANDIDATE_DIRS]
+
+def _ensure_pdf_in_serve_dir(filename: str) -> Optional[str]:
+    """
+    Garantiza que <filename> esté en PDF_SERVE_DIR.
+    - Si ya está, devuelve su ruta.
+    - Si aparece en otro candidato, lo copia a PDF_SERVE_DIR y devuelve ruta destino.
+    - Si no existe en ningún lado, devuelve None.
+    """
+    target = PDF_SERVE_DIR / os.path.basename(filename)
+    if target.exists() and target.is_file():
+        return str(target)
+    for cand in _pdf_candidates(filename):
+        if cand.exists() and cand.is_file():
+            try:
+                shutil.copy2(str(cand), str(target))
+            except Exception:
+                # fallback simple si copy2 falla
+                with open(cand, "rb") as src, open(target, "wb") as dst:
+                    dst.write(src.read())
+            return str(target)
+    return None
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/generated_pdfs", StaticFiles(directory="generated_pdfs"), name="generated_pdfs")
+# Montamos /generated_pdfs apuntando al directorio CANÓNICO
+app.mount("/generated_pdfs", StaticFiles(directory=str(PDF_SERVE_DIR)), name="generated_pdfs")
 
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["os"] = os
@@ -797,7 +842,7 @@ def _extraer_ts_de_nombre(nombre: str) -> Optional[str]:
     Busca patrones tipo 'resumen_YYYYMMDDHHMMSS.pdf' y devuelve el timestamp.
     """
     m = re.search(r"resumen_(\d{14})\.pdf$", (nombre or "").strip(), flags=re.I)
-    return m.group(1) if m else None
+    return m.group(1) si m else None
 
 def _historial_para_home(email: str, rol: str, q: str = "") -> List[dict]:
     """
@@ -1048,7 +1093,7 @@ async def login(
     except Exception:
         pass
 
-    if usuario and str(usuario[3]) == str(password) and is_active:
+    if usuario y str(usuario[3]) == str(password) and is_active:
         request.session["usuario"] = usuario[2]
         request.session["email"] = usuario[2]
         request.session["rol"] = usuario[4]
@@ -1336,6 +1381,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
     return {"ok": True, "message": "Valoración registrada"}
 
 
+# *** AJUSTADO ***: unificación de ruta de PDFs tras la generación
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
     usuario = request.session.get("usuario", "Anónimo")
@@ -1375,9 +1421,10 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         logger.exception("Error en /analizar-pliego -> analizar_anexos")
         return JSONResponse({"error": f"Fallo en el análisis: {e}"}, status_code=500)
 
-    # 2) Generar PDF con timeout (una sola vez)
+    # 2) Generar PDF con timeout (y luego asegurar que quede en el directorio servido)
     timestamp = now_stamp_ar()
     nombre_archivo_pdf = f"resumen_{timestamp}.pdf"
+
     try:
         # algunos run_in_threadpool no aceptan kwargs; probamos y caemos al partial
         try:
@@ -1396,7 +1443,18 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         logger.exception("Error en /analizar-pliego -> generar_pdf_con_plantilla")
         return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
 
-    # 3) Guardar en historial
+    # === NUEVO: asegurar que el PDF quede accesible en /generated_pdfs ===
+    try:
+        pdf_abs = _ensure_pdf_in_serve_dir(nombre_archivo_pdf)  # usa PDF_SERVE_DIR (definido en Parte 1)
+        logger.info("[PDF] ensure -> %s | serve_dir=%s", pdf_abs, str(PDF_SERVE_DIR))
+        if not pdf_abs:
+            logger.error("[PDF] No pude localizar '%s' en candidatos; botón de descarga fallaría.", nombre_archivo_pdf)
+            return JSONResponse({"error": "El PDF se generó pero no se pudo ubicar para descarga."}, status_code=500)
+    except Exception as e:
+        logger.exception("[PDF] Error asegurando PDF en carpeta servida")
+        return JSONResponse({"error": f"No se pudo preparar el PDF para descarga: {e}"}, status_code=500)
+
+    # 3) Guardar en historial (guardar SOLO el basename; la ruta se reconstruye al descargar)
     analisis_id = uuid.uuid4().hex
     try:
         historial_id = iniciar_analisis_historial(
@@ -1470,7 +1528,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
 
     return {
         "resumen": resumen,
-        "pdf": nombre_archivo_pdf,
+        "pdf": nombre_archivo_pdf,  # basename (el endpoint construye la ruta)
         "timestamp": timestamp,
         "historial_id": historial_id,
         "analisis_id": analisis_id,
@@ -1479,6 +1537,61 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
 # main.py — PARTE 3 / 6
 # (historial, usuario/avatares, diagnóstico)
 # =========================
+
+# ---- Servido de PDFs: carpeta y helpers robustos ----
+PDF_SERVE_DIR = os.getenv("PDF_SERVE_DIR", "generated_pdfs")
+os.makedirs(PDF_SERVE_DIR, exist_ok=True)
+
+# Lugares candidatos donde el generador pudo dejar el PDF (por si utils escribe en otro lado)
+_PDF_CANDIDATE_DIRS = [
+    PDF_SERVE_DIR,
+    ".",                      # cwd
+    "static",
+    "storage",
+    "/tmp",
+]
+
+def _find_pdf_path(filename: str) -> Optional[str]:
+    """Devuelve ruta absoluta si encuentra el PDF en candidatos; None si no."""
+    name = os.path.basename(filename or "")
+    if not name.lower().endswith(".pdf"):
+        return None
+    for d in _PDF_CANDIDATE_DIRS:
+        p = os.path.abspath(os.path.join(d, name))
+        if os.path.isfile(p):
+            return p
+    return None
+
+def _ensure_pdf_in_serve_dir(filename: str) -> Optional[str]:
+    """
+    Garantiza que <PDF_SERVE_DIR>/<filename> exista.
+    Si el archivo está en otro directorio candidato, lo copia acá.
+    Devuelve ruta absoluta final o None si no se pudo ubicar/copiar.
+    """
+    name = os.path.basename(filename or "")
+    src = _find_pdf_path(name)
+    if not src:
+        return None
+    dst = os.path.abspath(os.path.join(PDF_SERVE_DIR, name))
+    if os.path.abspath(src) == dst:
+        return dst
+    try:
+        os.makedirs(PDF_SERVE_DIR, exist_ok=True)
+        # copia segura sin dependencias externas
+        with open(src, "rb") as f_in, open(dst, "wb") as f_out:
+            while True:
+                chunk = f_in.read(1024 * 1024)
+                if not chunk:
+                    break
+                f_out.write(chunk)
+        return dst
+    except Exception:
+        try:
+            import shutil
+            shutil.copyfile(src, dst)
+            return dst
+        except Exception:
+            return None
 
 # ===== Historial (usa helpers definidos en PARTE 1) =====
 
@@ -1524,19 +1637,54 @@ async def alias_analisis():
     return RedirectResponse("/?goto=analisis", status_code=307)
 
 
+# ---- Descarga de PDFs (robusta) ----
 @app.get("/descargar/{archivo}")
 async def descargar_pdf(archivo: str):
-    archivo = os.path.basename(archivo)
-    ruta = os.path.join("generated_pdfs", archivo)
-    if os.path.exists(ruta) and os.path.isfile(ruta):
-        return FileResponse(ruta, media_type="application/pdf", filename=archivo)
-    return JSONResponse({"error": "Archivo no encontrado"}, status_code=404)
+    """
+    Descarga un PDF por nombre de archivo (basename).
+    Busca en varios directorios y, si es necesario, lo copia a PDF_SERVE_DIR.
+    """
+    name = os.path.basename(archivo or "")
+    if not name or not name.lower().endswith(".pdf"):
+        return JSONResponse({"error": "Nombre de archivo inválido"}, status_code=400)
+
+    # Garantizar que exista en la carpeta servida
+    final_abs = _ensure_pdf_in_serve_dir(name)
+    if not final_abs or not os.path.isfile(final_abs):
+        return JSONResponse({"error": "Archivo no encontrado"}, status_code=404)
+
+    return FileResponse(final_abs, media_type="application/pdf", filename=name)
+
+
+# Nuevo: Descargar el último PDF del usuario logueado
+@app.get("/descargar/ultimo")
+async def descargar_ultimo(request: Request):
+    if not request.session.get("usuario"):
+        return JSONResponse({"error": "No autenticado"}, status_code=401)
+
+    user = request.session.get("usuario")
+    # Tomamos del historial del usuario el más reciente
+    h = _buscar_historial_usuario(user)
+    if not h:
+        return JSONResponse({"error": "No hay informes recientes para descargar"}, status_code=404)
+
+    filename = (h.get("nombre_archivo") or "").strip()
+    if not filename:
+        return JSONResponse({"error": "No pude determinar el nombre del PDF"}, status_code=404)
+
+    # Reutilizamos el endpoint principal
+    return await descargar_pdf(filename)
+
+# Alias por compatibilidad con frontends previos
+@app.get("/descargar-ultimo")
+async def descargar_ultimo_alias(request: Request):
+    return await descargar_ultimo(request)
 
 
 @app.delete("/eliminar/{timestamp}")
 async def eliminar_archivo(timestamp: str):
     eliminar_del_historial(timestamp)
-    ruta = os.path.join("generated_pdfs", f"resumen_{os.path.basename(timestamp)}.pdf")
+    ruta = os.path.join(PDF_SERVE_DIR, f"resumen_{os.path.basename(timestamp)}.pdf")
     if os.path.exists(ruta):
         try:
             os.remove(ruta)
@@ -1974,7 +2122,7 @@ async def chat_enviar_archivos(
         return JSONResponse({"error": "No autenticado"}, status_code=401)
 
     de = request.session.get("usuario")
-    files = [a for a in archivos if a and a.filename]
+    files = [a for a in archivos if a y a.filename]
     if len(files) > CHAT_MAX_FILES:
         return JSONResponse({"error": f"Máximo {CHAT_MAX_FILES} archivos por mensaje"}, status_code=400)
 
@@ -1983,7 +2131,7 @@ async def chat_enviar_archivos(
         msg_id = enviar_mensaje(
             de_email=de,
             para_email=para,
-            texto=texto or "",
+            texto=texto o "",
             actor_user_id=actor_user_id,
             ip=ip,
         )
@@ -2325,7 +2473,7 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
     email = payload.email.lower()
     # Bloquea sólo si EXISTE y está ACTIVO. Si existe inactivo, se permitirá re-crear (restaurar).
     row = obtener_usuario_por_email(email)  # (id, nombre, email, password, rol, activo)
-    if row and bool(row[5]):  # activo = 1
+    if row y bool(row[5]):  # activo = 1
         return JSONResponse({"error": "El email ya existe"}, status_code=409)
 
     try:
