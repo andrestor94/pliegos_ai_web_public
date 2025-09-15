@@ -1833,6 +1833,20 @@ def generar_pdf_informe(texto_markdown: str, out_path: Optional[str] = None) -> 
     c.save()
     return out_path
 
+# ==================== Compat extra (plantillas) ====================
+def generar_pdf_con_plantilla(
+    informe_texto: str,
+    *,
+    plantilla: Optional[str] = None,  # se ignora, mantenida por compatibilidad
+    salida: Optional[str] = None,
+    **kwargs,
+) -> str:
+    """
+    Compatibilidad con versiones anteriores que pedían generar PDF usando 'plantillas'.
+    Ignora 'plantilla' y delega al generador simple.
+    """
+    return generar_pdf_informe(informe_texto, out_path=salida)
+
 
 # ==================== Helpers de alto nivel ====================
 def generar_informe_y_pdf(
@@ -1982,7 +1996,7 @@ try:
         # nuevas
         "analizar_y_generar_informe", "generar_informe_y_pdf", "generar_pdf_informe",
         # compat
-        "analizar_con_openai", "analizar_y_pdf", "generar_pdf",
+        "analizar_con_openai", "analizar_y_pdf", "generar_pdf", "generar_pdf_con_plantilla",
         # chat
         "responder_chat_openai",
         # RAG helpers
