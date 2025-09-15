@@ -2131,7 +2131,7 @@ async def chat_enviar_archivos(
         msg_id = enviar_mensaje(
             de_email=de,
             para_email=para,
-            texto=texto o "",
+            texto=texto or "",
             actor_user_id=actor_user_id,
             ip=ip,
         )
