@@ -1336,35 +1336,92 @@ async def enviar_rating(request: Request, payload: RatingIn):
     if not user:
         return JSONResponse({"error": "No autenticado"}, status_code=401)
 
+    # 1) Normalizar el puntaje (acepta 'estrellas' o 'rating')
     rating = None
     if isinstance(payload.estrellas, int):
         rating = payload.estrellas
     elif isinstance(payload.rating, int):
         rating = payload.rating
+    try:
+        rating = int(rating) if rating is not None else None
+    except Exception:
+        rating = None
 
     if not rating or rating < 1 or rating > 5:
         return JSONResponse({"error": "Rating inválido. Use un entero 1..5."}, status_code=400)
 
-    historial_id = payload.historial_id
+    # Helper para castear a int seguro
+    def _to_int(v):
+        try:
+            if v is None:
+                return None
+            s = str(v).strip()
+            return int(s) if s else None
+        except Exception:
+            return None
+
+    # 2) Resolver historial_id (prioridad: explícito → búsqueda por params → pending_ratings → último del usuario)
+    historial_id = _to_int(payload.historial_id)
+
+    # 2.a) Por timestamp/nombre_pdf (si vinieron)
     if not historial_id:
-        h = _buscar_historial_usuario(user, timestamp=payload.timestamp, nombre_pdf=payload.nombre_pdf)
+        h = _buscar_historial_usuario(
+            user,
+            timestamp=(payload.timestamp or None),
+            nombre_pdf=(payload.nombre_pdf or None),
+        )
         if h:
             hid = h.get("historial_id") or h.get("id")
-            if isinstance(hid, int):
-                historial_id = hid
+            historial_id = _to_int(hid)
+
+    # 2.b) Fallback: usar el registro sidecar de pending_ratings (lo crea /analizar-pliego)
+    if not historial_id:
+        try:
+            pr = _pr_get(user)  # {'historial_id','timestamp','nombre_pdf'}
+        except Exception:
+            pr = None
+        if pr:
+            historial_id = _to_int(pr.get("historial_id"))
+            if not historial_id:
+                h2 = _buscar_historial_usuario(
+                    user,
+                    timestamp=pr.get("timestamp"),
+                    nombre_pdf=pr.get("nombre_pdf"),
+                )
+                if h2:
+                    hid2 = h2.get("historial_id") or h2.get("id")
+                    historial_id = _to_int(hid2)
+
+    # 2.c) Último del usuario (como última red)
+    if not historial_id:
+        h3 = _buscar_historial_usuario(user)
+        if h3:
+            hid3 = h3.get("historial_id") or h3.get("id")
+            historial_id = _to_int(hid3)
 
     if not historial_id:
-        return JSONResponse({"error": "No pude identificar el análisis a valorar."}, status_code=400)
+        # Mensaje claro para UI
+        return JSONResponse(
+            {"error": "No pude identificar el análisis a valorar. Reintentá desde el informe más reciente o generá uno nuevo."},
+            status_code=400
+        )
 
+    # 3) Guardar
     actor_user_id, ip = _actor_info(request)
     try:
-        marcar_valoracion_historial(historial_id, rating, actor_user_id=actor_user_id, ip=ip)
+        marcar_valoracion_historial(
+            historial_id,
+            rating,
+            actor_user_id=actor_user_id,
+            ip=ip
+        )
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         print("· Error enviar_rating:", repr(e))
         return JSONResponse({"error": "No se pudo registrar la valoración"}, status_code=500)
 
+    # 4) Limpiar “pendiente” y notificar
     try:
         _pr_clear(user)
     except Exception:
@@ -1378,7 +1435,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
     except Exception:
         pass
 
-    return {"ok": True, "message": "Valoración registrada"}
+    return {"ok": True, "message": "Valoración registrada", "historial_id": historial_id}
 
 
 # *** AJUSTADO ***: unificación de ruta de PDFs tras la generación
