@@ -512,11 +512,15 @@ PDF_SERVE_DIR = Path(os.getenv("PDF_DIR", ROOT_DIR / "generated_pdfs")).resolve(
 
 # Otros lugares donde podría estar escribiendo utils.generar_pdf_con_plantilla
 PDF_CANDIDATE_DIRS = [
-    PDF_SERVE_DIR,
+    PDF_SERVE_DIR,                               # canónico: /opt/render/project/generated_pdfs
     ROOT_DIR / "generated_pdfs",
     APP_DIR / "generated_pdfs",
     Path.cwd() / "generated_pdfs",
     ROOT_DIR / "backend" / "generated_pdfs",
+    # NUEVO: también probamos sin subcarpeta, porque utils lo dejó en /src/
+    APP_DIR,                                     # /opt/render/project/src
+    ROOT_DIR,                                    # /opt/render/project
+    Path.cwd(),                                  # cwd actual
 ]
 for _d in PDF_CANDIDATE_DIRS:
     try:
@@ -1502,20 +1506,22 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
 
     # 2) Generar PDF con timeout (y luego asegurar que quede en el directorio servido)
     timestamp = now_stamp_ar()
-    nombre_archivo_pdf = f"resumen_{timestamp}.pdf"
+nombre_archivo_pdf = f"resumen_{timestamp}.pdf"
+
+# NUEVO: path absoluto de destino en la carpeta servida
+target_abs = str((PDF_SERVE_DIR / nombre_archivo_pdf).resolve())
 
     try:
-        # algunos run_in_threadpool no aceptan kwargs; probamos y caemos al partial
-        try:
-            await asyncio.wait_for(
-                run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo_pdf=nombre_archivo_pdf),
-                timeout=PDF_TIMEOUT
-            )
-        except TypeError:
-            await asyncio.wait_for(
-                run_in_threadpool(partial(generar_pdf_con_plantilla, resumen, nombre_archivo_pdf=nombre_archivo_pdf)),
-                timeout=PDF_TIMEOUT
-            )
+    try:
+        await asyncio.wait_for(
+            run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo_pdf=target_abs),
+            timeout=PDF_TIMEOUT
+        )
+    except TypeError:
+        await asyncio.wait_for(
+            run_in_threadpool(partial(generar_pdf_con_plantilla, resumen, nombre_archivo_pdf=target_abs)),
+            timeout=PDF_TIMEOUT
+        )
     except asyncio.TimeoutError:
         return JSONResponse({"error": "Timeout generando el PDF"}, status_code=504)
     except Exception as e:
