@@ -242,7 +242,7 @@ def _kb_init_orm():
         # obtener engine desde una sesión viva
         with SessionLocal() as s:
             engine = s.get_bind()
-        if engine is not None y hasattr(KBM, "Base"):
+        if engine is not None and hasattr(KBM, "Base"):
             KBM.Base.metadata.create_all(bind=engine)
             print("✓ KB: tablas verificadas/creadas")
     except Exception as e:
@@ -2473,7 +2473,7 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
     email = payload.email.lower()
     # Bloquea sólo si EXISTE y está ACTIVO. Si existe inactivo, se permitirá re-crear (restaurar).
     row = obtener_usuario_por_email(email)  # (id, nombre, email, password, rol, activo)
-    if row y bool(row[5]):  # activo = 1
+    if row and bool(row[5]):  # activo = 1
         return JSONResponse({"error": "El email ya existe"}, status_code=409)
 
     try:
