@@ -506,8 +506,8 @@ os.makedirs("static", exist_ok=True)
 
 # Canon: servimos SIEMPRE desde /opt/render/project/src/generated_pdfs (raíz src)
 # Puedes overridear con env: PDF_DIR=/ruta/absoluta
-APP_DIR = Path(__file__).resolve().parent                  # .../src/backend
-ROOT_DIR = APP_DIR.parent                                  # .../src
+APP_DIR = Path(__file__).resolve().parent                  # .../src
+ROOT_DIR = APP_DIR.parent                                  # .../project
 PDF_SERVE_DIR = Path(os.getenv("PDF_DIR", ROOT_DIR / "generated_pdfs")).resolve()
 
 # Otros lugares donde podría estar escribiendo utils.generar_pdf_con_plantilla
@@ -1505,18 +1505,13 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
 
     # 2) Generar PDF con timeout (y luego asegurar que quede en el directorio servido)
     timestamp = now_stamp_ar()
-nombre_archivo_pdf = f"resumen_{timestamp}.pdf"
+    nombre_archivo_pdf = f"resumen_{timestamp}.pdf"
 
-# NUEVO: path absoluto de destino en la carpeta servida
-target_abs = str((PDF_SERVE_DIR / nombre_archivo_pdf).resolve())
+    # NUEVO: path absoluto de destino en la carpeta servida
+    target_abs = str((PDF_SERVE_DIR / nombre_archivo_pdf).resolve())
 
     try:
-    try:
-        await asyncio.wait_for(
-            run_in_threadpool(generar_pdf_con_plantilla, resumen, nombre_archivo_pdf=target_abs),
-            timeout=PDF_TIMEOUT
-        )
-    except TypeError:
+        # Preferimos usar partial para evitar kwargs en run_in_threadpool
         await asyncio.wait_for(
             run_in_threadpool(partial(generar_pdf_con_plantilla, resumen, nombre_archivo_pdf=target_abs)),
             timeout=PDF_TIMEOUT
@@ -1605,7 +1600,6 @@ target_abs = str((PDF_SERVE_DIR / nombre_archivo_pdf).resolve())
         print("· KB save/ingest error:", repr(e))
 
     # 5) Registrar rating pendiente
-        # 5) Registrar rating pendiente
     try:
         _pr_add(usuario, historial_id, timestamp, nombre_archivo_pdf)
     except Exception as e:
@@ -1685,6 +1679,7 @@ async def descargar_pdf(archivo: str):
         return JSONResponse({"error": "Archivo no encontrado"}, status_code=404)
     return FileResponse(final_abs, media_type="application/pdf", filename=name)
 
+
 @app.get("/descargar/ultimo")
 async def descargar_ultimo(request: Request):
     if not request.session.get("usuario"):
@@ -1697,6 +1692,7 @@ async def descargar_ultimo(request: Request):
     if not filename:
         return JSONResponse({"error": "No pude determinar el nombre del PDF"}, status_code=404)
     return await descargar_pdf(filename)
+
 
 @app.delete("/eliminar/{timestamp}")
 async def eliminar_archivo(timestamp: str):
