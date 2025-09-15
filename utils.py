@@ -296,32 +296,83 @@ def _get_prom():
     return _prom
 
 def _sinonimos_text() -> str:
+    """
+    Texto opcional de sinónimos/convenciones. Si no existe en prompts.py,
+    devuelve cadena vacía.
+    """
     mod = _get_prom()
     return getattr(mod, "SINONIMOS_CANONICOS", "") if mod else ""
 
 def _craft_prompt_notas_text() -> str:
+    """
+    Prompt breve para generar 'notas parciales' en la pasada multi-chunk.
+    Si no existe en prompts.py, se usa un fallback sobrio.
+    """
     mod = _get_prom()
-    return getattr(mod, "CRAFT_PROMPT_NOTAS",
-                   "Extrae bullets técnicos y concisos con citas literales; cero invenciones.")
+    return getattr(
+        mod,
+        "CRAFT_PROMPT_NOTAS",
+        "Extrae bullets técnicos y concisos con citas literales; cero invenciones."
+    )
+
+def _default_reglas_citas(varios_anexos: bool) -> str:
+    if varios_anexos:
+        return (
+            "Reglas de Citas:\n"
+            "- Documento MULTI-ANEXO: al final de cada línea con dato, usar (Anexo X, p. N).\n"
+            "- Deducir N utilizando la etiqueta [PÁGINA N] más cercana dentro del texto del ANEXO correspondiente.\n"
+            "- Si no hay paginación: (Fuente: documento provisto)."
+        )
+    else:
+        return (
+            "Reglas de Citas:\n"
+            "- Documento ÚNICO: al final de cada línea con dato, usar (p. N) a partir de la etiqueta [PÁGINA N] más cercana.\n"
+            "- Si no hay paginación: (Fuente: documento provisto)."
+        )
 
 def prompt_andres(varios_anexos: bool) -> str:
     """
-    Devuelve el prompt maestro usando PROMPT_PARAMETRIZADO + reglas_citas(varios_anexos).
-    Si algo falla, vuelve a un fallback mínimo.
+    Devuelve el prompt maestro del ANALIZADOR, compatible con:
+    - PROMPT_ANALIZADOR (nuevo)
+    - PROMPT_ANALISIS (alias opcional)
+    - PROMPT_PARAMETRIZADO (legacy)
+    Inserta reglas de citas dinámicas y la NO_RENGLONES_RULE si está disponible.
     """
     mod = _get_prom()
-    if mod and hasattr(mod, "PROMPT_PARAMETRIZADO") and hasattr(mod, "reglas_citas"):
-        try:
-            return mod.PROMPT_PARAMETRIZADO.format(
-                REGLAS_CITAS=mod.reglas_citas(varios_anexos),
-                NO_RENGLONES_RULE=getattr(mod, "NO_RENGLONES_RULE", "")
-            )
-        except Exception:
+    if mod:
+        # 1) Localizar cuerpo de prompt del analizador (nuevo -> legacy)
+        raw_prompt = None
+        for key in ("PROMPT_ANALIZADOR", "PROMPT_ANALISIS", "PROMPT_PARAMETRIZADO"):
+            if hasattr(mod, key):
+                raw_prompt = getattr(mod, key)
+                break
+
+        # 2) Reglas de citas (función externa si existe, si no: default)
+        if hasattr(mod, "reglas_citas"):
+            reglas = mod.reglas_citas(varios_anexos)  # type: ignore[attr-defined]
+        else:
+            reglas = _default_reglas_citas(varios_anexos)
+
+        # 3) Regla NO_RENGLONES (si no está, usar una segura por defecto)
+        no_renglones = getattr(
+            mod,
+            "NO_RENGLONES_RULE",
+            ("Para el campo 'Número de renglón' en la Ficha, escribir exactamente: "
+             "'Total de renglones: <cantidad>; ver Sección 9 para el detalle completo'. "
+             "Nunca uses 'N' como placeholder ni inventes cantidades.")
+        )
+
+        if raw_prompt:
             try:
-                return (mod.PROMPT_PARAMETRIZADO + "\n\n" + mod.reglas_citas(varios_anexos)).strip()
+                return raw_prompt.format(
+                    REGLAS_CITAS=reglas,
+                    NO_RENGLONES_RULE=no_renglones
+                )
             except Exception:
-                pass
-    # Fallback ultra-minimal
+                # Si el prompt no tiene placeholders, concatenamos reglas al final.
+                return (str(raw_prompt).rstrip() + "\n\n" + reglas + "\n\n" + no_renglones).strip()
+
+    # Fallback ultra-minimal si faltara prompts.py
     return (
         "Elabora un informe técnico-jurídico estructurado con citas literales. "
         "No inventes. Cita como '(p. N)'. Si hay múltiples anexos, usa '(Anexo X, p. N)'."
@@ -396,7 +447,7 @@ def _log_tiempo(etiqueta: str, t0: float) -> None:
         pass
 
 # ==================== OCR / Raster ====================
-def _rasterizar_pagina(page: fitz.Page, dpi: int = VISION_DPI) -> bytes:
+def _rasterizar_pagina(page, dpi: int = VISION_DPI) -> bytes:
     mat = fitz.Matrix(dpi / 72, dpi / 72)
     pix = page.get_pixmap(matrix=mat, alpha=False)
     return pix.tobytes("png")
@@ -1370,8 +1421,16 @@ def _craft_system_prompt(varios_anexos: bool, texto_hints: str = "", kb_context:
     if sinos:
         bloques.append(sinos)
 
+    # Nota importante sobre el uso de KB:
+    # el bloque se agrega solo como orientación terminológica. El PROMPT_PARAMETRIZADO
+    # prohíbe introducir datos que no estén en el/los archivo/s analizados.
     if kb_context.strip():
-        bloques.append("\n=== CONTEXTO KB (priorizar) ===\n" + kb_context.strip())
+        kb_safe = (
+            "Usá el siguiente contexto SOLO para orientar terminología/búsqueda interna; "
+            "NO cites ni agregues datos que NO estén en los archivos analizados.\n"
+            + kb_context.strip()
+        )
+        bloques.append("\n=== CONTEXTO KB (referencia no-citable) ===\n" + kb_safe)
 
     bloques.append(_output_policy_block())
 
@@ -1467,9 +1526,8 @@ def _kb_build_context_from_db(query: str, source_slug: Optional[str] = None, top
                     q = q.filter(KBChunk.file_id.in_(files_ids))
         rows = list(q.all())[::-1]  # ascendente
 
-        # Cargar prioridades (si existen en tu modelo)
+        # Cargar prioridades (si existen)
         try:
-            # globales
             gprio = {r.label.lower(): float(r.weight) for r in db.query(KBPriority).all()}  # type: ignore[attr-defined]
         except Exception:
             gprio = {}
@@ -1477,7 +1535,7 @@ def _kb_build_context_from_db(query: str, source_slug: Optional[str] = None, top
         scored: List[Tuple[float, Any]] = []
         for r in rows:
             try:
-                emb = json.loads(r.embedding)  # en tu ingesta guardamos json.dumps(vec)
+                emb = json.loads(r.embedding)  # en la ingesta guardamos json.dumps(vec)
             except Exception:
                 continue
             score = _cosine_py(q_emb, emb)
@@ -1496,7 +1554,7 @@ def _kb_build_context_from_db(query: str, source_slug: Optional[str] = None, top
         if not scored:
             return ""
 
-        lines = ["[KB] Extractos relevantes (priorizá estos datos si hay conflicto):"]
+        lines = ["[KB] Extractos relevantes (NO citables — solo orientación):"]
         take = scored[:max(1, int(top_k))]
         for s, r in take:
             try:
@@ -1568,6 +1626,22 @@ def _postproceso_final(informe: str, texto_fuente: str, varios_anexos: bool) -> 
     s = re.sub(r"\n{3,}", "\n\n", s).strip()
     return s
 
+def _input_incompleto(texto_fuente: str) -> bool:
+    """
+    Heurística para detectar texto incompleto/truncado segun reglas:
+    - OCR muestreado (agregado por extraer_texto_de_pdf)
+    - Páginas sin texto OCR
+    - Vacío o extremadamente corto
+    """
+    s = (texto_fuente or "").strip()
+    if not s or len(s) < 40:
+        return True
+    if "[AVISO] OCR muestreó" in s:
+        return True
+    if "(sin texto OCR)" in s:
+        return True
+    return False
+
 def analizar_y_generar_informe(
     texto_fuente: str,
     *,
@@ -1590,6 +1664,10 @@ def analizar_y_generar_informe(
     raw = _limpieza_basica_preanalisis(raw)
     raw = _limpiar_meta(raw)
 
+    # Regla de “ERROR: texto de entrada incompleto”
+    if _input_incompleto(raw):
+        return "ERROR: texto de entrada incompleto"
+
     # Heurística de anexos si no se especifica
     if varios_anexos is None:
         varios_anexos = (_contar_anexos(raw) > 1)
@@ -1604,7 +1682,7 @@ def analizar_y_generar_informe(
     # Elección single vs multi
     multi = bool(force_multi) or (len(raw) > MAX_SINGLE_PASS_CHARS)
 
-    # --- ✅ BLOQUE QUE FALTABA (single-pass) ---
+    # Single-pass
     if not multi:
         msgs = _msg_single_block(
             varios_anexos,
@@ -1620,7 +1698,6 @@ def analizar_y_generar_informe(
         final = _postproceso_final(borrador, raw, varios_anexos)
         _log_tiempo("pipeline_single_pass", t0)
         return final
-    # --- ✅ FIN BLOQUE ---
 
     # Multi-pass (parciales en paralelo)
     partes = _particionar(raw, max_chars=CHUNK_SIZE_BASE)
@@ -1777,10 +1854,14 @@ def generar_informe_y_pdf(
         force_multi=force_multi,
         prefer_source=prefer_source,
     )
+    # Si el input estaba incompleto, no generes PDF
+    if informe.strip().startswith("ERROR: texto de entrada incompleto"):
+        return informe, None
+
     pdf_path = generar_pdf_informe(informe, out_path=ruta_pdf) if export_pdf else None
     return informe, pdf_path
 
-# ==================== Compatibilidad y alias retro ====================
+# ==================== Chat general (asistente) con KB ====================
 def responder_chat_openai(
     prompt_or_messages,
     *,
@@ -1794,30 +1875,38 @@ def responder_chat_openai(
     **kwargs,
 ) -> str:
     """
-    Wrapper legacy para chat simple, ahora con KB opcional:
-      - Busca contexto en KB usando el contenido del prompt.
-      - Inserta ese contexto en el system prompt.
-    Acepta string (prompt) o lista de mensajes estilo OpenAI.
+    Chat general orientado a licitaciones, con acceso a KB.
+    - Si hay KB, se inyecta como CONTEXTO NO-CITABLE (guía, no fuente).
+    - Respeta el prompt de chat en prompts.py (CHAT_ASSISTANT_PROMPT).
     """
+    mod = _get_prom()
+    chat_sys = ""
+    if mod and hasattr(mod, "CHAT_ASSISTANT_PROMPT"):
+        chat_sys = getattr(mod, "CHAT_ASSISTANT_PROMPT") or ""
+    base_system = (system or chat_sys or "")
+
     # Normaliza mensajes
     if isinstance(prompt_or_messages, str):
         query_for_kb = prompt_or_messages[:1000]
         kb_ctx = build_kb_context(query=query_for_kb, source=prefer_source, top_k=8)
         messages = []
-        sys = (system or "")
-        sys = (_craft_system_prompt(False, texto_hints="", kb_context=kb_ctx) if kb_ctx else (system or ""))
+        sys = base_system
+        if kb_ctx:
+            sys = (sys + "\n\n" + "=== CONTEXTO KB (no-citable) ===\n" +
+                   "Usar solo como guía; no inventar ni citar datos inexistentes.\n" + kb_ctx).strip()
         if sys:
             messages.append({"role": "system", "content": sys})
         messages.append({"role": "user", "content": prompt_or_messages})
     else:
-        # si viene lista, intentamos armar query a partir del último user
         msgs = list(prompt_or_messages or [])
         last_user = next((m.get("content", "") for m in reversed(msgs) if m.get("role") == "user"), "")
         kb_ctx = build_kb_context(query=(last_user or "")[:1000], source=prefer_source, top_k=8)
         messages = msgs[:]
-        if kb_ctx:
-            # inserta/inyecta system al principio con el KB (sin romper otros system si existen)
-            sys_block = _craft_system_prompt(False, texto_hints="", kb_context=kb_ctx)
+        if kb_ctx or base_system:
+            sys_block = base_system
+            if kb_ctx:
+                sys_block = (sys_block + "\n\n" + "=== CONTEXTO KB (no-citable) ===\n" +
+                             "Usar solo como guía; no inventar ni citar datos inexistentes.\n" + kb_ctx).strip()
             if not messages or messages[0].get("role") != "system":
                 messages = [{"role": "system", "content": sys_block}] + messages
             else:
@@ -1843,6 +1932,7 @@ def responder_chat_openai(
     except Exception:
         return ""
 
+# ==================== Compat/alias ====================
 def analizar_con_openai(
     texto_fuente: str,
     *,
@@ -1851,10 +1941,7 @@ def analizar_con_openai(
     prefer_source: Optional[str] = None,
     **kwargs,
 ) -> str:
-    """
-    Alias legacy hacia analizar_y_generar_informe (con KB opcional).
-    Ignora kwargs extra (p.ej. de APIs viejas).
-    """
+    """Alias legacy hacia analizar_y_generar_informe (con KB opcional)."""
     return analizar_y_generar_informe(
         texto_fuente,
         varios_anexos=varios_anexos,
@@ -1884,26 +1971,9 @@ def analizar_y_pdf(
         prefer_source=prefer_source,
     )
 
-# ==================== Compat extra (plantillas) ====================
-def generar_pdf_con_plantilla(
-    informe_texto: str,
-    *,
-    plantilla: Optional[str] = None,
-    salida: Optional[str] = None,
-    **kwargs,
-) -> str:
-    """
-    Compatibilidad con versiones anteriores.
-    Ignora 'plantilla' y usa el generador simple de ReportLab.
-    - informe_texto: contenido en markdown-light
-    - plantilla: nombre/slug de plantilla (no usado aquí)
-    - salida: ruta opcional del PDF a escribir
-    """
-    return generar_pdf_informe(informe_texto, out_path=salida)
-
 # ==================== __all__ ====================
 try:
-    __all__  # type: ignore
+    __all__
 except NameError:
     __all__ = []
 
@@ -1912,7 +1982,8 @@ try:
         # nuevas
         "analizar_y_generar_informe", "generar_informe_y_pdf", "generar_pdf_informe",
         # compat
-        "analizar_con_openai", "analizar_y_pdf", "generar_pdf", "generar_pdf_con_plantilla",
+        "analizar_con_openai", "analizar_y_pdf", "generar_pdf",
+        # chat
         "responder_chat_openai",
         # RAG helpers
         "build_kb_context",
