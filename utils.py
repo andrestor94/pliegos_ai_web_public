@@ -282,17 +282,25 @@ def kb_upsert_priority(db, rubric: str, label: str, details: str = "", weight: f
 # utils.py — Parte 2/4 (Prompts + Extracción base) — versión mejorada
 
 # ========================= Prompts (lazy import) =========================
+# utils.py
 _prom = None
 
 def _get_prom():
     """Carga prompts.py bajo demanda, evitando ciclos de import."""
     global _prom
     if _prom is None:
+        import importlib
         try:
-            import importlib
             _prom = importlib.import_module("prompts")
         except Exception:
-            _prom = None
+            try:
+                pkg = __package__
+                if pkg:
+                    _prom = importlib.import_module(f"{pkg}.prompts")
+                else:
+                    _prom = None
+            except Exception:
+                _prom = None
     return _prom
 
 def _sinonimos_text() -> str:

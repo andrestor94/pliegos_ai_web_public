@@ -63,6 +63,12 @@ from utils import (
 # Import del módulo utils para llamadas dinámicas (KB, extractores, etc.)
 import utils as U
 
+import utils
+print("[BOOT] prompts loaded? ->", bool(utils._get_prom()))
+
+UTILS_VERSION = "utils/KB-2025-09-15"
+print("[BOOT]", UTILS_VERSION)
+
 # ? Fallback robusto para evitar ImportError: utils.analizar_anexos
 try:
     from utils import analizar_anexos as _analizar_anexos  # type: ignore
@@ -162,11 +168,11 @@ def _actor_info(request: Request) -> Tuple[Optional[int], Optional[str]]:
 # ==== Anexos (puente) ==========================================================
 def analizar_anexos(archivos: List[UploadFile]) -> str:
     """
-    Síncrona (para run_in_threadpool). Si utils.analizar_anexos existe, delega.
-    Si no, extrae texto con utils.extraer_texto_universal y llama al pipeline
-    utils.analizar_y_generar_informe, preservando '=== ANEXO N' para citas.
+    Analizador local forzado (usa el pipeline nuevo determinístico).
+    Si querés volver a delegar a utils.analizar_anexos, seteá FORCE_LOCAL_ANALYZER=0.
     """
-    if callable(_analizar_anexos):
+    use_local = os.getenv("FORCE_LOCAL_ANALYZER", "1") == "1"
+    if (not use_local) and callable(_analizar_anexos):
         return _analizar_anexos(archivos)
 
     textos = []
@@ -186,8 +192,14 @@ def analizar_anexos(archivos: List[UploadFile]) -> str:
         return "No se pudo extraer texto de los anexos."
 
     varios = len(textos) > 1
+    # Llamada flexible al pipeline nuevo
     try:
         return U.analizar_y_generar_informe(corpus, varios_anexos=varios)
+    except TypeError:
+        try:
+            return U.analizar_y_generar_informe(corpus, prefer_source=None)
+        except TypeError:
+            return U.analizar_y_generar_informe(corpus)
     except Exception as e:
         return f"[Error de análisis] {e}"
 
@@ -369,6 +381,16 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("app")
+
+# === Feature flags por defecto (se pueden sobreescribir por ENV) ===
+os.environ.setdefault("EXPAND_SECTIONS_213_216", "1")
+os.environ.setdefault("STRICT_OUT", "1")
+os.environ.setdefault("PAGINAR_TEXTO_NATIVO", "1")
+os.environ.setdefault("MAX_WORDS_TOTAL_GUIDE", "1200")
+os.environ.setdefault("MAX_LINES_PER_SECTION", "20")
+os.environ.setdefault("MAX_WORDS_PER_BULLET", "35")
+os.environ.setdefault("FORCE_LOCAL_ANALYZER", "1")
+
 
 # ---------- Garantizar tablas de chat si faltan (fix 'no such table: mensajes') ----------
 def ensure_chat_tables():
@@ -1583,6 +1605,8 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     except Exception as e:
         print("· No se pudo registrar pending_ratings:", repr(e))
 
+logger.info("[ANALISIS] usuario=%s | pdf=%s | chars=%d", usuario, nombre_archivo_pdf, len(resumen or ""))
+
     return {
         "resumen": resumen,
         "pdf": nombre_archivo_pdf,  # basename (el endpoint construye la ruta)
@@ -1594,61 +1618,6 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
 # main.py — PARTE 3 / 6
 # (historial, usuario/avatares, diagnóstico)
 # =========================
-
-# ---- Servido de PDFs: carpeta y helpers robustos ----
-PDF_SERVE_DIR = os.getenv("PDF_SERVE_DIR", "generated_pdfs")
-os.makedirs(PDF_SERVE_DIR, exist_ok=True)
-
-# Lugares candidatos donde el generador pudo dejar el PDF (por si utils escribe en otro lado)
-_PDF_CANDIDATE_DIRS = [
-    PDF_SERVE_DIR,
-    ".",                      # cwd
-    "static",
-    "storage",
-    "/tmp",
-]
-
-def _find_pdf_path(filename: str) -> Optional[str]:
-    """Devuelve ruta absoluta si encuentra el PDF en candidatos; None si no."""
-    name = os.path.basename(filename or "")
-    if not name.lower().endswith(".pdf"):
-        return None
-    for d in _PDF_CANDIDATE_DIRS:
-        p = os.path.abspath(os.path.join(d, name))
-        if os.path.isfile(p):
-            return p
-    return None
-
-def _ensure_pdf_in_serve_dir(filename: str) -> Optional[str]:
-    """
-    Garantiza que <PDF_SERVE_DIR>/<filename> exista.
-    Si el archivo está en otro directorio candidato, lo copia acá.
-    Devuelve ruta absoluta final o None si no se pudo ubicar/copiar.
-    """
-    name = os.path.basename(filename or "")
-    src = _find_pdf_path(name)
-    if not src:
-        return None
-    dst = os.path.abspath(os.path.join(PDF_SERVE_DIR, name))
-    if os.path.abspath(src) == dst:
-        return dst
-    try:
-        os.makedirs(PDF_SERVE_DIR, exist_ok=True)
-        # copia segura sin dependencias externas
-        with open(src, "rb") as f_in, open(dst, "wb") as f_out:
-            while True:
-                chunk = f_in.read(1024 * 1024)
-                if not chunk:
-                    break
-                f_out.write(chunk)
-        return dst
-    except Exception:
-        try:
-            import shutil
-            shutil.copyfile(src, dst)
-            return dst
-        except Exception:
-            return None
 
 # ===== Historial (usa helpers definidos en PARTE 1) =====
 
@@ -1697,56 +1666,36 @@ async def alias_analisis():
 # ---- Descarga de PDFs (robusta) ----
 @app.get("/descargar/{archivo}")
 async def descargar_pdf(archivo: str):
-    """
-    Descarga un PDF por nombre de archivo (basename).
-    Busca en varios directorios y, si es necesario, lo copia a PDF_SERVE_DIR.
-    """
     name = os.path.basename(archivo or "")
     if not name or not name.lower().endswith(".pdf"):
         return JSONResponse({"error": "Nombre de archivo inválido"}, status_code=400)
-
-    # Garantizar que exista en la carpeta servida
-    final_abs = _ensure_pdf_in_serve_dir(name)
+    final_abs = _ensure_pdf_in_serve_dir(name)  # usa la versión de PARTE 1
     if not final_abs or not os.path.isfile(final_abs):
         return JSONResponse({"error": "Archivo no encontrado"}, status_code=404)
-
     return FileResponse(final_abs, media_type="application/pdf", filename=name)
 
-
-# Nuevo: Descargar el último PDF del usuario logueado
 @app.get("/descargar/ultimo")
 async def descargar_ultimo(request: Request):
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
-
     user = request.session.get("usuario")
-    # Tomamos del historial del usuario el más reciente
     h = _buscar_historial_usuario(user)
     if not h:
         return JSONResponse({"error": "No hay informes recientes para descargar"}, status_code=404)
-
     filename = (h.get("nombre_archivo") or "").strip()
     if not filename:
         return JSONResponse({"error": "No pude determinar el nombre del PDF"}, status_code=404)
-
-    # Reutilizamos el endpoint principal
     return await descargar_pdf(filename)
-
-# Alias por compatibilidad con frontends previos
-@app.get("/descargar-ultimo")
-async def descargar_ultimo_alias(request: Request):
-    return await descargar_ultimo(request)
-
 
 @app.delete("/eliminar/{timestamp}")
 async def eliminar_archivo(timestamp: str):
     eliminar_del_historial(timestamp)
-    ruta = os.path.join(PDF_SERVE_DIR, f"resumen_{os.path.basename(timestamp)}.pdf")
-    if os.path.exists(ruta):
-        try:
-            os.remove(ruta)
-        except Exception:
-            pass
+    ruta = (PDF_SERVE_DIR / f"resumen_{os.path.basename(timestamp)}.pdf")
+    try:
+        if ruta.exists():
+            ruta.unlink()
+    except Exception:
+        pass
     return {"mensaje": "Eliminado correctamente"}
 
 
