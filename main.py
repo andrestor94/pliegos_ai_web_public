@@ -1605,7 +1605,8 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     except Exception as e:
         print("· No se pudo registrar pending_ratings:", repr(e))
 
-logger.info("[ANALISIS] usuario=%s | pdf=%s | chars=%d", usuario, nombre_archivo_pdf, len(resumen or ""))
+    # LOG + respuesta (OJO: dentro de la función)
+    logger.info("[ANALISIS] usuario=%s | pdf=%s | chars=%d", usuario, nombre_archivo_pdf, len(resumen or ""))
 
     return {
         "resumen": resumen,
@@ -2359,7 +2360,7 @@ async def chat_abrir(request: Request):
         return JSONResponse({"error": "No se pudo abrir el hilo"}, status_code=500)
 # =========================
 # main.py — PARTE 5 / 6
-# (Auditoría, Admin, endpoints legacy + **Incidencias (vista GET)**)
+# (Auditoría, Admin, endpoints legacy + **Incidencias (vista GET)**
 # =========================
 
 # ---------- Vista mínima de Incidencias (evita 404 al hacer clic en el botón) ----------
