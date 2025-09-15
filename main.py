@@ -512,15 +512,14 @@ PDF_SERVE_DIR = Path(os.getenv("PDF_DIR", ROOT_DIR / "generated_pdfs")).resolve(
 
 # Otros lugares donde podría estar escribiendo utils.generar_pdf_con_plantilla
 PDF_CANDIDATE_DIRS = [
-    PDF_SERVE_DIR,                               # canónico: /opt/render/project/generated_pdfs
+    PDF_SERVE_DIR,                 # /opt/render/project/generated_pdfs
+    ROOT_DIR,                      # /opt/render/project
+    APP_DIR,                       # /opt/render/project/src
     ROOT_DIR / "generated_pdfs",
     APP_DIR / "generated_pdfs",
+    Path.cwd(),                    # cwd por si Render cambia el working dir
     Path.cwd() / "generated_pdfs",
     ROOT_DIR / "backend" / "generated_pdfs",
-    # NUEVO: también probamos sin subcarpeta, porque utils lo dejó en /src/
-    APP_DIR,                                     # /opt/render/project/src
-    ROOT_DIR,                                    # /opt/render/project
-    Path.cwd(),                                  # cwd actual
 ]
 for _d in PDF_CANDIDATE_DIRS:
     try:
@@ -1606,13 +1605,18 @@ target_abs = str((PDF_SERVE_DIR / nombre_archivo_pdf).resolve())
         print("· KB save/ingest error:", repr(e))
 
     # 5) Registrar rating pendiente
+        # 5) Registrar rating pendiente
     try:
         _pr_add(usuario, historial_id, timestamp, nombre_archivo_pdf)
     except Exception as e:
         print("· No se pudo registrar pending_ratings:", repr(e))
 
-    # LOG + respuesta (OJO: dentro de la función)
-    logger.info("[ANALISIS] usuario=%s | pdf=%s | chars=%d", usuario, nombre_archivo_pdf, len(resumen or ""))
+    logger.info(
+        "[ANALISIS] usuario=%s | pdf=%s | chars=%d",
+        usuario,
+        nombre_archivo_pdf,
+        len(resumen or ""),
+    )
 
     return {
         "resumen": resumen,
