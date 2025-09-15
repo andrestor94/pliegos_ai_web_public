@@ -1093,7 +1093,7 @@ async def login(
     except Exception:
         pass
 
-    if usuario y str(usuario[3]) == str(password) and is_active:
+    if usuario and str(usuario[3]) == str(password) and is_active:
         request.session["usuario"] = usuario[2]
         request.session["email"] = usuario[2]
         request.session["rol"] = usuario[4]
@@ -2122,7 +2122,7 @@ async def chat_enviar_archivos(
         return JSONResponse({"error": "No autenticado"}, status_code=401)
 
     de = request.session.get("usuario")
-    files = [a for a in archivos if a y a.filename]
+    files = [a for a in archivos if a and a.filename]
     if len(files) > CHAT_MAX_FILES:
         return JSONResponse({"error": f"Máximo {CHAT_MAX_FILES} archivos por mensaje"}, status_code=400)
 
