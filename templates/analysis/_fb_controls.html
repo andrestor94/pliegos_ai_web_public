@@ -1,0 +1,14 @@
+<div class="flex items-center gap-3">
+  <form hx-post="/feedback" hx-trigger="change" hx-vals='{"analysis_id":"{{ analysis_id }}","section_key":"{{ section_key }}","is_correct":true}'>
+    <label class="inline-flex items-center gap-1 cursor-pointer"><input type="radio" name="fb_{{ section_key }}" /> ✅</label>
+  </form>
+  <form hx-post="/feedback" hx-trigger="change" hx-vals='{"analysis_id":"{{ analysis_id }}","section_key":"{{ section_key }}","is_correct":false}'>
+    <label class="inline-flex items-center gap-1 cursor-pointer"><input type="radio" name="fb_{{ section_key }}" /> ❌</label>
+  </form>
+  <button class="text-sm underline"
+          hx-prompt="Comentario"
+          hx-post="/feedback"
+          hx-vals='{"analysis_id":"{{ analysis_id }}","section_key":"{{ section_key }}"}'>
+    Agregar comentario
+  </button>
+</div>

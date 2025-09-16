@@ -1,0 +1,36 @@
+<div id="analysis-modal" class="fixed inset-0 bg-black/40 z-50 flex items-start justify-center p-6">
+  <div class="bg-white w-full max-w-6xl rounded-2xl shadow-xl overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-4 border-b">
+      <h3 class="text-lg font-semibold">Resultado del análisis</h3>
+      <button class="px-3 py-1 rounded hover:bg-gray-100" onclick="document.getElementById('analysis-modal').remove()">✕</button>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
+      <div class="border rounded-xl p-4">
+        <h4 class="font-semibold mb-2">Formato estructurado</h4>
+        <p class="text-sm text-gray-600 mb-3">Vista tabular como en las capturas.</p>
+        <div class="flex gap-2">
+          <form method="post" action="/export/pdf/estructurado" target="_blank">
+            <input type="hidden" name="analysis_json" value='{{ analysis_json | tojson | safe }}'>
+            <button class="btn btn-primary">Descargar PDF</button>
+          </form>
+          <a class="btn" hx-post="/render/structured" hx-vals='{"analysis_json": {{ analysis_json | tojson | safe }} }' hx-target="#analysis-render" hx-swap="innerHTML">Ver en pantalla</a>
+        </div>
+      </div>
+
+      <div class="border rounded-xl p-4">
+        <h4 class="font-semibold mb-2">Análisis profundo</h4>
+        <p class="text-sm text-gray-600 mb-3">Redacción detallada por secciones.</p>
+        <div class="flex gap-2">
+          <form method="post" action="/export/pdf/profundo" target="_blank">
+            <input type="hidden" name="analysis_json" value='{{ analysis_json | tojson | safe }}'>
+            <button class="btn btn-primary">Descargar PDF</button>
+          </form>
+          <a class="btn" hx-post="/render/deep" hx-vals='{"analysis_json": {{ analysis_json | tojson | safe }} }' hx-target="#analysis-render" hx-swap="innerHTML">Ver en pantalla</a>
+        </div>
+      </div>
+    </div>
+
+    <div id="analysis-render" class="px-5 pb-6"></div>
+  </div>
+</div>

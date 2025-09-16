@@ -17,71 +17,76 @@
       <div class="card-body">
         <!-- 1) Carga de archivos -->
         <h2 class="h6 mb-2">1) Cargar archivos (PDF / DOCX / Imágenes)</h2>
-        <div id="dzArea" class="dropzone mb-3" aria-label="Zona para arrastrar y soltar archivos">
-          Arrastrá y soltá aquí o
-          <label class="btn btn-sm btn-primary ms-1">
-            Seleccionar
-            <input id="filesInput" type="file" name="files" multiple hidden accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.tiff,.tif"/>
-          </label>
-          <div class="small subtle mt-2">También podés pegar con <kbd>Ctrl</kbd>+<kbd>V</kbd> imágenes copiadas del portapapeles.</div>
-        </div>
 
-        <!-- Lista de archivos seleccionados -->
-        <div class="table-wrap mb-4" id="filesWrap" style="display:none;">
-          <table class="table table-sm align-middle mb-0">
-            <thead>
-              <tr>
-                <th style="min-width:220px;">Archivo</th>
-                <th>Peso</th>
-                <th>Tipo</th>
-                <th>Estado</th>
-                <th style="min-width:120px;">Acciones</th>
-              </tr>
-            </thead>
-            <tbody id="filesTbody"></tbody>
-          </table>
-        </div>
+<!-- FORM HTMX: abre el modal que devuelve /analizar-pliego-ui -->
+<form
+  id="form-analizar"
+  hx-post="/analizar-pliego-ui"
+  hx-target="body"
+  hx-swap="beforeend"
+  hx-encoding="multipart/form-data"
+  enctype="multipart/form-data"
+>
+  <div id="dzArea" class="dropzone mb-3" aria-label="Zona para arrastrar y soltar archivos">
+    Arrastrá y soltá aquí o
+    <label class="btn btn-sm btn-primary ms-1">
+      Seleccionar
+      <!-- mantiene tu input de archivos -->
+      <input id="filesInput" type="file" name="files" multiple hidden accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.tiff,.tif"/>
+    </label>
+    <div class="small subtle mt-2">También podés pegar con <kbd>Ctrl</kbd>+<kbd>V</kbd> imágenes copiadas del portapapeles.</div>
+  </div>
 
-        <!-- 2) Configuración de análisis -->
-        <h2 class="h6 mb-2">2) Configuración</h2>
-        <form id="cfgForm" class="row g-2 input-compact">
-          <div class="col-md-4">
-            <label class="form-label" for="outType">Tipo de salida</label>
-            <select id="outType" class="form-select">
-              <option value="resumen">Resumen ejecutivo</option>
-              <option value="exhaustivo" selected>Informe exhaustivo</option>
-              <option value="tabla_requisitos">Tabla de requisitos</option>
-            </select>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label" for="lang">Idioma</label>
-            <select id="lang" class="form-select">
-              <option value="es" selected>Español</option>
-              <option value="en">Inglés</option>
-            </select>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label" for="ocrMode">OCR / Escaneados</label>
-            <select id="ocrMode" class="form-select">
-              <option value="auto" selected>Automático</option>
-              <option value="forzar">Forzar OCR</option>
-              <option value="off">Sin OCR</option>
-            </select>
-          </div>
-        </form>
+  <!-- 2) Configuración de análisis -->
+  <h2 class="h6 mb-2">2) Configuración</h2>
+  <!-- AÑADE name=… a tus selects para que se envíen con el form -->
+  <form id="cfgForm" class="row g-2 input-compact">
+    <div class="col-md-4">
+      <label class="form-label" for="outType">Tipo de salida</label>
+      <select id="outType" name="out_type" class="form-select">
+        <option value="resumen">Resumen ejecutivo</option>
+        <option value="exhaustivo" selected>Informe exhaustivo</option>
+        <option value="tabla_requisitos">Tabla de requisitos</option>
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label" for="lang">Idioma</label>
+      <select id="lang" name="lang" class="form-select">
+        <option value="es" selected>Español</option>
+        <option value="en">Inglés</option>
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label" for="ocrMode">OCR / Escaneados</label>
+      <select id="ocrMode" name="ocr" class="form-select">
+        <option value="auto" selected>Automático</option>
+        <option value="forzar">Forzar OCR</option>
+        <option value="off">Sin OCR</option>
+      </select>
+    </div>
+  </form>
 
-        <!-- 3) Controles -->
-        <div class="d-flex flex-wrap gap-2 mt-3">
-          <button id="analyzeBtn" class="btn btn-primary" disabled>
-            <i class="bi bi-cpu me-1"></i> Analizar
-          </button>
-          <button id="exportPdfBtn" class="btn btn-outline-primary" disabled>
-            <i class="bi bi-filetype-pdf me-1"></i> Generar PDF
-          </button>
-          <button id="clearBtn" class="btn btn-outline-secondary">
-            <i class="bi bi-trash3 me-1"></i> Limpiar
-          </button>
-        </div>
+  <!-- 3) Controles -->
+  <div class="d-flex flex-wrap gap-2 mt-3">
+    <!-- Tu botón actual (JS) queda igual -->
+    <button id="analyzeBtn" class="btn btn-primary" type="button" disabled>
+      <i class="bi bi-cpu me-1"></i> Analizar
+    </button>
+
+    <!-- NUEVO: botón submit del FORM HTMX (abre modal) -->
+    <button id="htmxAnalyzeBtn" class="btn btn-success" type="submit">
+      <i class="bi bi-magic me-1"></i> Analizar (modal)
+    </button>
+    <span class="htmx-indicator small ms-1">Procesando…</span>
+
+    <button id="exportPdfBtn" class="btn btn-outline-primary" type="button" disabled>
+      <i class="bi bi-filetype-pdf me-1"></i> Generar PDF
+    </button>
+    <button id="clearBtn" class="btn btn-outline-secondary" type="button">
+      <i class="bi bi-trash3 me-1"></i> Limpiar
+    </button>
+  </div>
+</form>
 
         <hr class="my-4"/>
 

@@ -824,3 +824,57 @@ body[data-route*="notific"] table tfoot td{
   font-weight: 600;
 }
 
+/* =========================================================
+   === HTMX + Modal (flujo /analizar-pliego-ui) =============
+   ========================================================= */
+
+/* Indicador de carga del form HTMX (el span .htmx-indicator junto a los botones) */
+#form-analizar .htmx-indicator{
+  display: none;
+  margin-left: .35rem;
+  vertical-align: middle;
+}
+#form-analizar.htmx-request .htmx-indicator{
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  opacity: .9;
+}
+/* Mientras se envía, el submit queda “realmente” deshabilitado visualmente */
+#form-analizar.htmx-request [type="submit"]{
+  pointer-events: none;
+  opacity: .65;
+}
+
+/* Asegurar que el modal quede por encima del drawer de chat (z-index 1201) */
+.modal{ z-index: 1300; }
+.modal-backdrop{ z-index: 1290; }
+
+/* Tokens de Bootstrap para que el modal respete tu tema */
+:root{
+  --bs-modal-bg: var(--surface);
+  --bs-modal-color: var(--text);
+  --bs-modal-border-color: var(--border);
+}
+
+/* Feedback visual del dropzone cuando se activa (dragover -> border-primary) */
+.dropzone.border-primary{
+  background: rgba(var(--ring-color), .08);
+  border-color: var(--brand-300) !important;
+  box-shadow: 0 0 0 .25rem rgba(var(--ring-color), .18);
+}
+html[data-theme="dark"] .dropzone.border-primary{
+  background: rgba(var(--ring-color), .14);
+  box-shadow: 0 0 0 .25rem rgba(90,134,255,.25);
+}
+
+/* (Opcional) Acordeón en oscuro más legible en la vista “Estructura” */
+html[data-theme="dark"] .accordion-button{
+  background: var(--surface);
+  color: var(--text);
+}
+html[data-theme="dark"] .accordion-body{
+  background: var(--surface);
+  color: var(--text);
+  border-top: 1px solid var(--border);
+}

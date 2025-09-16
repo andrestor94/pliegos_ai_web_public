@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="px-4 py-4">
+  <h2 class="text-xl font-semibold mb-3">Análisis profundo</h2>
+  {% include "analysis/_fb_header.html" with context %}
+
+  {% for sec in deep %}
+  <section class="mb-6 border rounded-xl">
+    <header class="flex justify-between items-center p-3 bg-gray-50 rounded-t-xl">
+      <h3 class="font-semibold">{{ sec.title }}</h3>
+      {% set section_key = sec.section_key %}
+      {% include "analysis/_fb_controls.html" %}
+    </header>
+    <div class="p-4 prose max-w-none">
+      {{ sec.content_html | safe }}
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

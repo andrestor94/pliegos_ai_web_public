@@ -18,6 +18,14 @@ from typing import List, Optional, Dict, Set, Iterable, Tuple
 from contextlib import contextmanager, nullcontext  # kb_session fallback
 from pathlib import Path  # PATCH: paths robustos
 import shutil  # PATCH: copy2 para reubicar PDFs
+import io  # NUEVO: para streams de PDF
+import markupsafe  # NUEVO: para filtro tojson en Jinja
+# NUEVO: modelos y PDF utils (soporta ambas ubicaciones)
+from models_analysis import AnalysisResponse
+try:
+    from utils.pdf_utils import html_to_pdf_bytes
+except Exception:
+    from pdf_utils import html_to_pdf_bytes  # fallback si lo dejaste en backend/
 
 from fastapi import (
     FastAPI,
@@ -239,6 +247,20 @@ from database import (
     # ?? importamos para usarlo en la sección Admin (PARTE 4+)
     crear_o_restaurar_usuario,
 )
+
+# === Helper de conexión SQLite unificado (para endpoints nuevos)
+def get_db_connection(timeout: int = 10) -> sqlite3.Connection:
+    """
+    Devuelve una conexión SQLite a usuarios.db con foreign_keys activado.
+    Usalo en bloques cortos: with get_db_connection() as conn: ...
+    """
+    conn = sqlite3.connect(DB_PATH, timeout=timeout)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON;")
+    except Exception:
+        pass
+    return conn
+
 # ORM (audit_logs)
 from db_orm import inicializar_bd_orm, SessionLocal, AuditLog
 
@@ -575,6 +597,19 @@ def ar_time(value: str) -> str:
         return value
 
 templates.env.filters["ar_time"] = ar_time
+
+# Filtro tojson (asegura que exista en Jinja para los templates del modal)
+def _tojson(value):
+    try:
+        return markupsafe.Markup(json.dumps(value, ensure_ascii=False))
+    except Exception:
+        # fallback muy defensivo
+        try:
+            return markupsafe.Markup(str(value))
+        except Exception:
+            return ""
+
+templates.env.filters["tojson"] = _tojson
 
 # No-cache para HTML (evita que el browser/CDN te muestre UI vieja)
 @app.middleware("http")
@@ -1462,6 +1497,31 @@ async def enviar_rating(request: Request, payload: RatingIn):
 
     return {"ok": True, "message": "Valoración registrada", "historial_id": historial_id}
 
+# ===== Helper: construir AnalysisResponse mínimo desde un 'resumen' plano =====
+def _make_minimal_analysis_response(resumen_texto: str, analisis_id: str) -> AnalysisResponse:
+    """
+    Crea un AnalysisResponse 'mínimo' para poder renderizar el modal (estructurado + profundo)
+    aun cuando todavía no mapeamos todos los campos estructurados.
+    - structured: queda con campos vacíos (para que el template cargue sin errores)
+    - deep_analysis: una sección con el resumen en <pre> (legible)
+    """
+    # Sanitizar el contenido para evitar HTML no deseado
+    safe_html = f"<pre style='white-space:pre-wrap'>{markupsafe.escape(resumen_texto or '').strip()}</pre>"
+    payload = {
+        "analysis_id": analisis_id,
+        "structured": {
+            "basic_info": {},
+            "timeline": [],
+            "min_requirements": {},
+            "special_clauses": [],
+            "contract_amount_duration": {},
+            "minutes_awards": {}
+        },
+        "deep_analysis": [
+            {"title": "Informe resumido", "content_html": safe_html, "section_key": "basic_info"}
+        ]
+    }
+    return AnalysisResponse(**payload)
 
 # *** AJUSTADO ***: unificación de ruta de PDFs tras la generación
 @app.post("/analizar-pliego")
@@ -1521,6 +1581,133 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     except Exception as e:
         logger.exception("Error en /analizar-pliego -> generar_pdf_con_plantilla")
         return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
+
+# ===== Modal UI: corre análisis y abre el modal con 2 opciones =====
+@app.post("/analizar-pliego-ui", response_class=HTMLResponse)
+async def analizar_pliego_ui(request: Request, archivos: List[UploadFile] = File(...)):
+    """
+    Envía los archivos, corre el pipeline (reutilizando /analizar-pliego) y devuelve
+    el modal con las opciones: Formato estructurado / Análisis profundo.
+    """
+    # Reutilizamos la lógica ya probada llamando al endpoint existente:
+    result = await analizar_pliego(request, archivos=archivos)
+    # Si /analizar-pliego devolvió un Response de error, lo propagamos tal cual.
+    if isinstance(result, Response):
+        return result
+
+    # Esperamos un dict con 'resumen' y 'analisis_id'
+    resumen = (result or {}).get("resumen", "")
+    analisis_id = (result or {}).get("analisis_id", uuid.uuid4().hex)
+
+    analysis = _make_minimal_analysis_response(resumen, analisis_id)
+    # Pintamos el modal (HTMX lo inyecta sobre <body>)
+    return templates.TemplateResponse(
+        "analysis/modal.html",
+        {
+            "request": request,
+            "analysis_json": analysis.dict()
+        }
+    )
+
+# ===== Render (parcial) para tabs del modal =====
+@app.post("/render/structured", response_class=HTMLResponse)
+async def render_structured(analysis_json: str = Body(...)):
+    data = json.loads(analysis_json)
+    analysis = AnalysisResponse(**data)
+    html = templates.get_template("analysis/structured.html").render(
+        request=None,
+        s=analysis.structured,
+        deep=analysis.deep_analysis,
+        analysis_id=analysis.analysis_id,
+    )
+    return HTMLResponse(html)
+
+
+@app.post("/render/deep", response_class=HTMLResponse)
+async def render_deep(analysis_json: str = Body(...)):
+    data = json.loads(analysis_json)
+    analysis = AnalysisResponse(**data)
+    html = templates.get_template("analysis/deep.html").render(
+        request=None,
+        s=analysis.structured,
+        deep=analysis.deep_analysis,
+        analysis_id=analysis.analysis_id,
+    )
+    return HTMLResponse(html)
+# ===== Exportar a PDF (estructurado / profundo) =====
+@app.post("/export/pdf/estructurado")
+async def export_pdf_estructurado(analysis_json: str = Body(...)):
+    data = json.loads(analysis_json)
+    analysis = AnalysisResponse(**data)
+    html = templates.get_template("analysis/structured.html").render(
+        request=None,
+        s=analysis.structured,
+        deep=analysis.deep_analysis,
+        analysis_id=analysis.analysis_id,
+    )
+    pdf_bytes = html_to_pdf_bytes(html)
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=estructurado.pdf"},
+    )
+
+
+@app.post("/export/pdf/profundo")
+async def export_pdf_profundo(analysis_json: str = Body(...)):
+    data = json.loads(analysis_json)
+    analysis = AnalysisResponse(**data)
+    html = templates.get_template("analysis/deep.html").render(
+        request=None,
+        s=analysis.structured,
+        deep=analysis.deep_analysis,
+        analysis_id=analysis.analysis_id,
+    )
+    pdf_bytes = html_to_pdf_bytes(html)
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=analisis_profundo.pdf"},
+    )
+# ===== Guardar feedback por sección (✅/❌ + comentario) =====
+@app.post("/feedback")
+async def save_feedback_endpoint(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    analysis_id = (data or {}).get("analysis_id")
+    section_key = (data or {}).get("section_key")
+    is_correct = (data or {}).get("is_correct")
+    comment = (data or {}).get("comment", "")
+
+    # Validaciones mínimas
+    if not analysis_id or not section_key:
+        return JSONResponse({"ok": False, "error": "Faltan analysis_id o section_key"}, status_code=400)
+
+    # Normalizar is_correct → 0/1
+    val = None
+    try:
+        val = 1 if (is_correct in (True, "true", "1", 1)) else 0 if (is_correct in (False, "false", "0", 0)) else None
+    except Exception:
+        val = None
+    if val is None and is_correct is not None:
+        # tolerante: cualquier string no vacío distinto de "false"/"0" lo tomamos como True
+        val = 0 if str(is_correct).strip().lower() in ("0", "false", "no") else 1
+
+    try:
+        with get_db_connection() as conn:
+            conn.execute(
+                "INSERT INTO section_feedback (analysis_id, section_key, is_correct, comment) VALUES (?,?,?,?)",
+                (analysis_id, section_key, int(val) if val is not None else None, comment or ""),
+            )
+            conn.commit()
+    except Exception as e:
+        logging.exception("save_feedback_endpoint error")
+        return JSONResponse({"ok": False, "error": f"No se pudo guardar: {e}"}, status_code=500)
+
+    return {"ok": True}
 
     # === NUEVO: asegurar que el PDF quede accesible en /generated_pdfs ===
     try:

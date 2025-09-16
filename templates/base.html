@@ -1032,6 +1032,15 @@
       }
     </style>
 
+<!-- HTMX (necesario para hx-post / hx-target / etc.) -->
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+
+<!-- (Opcional) Estilo para mostrar un indicador mientras HTMX hace requests -->
+<style>
+  .htmx-indicator{display:none}
+  .htmx-request .htmx-indicator{display:inline-block}
+</style>
+
     {% block extra_head %}{% endblock %}
   </head>
   <body
@@ -2209,6 +2218,22 @@
         }
       }, true);
     </script>
+
+<script>
+  // Cuando HTMX inserte el modal en <body>, lo abrimos automáticamente
+  document.body.addEventListener('htmx:afterSwap', function (e) {
+    try {
+      // Solo reaccionar cuando el target del swap fue el <body>
+      if (e.detail && e.detail.target === document.body) {
+        var modalEl = document.getElementById('analysisModal');
+        if (modalEl && typeof bootstrap !== "undefined") {
+          var m = bootstrap.Modal.getOrCreateInstance(modalEl, {backdrop: 'static', keyboard: false});
+          m.show();
+        }
+      }
+    } catch (_) {}
+  });
+</script>
 
     {% block extra_scripts %}{% endblock %}
   </body>

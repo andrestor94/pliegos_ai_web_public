@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="px-4 py-4">
+  <h2 class="text-xl font-semibold mb-3">Formato estructurado</h2>
+
+  {% include "analysis/_fb_header.html" with context %}
+
+  <!-- Información básica -->
+  <section class="mb-6 border rounded-xl">
+    <header class="flex justify-between items-center p-3 bg-gray-50 rounded-t-xl">
+      <h3 class="font-semibold">Información básica del proceso</h3>
+      {% set section_key = "basic_info" %}
+      {% include "analysis/_fb_controls.html" %}
+    </header>
+    <div class="p-3 overflow-x-auto">
+      <table>
+        <tbody>
+          <tr><th>N° de proceso</th><td>{{ s.basic_info.process_number or "-" }}</td>
+              <th>Nombre de proceso</th><td>{{ s.basic_info.process_name or "-" }}</td></tr>
+          <tr><th>Objeto</th><td colspan="3">{{ s.basic_info.object or "-" }}</td></tr>
+          <tr><th>Procedimiento</th><td>{{ s.basic_info.selection_method or "-" }}</td>
+              <th>Etapa</th><td>{{ s.basic_info.stage or "-" }}</td></tr>
+          <tr><th>Alcance</th><td>{{ s.basic_info.scope or "-" }}</td>
+              <th>Moneda</th><td>{{ s.basic_info.currency or "-" }}</td></tr>
+          <tr><th>Tipo de cotización</th><td>{{ s.basic_info.quote_type or "-" }}</td>
+              <th>Tipo de adjudicación</th><td>{{ s.basic_info.award_type or "-" }}</td></tr>
+          <tr><th>Tipo doc. del proceso</th><td>{{ s.basic_info.document_type or "-" }}</td>
+              <th>Ofertas</th><td>{{ s.basic_info.offers_limit or "-" }}</td></tr>
+          <tr><th>Lugar recepción</th><td colspan="3">{{ s.basic_info.reception_place or "-" }}</td></tr>
+          <tr><th>Plazo mantenimiento oferta</th><td>{{ s.basic_info.offer_validity_days or "-" }}</td>
+              <th>Encudre legal</th><td>{{ s.basic_info.legal_framework or "-" }}</td></tr>
+          <tr><th>Acepta ampliación</th><td>{{ s.basic_info.accepts_increase_pct or "-" }}%</td>
+              <th>Acepta prórroga</th><td>{{ "Sí" if s.basic_info.accepts_extension else "No" }}</td></tr>
+          <tr><th>Etapas del proceso</th><td colspan="3">{{ ", ".join(s.basic_info.process_steps or []) }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Cronograma -->
+  <section class="mb-6 border rounded-xl">
+    <header class="flex justify-between items-center p-3 bg-gray-50 rounded-t-xl">
+      <h3 class="font-semibold">Cronograma</h3>
+      {% set section_key = "timeline" %}
+      {% include "analysis/_fb_controls.html" %}
+    </header>
+    <div class="p-3 overflow-x-auto">
+      <table>
+        <thead><tr><th>Hito</th><th>Fecha y hora</th></tr></thead>
+        <tbody>
+          {% for t in s.timeline %}
+          <tr><td>{{ t.label }}</td><td>{{ t.datetime_iso or t.raw_text or "-" }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Requisitos mínimos (3 bloques) -->
+  {% for k, title in {"economic_financial":"Requisitos económicos y financieros","technical":"Requisitos técnicos","administrative":"Requisitos administrativos"}.items() %}
+  <section class="mb-6 border rounded-xl">
+    <header class="flex justify-between items-center p-3 bg-gray-50 rounded-t-xl">
+      <h3 class="font-semibold">{{ title }}</h3>
+      {% set section_key = "min_requirements." + k %}
+      {% include "analysis/_fb_controls.html" %}
+    </header>
+    <div class="p-3 overflow-x-auto">
+      <table>
+        <thead><tr><th>N°</th><th>Descripción</th><th>Adjunta doc.</th><th>Canal</th></tr></thead>
+        <tbody>
+          {% for r in s.min_requirements.get(k, []) %}
+            <tr>
+              <td>{{ r.id or loop.index }}</td>
+              <td>{{ r.description }}</td>
+              <td>{{ "Sí" if r.requires_upload else "No" }}</td>
+              <td>{{ r.delivery_channel or "-" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endfor %}
+
+  <!-- Cláusulas / Garantías -->
+  <section class="mb-6 border rounded-xl">
+    <header class="flex justify-between items-center p-3 bg-gray-50 rounded-t-xl">
+      <h3 class="font-semibold">Cláusulas particulares / Garantías</h3>
+      {% set section_key = "special_clauses" %}
+      {% include "analysis/_fb_controls.html" %}
+    </header>
+    <div class="p-3 overflow-x-auto">
+      <table>
+        <thead><tr><th>Tipo</th><th>Requerida</th><th>%</th><th>Contragarantía</th><th>Notas</th></tr></thead>
+        <tbody>
+          {% for g in s.special_clauses %}
+          <tr>
+            <td>{{ g.type }}</td>
+            <td>{{ "Sí" if g.required else "No" }}</td>
+            <td>{{ g.percentage if g.percentage is not none else "-" }}</td>
+            <td>{{ "Sí" if g.counter_guarantee else "No" }}</td>
+            <td>{{ g.notes or "-" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Monto y duración -->
+  <section class="mb-6 border rounded-xl">
+    <header class="flex justify-between items-center p-3 bg-gray-50 rounded-t-xl">
+      <h3 class="font-semibold">Monto y duración del contrato</h3>
+      {% set section_key = "contract_amount_duration" %}
+      {% include "analysis/_fb_controls.html" %}
+    </header>
+    <div class="p-3">
+      <table>
+        <tbody>
+          <tr><th>Monto</th><td>${{ "{:,.2f}".format(s.contract_amount_duration.amount_ars or 0) }}</td>
+              <th>Periodicidad recepción</th><td>{{ s.contract_amount_duration.receipt_frequency or "-" }}</td></tr>
+          <tr><th>Inicio estimado</th><td>{{ s.contract_amount_duration.estimated_start_text or "-" }}</td>
+              <th>Duración</th><td>{{ s.contract_amount_duration.duration_text or "-" }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Actas / Dictámenes -->
+  <section class="mb-2 border rounded-xl">
+    <header class="flex justify-between items-center p-3 bg-gray-50 rounded-t-xl">
+      <h3 class="font-semibold">Actas y Dictámenes</h3>
+      {% set section_key = "minutes_awards" %}
+      {% include "analysis/_fb_controls.html" %}
+    </header>
+    <div class="p-3">
+      <table>
+        <tbody>
+          <tr><th>Acta de apertura</th><td>{{ s.minutes_awards.opening_minutes_date or "-" }}</td>
+              <th>Dictamen de preadjudicación</th><td>{{ s.minutes_awards.award_opinion_date or "-" }} — {{ s.minutes_awards.award_opinion_status or "-" }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}
