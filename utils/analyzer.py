@@ -1,60 +1,73 @@
+# utils/analyzer.py
 import os
-from PyPDF2 import PdfReader
-from docx import Document
-from openai import OpenAI
-from dotenv import load_dotenv
+from typing import Literal
+from .openai_client import chat  # nuestro wrapper (Responses API)
 
-load_dotenv()
-api_key = os.getenv("OPENAI_API_KEY")
+OutType = Literal["resumen", "exhaustivo", "tabla_requisitos"]
+Lang = Literal["es", "en"]
 
-client = OpenAI(api_key=api_key)
+def analizar_y_generar_informe(
+    texto_pliego: str,
+    out_type: OutType = "exhaustivo",
+    lang: Lang = "es",
+) -> str:
+    """
+    Recibe TODO el texto consolidado del/los pliegos y devuelve un informe HTML/texto.
+    La usa main.py dentro del endpoint de análisis.
+    """
+    if not (texto_pliego or "").strip():
+        return "No se encontró texto para analizar."
 
-def read_txt(path):
-    with open(path, 'r', encoding='utf-8') as f:
-        return f.read()
+    # Modelo económico por defecto (podés sobreescribir en Render)
+    model = os.getenv("OPENAI_RESPONSES_MODEL", "gpt-5-mini")
 
-def read_pdf(path):
-    reader = PdfReader(path)
-    text = ""
-    for page in reader.pages:
-        text += page.extract_text() or ""
-    return text
-
-def read_docx(path):
-    doc = Document(path)
-    return "\n".join([p.text for p in doc.paragraphs])
-
-def analyze_document(path):
-    ext = os.path.splitext(path)[1].lower()
-
-    if ext == ".pdf":
-        text = read_pdf(path)
-    elif ext in [".docx", ".doc"]:
-        text = read_docx(path)
-    elif ext == ".txt":
-        text = read_txt(path)
-    else:
-        return {"error": "Formato no soportado"}
-
-    prompt = f"""
-Eres un asistente experto en análisis de licitaciones. Extraé de este documento toda la información importante, bien organizada y sin omitir ningún detalle relevante. Mostralo de forma clara y estructurada en español:
-
-{text[:8000]}
-"""
-
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Sos un analista de licitaciones experto."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2,
-            max_completion_tokens=1800
+    if out_type == "tabla_requisitos":
+        objetivo = (
+            "Genera SOLO una tabla en Markdown con columnas: "
+            "Ítem | Requisito | Referencia (pág./anexo) | Observaciones. "
+            "Sin texto extra antes ni después."
         )
+        max_tokens = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "1400"))
+    elif out_type == "resumen":
+        objetivo = (
+            "Redacta un **resumen ejecutivo** claro (~400-600 palabras) con: "
+            "1) Alcance; 2) Fechas/Plazos; 3) Documentación exigida; "
+            "4) Criterios de evaluación; 5) Riesgos/alertas; 6) Próximos pasos."
+        )
+        max_tokens = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "1600"))
+    else:  # exhaustivo
+        objetivo = (
+            "Elabora un **informe exhaustivo** (secciones con subtítulos) que incluya: "
+            "Resumen ejecutivo; Requisitos obligatorios; Criterios y ponderaciones; "
+            "Cronograma y plazos; Condiciones comerciales/legales; Exclusiones/anexos; "
+            "Riesgos y no conformidades; Recomendaciones."
+        )
+        max_tokens = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "2600"))
 
-        result = response.choices[0].message.content.strip()
-        return {"análisis": result}
+    system = (
+        "Sos un analista experto en pliegos. Escribe de forma clara y accionable. "
+        "Usá subtítulos y bullets. Si falta info, indicalo sin inventar."
+    )
+    system += " Responde SIEMPRE en español." if lang == "es" else " Answer in English."
 
-    except Exception as e:
-        return {"error": f"Error al consultar OpenAI:\n\n{str(e)}"}
+    user = (
+        f"{objetivo}\n\n"
+        "Texto del pliego (puede incluir varios anexos, ya concatenados):\n"
+        "----------------------------------------\n"
+        f"{texto_pliego}\n"
+        "----------------------------------------\n"
+        "No inventes datos; si algo no está en el texto, acláralo."
+    )
+
+    out = chat(
+        messages=[{"role": "system", "content": system},
+                  {"role": "user", "content": user}],
+        model=model,
+        temperature=0.2,
+        max_output_tokens=max_tokens,
+    )
+    return out.strip()
+
+# Alias por compatibilidad si en algún lugar llaman distinto:
+def analyze_documents(texto_pliego: str, out_type: OutType = "exhaustivo", lang: Lang = "es") -> str:
+    return analizar_y_generar_informe(texto_pliego, out_type, lang)

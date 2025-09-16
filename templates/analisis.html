@@ -428,7 +428,7 @@
     chatInput.value='';
     try{
       // Endpoint de chat para esta vista (ajustá a tu backend real)
-      const r = await fetch('/api/chat-analisis', {
+      const r = await fetch('/api/chat-openai', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ message: txt })

@@ -20,6 +20,7 @@ from pathlib import Path  # PATCH: paths robustos
 import shutil  # PATCH: copy2 para reubicar PDFs
 import io  # NUEVO: para streams de PDF
 import markupsafe  # NUEVO: para filtro tojson en Jinja
+from services.ai_client import chat  # wrapper que usa Responses API (barato y robusto)
 # NUEVO: modelos y PDF utils (soporta ambas ubicaciones)
 from models_analysis import AnalysisResponse
 try:
