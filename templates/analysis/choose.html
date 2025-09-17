@@ -1,0 +1,50 @@
+<!-- templates/analysis/choose.html -->
+<div id="modalChoose" class="sa-modal-overlay">
+  <div class="sa-modal">
+    <button class="sa-modal-close" onclick="this.closest('#modalChoose').remove()">✕</button>
+    <h2 class="sa-modal-title">Seleccioná tipo de análisis</h2>
+
+    <div class="row g-3 my-2">
+      <div class="col-12 col-md-6">
+        <div class="sa-card-choice">
+          <div class="sa-card-title">Análisis Estructurado</div>
+          <p class="mb-3">Extracción tabular, campos clave y secciones.</p>
+          <button
+            class="btn btn-primary w-100"
+            hx-post="/render/structured"
+            hx-target="body"
+            hx-swap="beforeend"
+            onclick="document.getElementById('modalChoose')?.remove()">
+            Ver estructurado
+          </button>
+        </div>
+      </div>
+      <div class="col-12 col-md-6">
+        <div class="sa-card-choice alt">
+          <div class="sa-card-title">Análisis Profundo</div>
+          <p class="mb-3">Comprensión contextual y redacción por secciones.</p>
+          <button
+            class="btn btn-success w-100"
+            hx-post="/render/deep"
+            hx-target="body"
+            hx-swap="beforeend"
+            onclick="document.getElementById('modalChoose')?.remove()">
+            Ver profundo
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+/* Estilos mínimos (se integran bien con tu theme) */
+.sa-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:1050;display:flex;align-items:center;justify-content:center;padding:16px;}
+.sa-modal{background:#fff;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);width:min(860px,96vw);padding:20px 20px 24px;}
+.sa-modal-title{font-size:22px;font-weight:700;margin:6px 0 16px;}
+.sa-modal-close{border:0;background:transparent;font-size:18px;position:absolute;margin:-6px 0 0;right:22px;cursor:pointer;opacity:.65}
+.sa-modal-close:hover{opacity:1}
+.sa-card-choice{border:2px solid var(--sa-border,#e6e8eb);border-radius:14px;padding:16px}
+.sa-card-choice .sa-card-title{font-weight:700;margin-bottom:6px}
+.sa-card-choice.alt{border-color:#dbece3;background:#f7fbf9}
+</style>

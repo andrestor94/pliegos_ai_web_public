@@ -1,0 +1,81 @@
+<div id="modalStructured" class="sa-modal-overlay">
+  <div class="sa-modal">
+    <button class="sa-modal-close" onclick="this.closest('#modalStructured').remove()">✕</button>
+    <h2 class="sa-modal-title">Resultado del Análisis Estructurado</h2>
+
+    <!-- Cabecera resumen -->
+    <div class="row g-3">
+      <div class="col-12 col-lg-7">
+        <div class="sa-block">
+          <div class="sa-block-title">Resumen Ejecutivo</div>
+          <div class="sa-block-body">{{ structured.headline or '—' }}</div>
+        </div>
+        <div class="sa-block">
+          <div class="sa-block-title">Organismo</div>
+          <div class="sa-block-body">{{ structured.organismo or '—' }}</div>
+        </div>
+        <div class="sa-block">
+          <div class="sa-block-title">Expediente</div>
+          <div class="sa-block-body">{{ structured.expediente or '—' }}</div>
+        </div>
+      </div>
+
+      <div class="col-12 col-lg-5">
+        <div class="sa-block">
+          <div class="sa-block-title">Licitación / Modalidad</div>
+          <div class="sa-block-body">{{ structured.modalidad or '—' }}</div>
+        </div>
+
+        <!-- Tabla compacta de renglón principal -->
+        <div class="sa-table">
+          <div class="sa-table-head">
+            <div>Cantidad</div><div>Descripción</div><div>Condición</div><div>Garantía</div>
+          </div>
+          <div class="sa-table-row">
+            <div>{{ structured.item.cantidad or '—' }}</div>
+            <div title="{{ structured.item.descripcion or '' }}">{{ structured.item.descripcion or '—' }}</div>
+            <div>{{ structured.item.condicion or '—' }}</div>
+            <div>{{ structured.item.garantia or '—' }}</div>
+          </div>
+        </div>
+
+        <div class="sa-block">
+          <div class="sa-block-title">Lugar y Fecha de Apertura</div>
+          <div class="sa-block-body">{{ structured.apertura or '—' }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cronograma / Entrega / Pago -->
+    <div class="row g-3 mt-1">
+      <div class="col-12 col-lg-6">
+        <div class="sa-block">
+          <div class="sa-block-title">Cronograma y Lugares Clave</div>
+          <div class="sa-block-body">{{ structured.cronograma or '—' }}</div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-6">
+        <div class="sa-block">
+          <div class="sa-block-title">Entrega y Pago</div>
+          <div class="sa-block-body">{{ structured.entrega_pago or '—' }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="d-flex justify-content-end gap-2 mt-3">
+      <a class="btn btn-primary" href="/descargar-ultimo-pdf">Descargar Informe Completo</a>
+      <button class="btn btn-outline-secondary" onclick="document.getElementById('modalStructured').remove()">Volver</button>
+    </div>
+  </div>
+</div>
+
+<style>
+.sa-block{background:#f7f8fa;border:1px solid #e6e8eb;border-radius:12px;padding:12px 14px;margin-bottom:10px}
+.sa-block-title{font-weight:700;margin-bottom:6px}
+.sa-table{border:1px solid #e6e8eb;border-radius:12px;overflow:hidden;margin-bottom:10px}
+.sa-table-head,.sa-table-row{display:grid;grid-template-columns:90px 1fr 120px 110px;gap:0}
+.sa-table-head>div{font-weight:700;background:#eef2f6;padding:8px 10px;border-right:1px solid #e6e8eb}
+.sa-table-row>div{padding:8px 10px;border-top:1px solid #e6e8eb;border-right:1px solid #e6e8eb}
+.sa-table-head>div:last-child,.sa-table-row>div:last-child{border-right:none}
+@media (max-width: 768px){.sa-table-head,.sa-table-row{grid-template-columns:80px 1fr 100px 90px}}
+</style>

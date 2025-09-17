@@ -178,6 +178,99 @@
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/locales-all.global.min.js"></script>
 
   <script>
+    // ========= Helper: inicializa el modal insertado =========
+    function setupAnalysisModal(root){
+      if(!root) return;
+
+      // bloquear scroll del fondo
+      const oldHtml = document.documentElement.style.overflow;
+      const oldBody = document.body.style.overflow;
+      document.documentElement.style.overflow = 'hidden';
+      document.body.style.overflow = 'hidden';
+
+      function close(){
+        root.remove();
+        document.documentElement.style.overflow = oldHtml;
+        document.body.style.overflow = oldBody;
+      }
+      root.querySelector('[data-close]')?.addEventListener('click', close);
+      root.addEventListener('click', (e)=>{ if(e.target === root) close(); });
+      document.addEventListener('keydown', function onEsc(e){
+        if(e.key === 'Escape'){ close(); document.removeEventListener('keydown', onEsc); }
+      });
+
+      // flujo de tarjetas → confirmación → render
+      const cards = root.querySelectorAll('.sa-card');
+      const confirmBtn = root.querySelector('#confirm-mode');
+      const stepChooser = root.querySelector('#step-chooser');
+      const stepResult  = root.querySelector('#step-result');
+      const viewEl      = root.querySelector('#analysis-view');
+      const titleEl     = root.querySelector('#result-title');
+      const jsonVal     = root.querySelector('#analysis-json')?.value || '';
+
+      let chosen = null;
+      let pdfEndpoint = '';
+
+      cards.forEach(c=>{
+        c.addEventListener('click', ()=>{
+          cards.forEach(x=>x.classList.remove('active'));
+          c.classList.add('active');
+          chosen = c.dataset.mode; // 'structured' | 'deep'
+          confirmBtn.disabled = !chosen;
+        });
+      });
+
+      async function loadView(){
+        const endpoint   = chosen === 'structured' ? '/render/structured'      : '/render/deep';
+        pdfEndpoint      = chosen === 'structured' ? '/export/pdf/estructurado' : '/export/pdf/profundo';
+        titleEl.textContent = chosen === 'structured'
+          ? 'Resultado del Análisis Estructurado'
+          : 'Resultado del Análisis Profundo';
+
+        const body = new URLSearchParams(); body.set('analysis_json', jsonVal);
+        viewEl.innerHTML = '<div class="text-muted">Cargando…</div>';
+        try{
+          const r = await fetch(endpoint, { method:'POST', body });
+          viewEl.innerHTML = r.ok ? await r.text() : '<div class="text-danger">No se pudo renderizar.</div>';
+        }catch{
+          viewEl.innerHTML = '<div class="text-danger">No se pudo renderizar.</div>';
+        }
+      }
+
+      confirmBtn.addEventListener('click', async ()=>{
+        if(!chosen) return;
+        stepChooser.style.display = 'none';
+        stepResult.style.display  = '';
+        await loadView();
+
+        root.querySelector('#go-back')?.addEventListener('click', ()=>{
+          stepResult.style.display  = 'none';
+          stepChooser.style.display = '';
+          viewEl.innerHTML = '';
+          confirmBtn.disabled = true;
+          cards.forEach(x=>x.classList.remove('active'));
+          chosen = null;
+        });
+
+        root.querySelector('#download-pdf')?.addEventListener('click', ()=>{
+          if(!pdfEndpoint) return;
+          const form = document.createElement('form');
+          form.method = 'POST';
+          form.action = pdfEndpoint;
+          form.target = '_blank';
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = 'analysis_json';
+          input.value = jsonVal;
+          form.appendChild(input);
+          document.body.appendChild(form);
+          form.submit();
+          form.remove();
+        });
+      });
+    }
+    // ========= Fin helper =========
+
     // Fecha de hoy
     (function () {
       const el = document.getElementById('todayLabel');
@@ -266,7 +359,7 @@
       });
     }
 
-    // 🚀 Mejora: ahora llama al endpoint que devuelve el modal
+    // 🚀 Llama al endpoint que devuelve el modal e **inicializa** el flujo
     document.getElementById('analyze-btn').addEventListener('click', async () => {
       if (!archivosSeleccionados.length) {
         document.getElementById('result').innerHTML =
@@ -289,6 +382,9 @@
         // Inyecta el modal en el body
         document.body.insertAdjacentHTML('beforeend', html);
 
+        // ✅ Inicializa la lógica del modal recién insertado
+        setupAnalysisModal(document.getElementById('analysis-modal'));
+
         // Limpia el mensaje de cargando
         document.getElementById('result').innerHTML = '';
 
@@ -301,7 +397,7 @@
       }
     });
 
-    // 👉 Simplificado: descarga siempre el último PDF generado por el backend
+    // 👉 Descarga el último PDF generado por el backend
     document.getElementById('generate-btn').addEventListener('click', () => {
       window.location.href = '/descargar-ultimo-pdf';
     });

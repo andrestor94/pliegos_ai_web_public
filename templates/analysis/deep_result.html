@@ -1,0 +1,30 @@
+<div id="modalDeep" class="sa-modal-overlay">
+  <div class="sa-modal">
+    <button class="sa-modal-close" onclick="this.closest('#modalDeep').remove()">✕</button>
+    <h2 class="sa-modal-title">Resultado del Análisis Profundo</h2>
+
+    <div class="sa-block">
+      <div class="sa-block-body">{{ deep.resumen or deep | safe }}</div>
+    </div>
+
+    <div class="sa-block">
+      <div class="sa-block-title">Objeto y Alcance</div>
+      <div class="sa-block-body">{{ deep.objeto_alcance or '—' }}</div>
+    </div>
+
+    <div class="sa-block">
+      <div class="sa-block-title">Cronograma Clave</div>
+      <div class="sa-block-body">{{ deep.cronograma_clave or '—' }}</div>
+    </div>
+
+    <div class="sa-block">
+      <div class="sa-block-title">Riesgos / Observaciones</div>
+      <div class="sa-block-body">{{ deep.riesgos or '—' }}</div>
+    </div>
+
+    <div class="d-flex justify-content-end gap-2 mt-3">
+      <a class="btn btn-primary" href="/descargar-ultimo-pdf">Descargar Informe Completo</a>
+      <button class="btn btn-outline-secondary" onclick="document.getElementById('modalDeep').remove()">Volver</button>
+    </div>
+  </div>
+</div>
