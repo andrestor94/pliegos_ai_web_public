@@ -593,25 +593,23 @@ def _chat_create_safe(**kw):
         return f"[OPENAI-ERROR] {e}"
 
 def _ocr_openai_imagen_b64(b64_img: str, mime: str = "image/png") -> str:
-    """
-    OCR con Vision vía Responses API. Recibe una imagen en base64 y devuelve texto literal.
-    """
     prompt = (
         "Extraé el TEXTO literal de esta imagen escaneada de un pliego. "
         "Conservá títulos, tablas como líneas con separadores, listas y números. No resumas ni interpretes."
     )
     try:
-        return _chat_create_safe(
+        txt = _chat_create_safe(
             model=VISION_MODEL,
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64_img}"}}
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": {"url": f"data:{mime};base64,{b64_img}"}}
                 ]
             }],
-            max_completion_tokens=900,
-        ).strip()
+            max_output_tokens=900,
+        )
+        return (txt or "").strip()
     except Exception as e:
         return f"[OCR-ERROR] {e}"
 
@@ -1227,7 +1225,7 @@ def _build_section_23(texto: str, varios_anexos: bool) -> str:
         return ""
     out = ["2.3 Contactos y portales:"]
     for (t, v, p, ax) in items:
-        etiqueta = "Email" si t == "email" else "URL"
+        etiqueta = "Email" if t == "email" else "URL"
         cita = f"(Anexo {ax}, p. {p})" if varios_anexos and ax else (f"(p. {p})" if p else "(Fuente: documento provisto)")
         out.append(f" - {etiqueta}: {v} {cita}")
     return "\n".join(out)
@@ -1558,9 +1556,6 @@ def _msg_single_block(varios_anexos: bool, texto_fuente: str, texto_hints: str =
     return [{"role": "system", "content": sys}, {"role": "user", "content": content}]
 
 def _call_chat(messages: List[Dict[str, Any]], model: Optional[str] = None, max_tokens: Optional[int] = None) -> str:
-    """
-    Wrapper fino que usa _chat_create_safe (Responses API) y devuelve SIEMPRE str.
-    """
     payload: Dict[str, Any] = {
         "model": model or _pick_model(final_pass=False),
         "messages": messages,
@@ -1569,11 +1564,11 @@ def _call_chat(messages: List[Dict[str, Any]], model: Optional[str] = None, max_
     if temp is not None:
         payload["temperature"] = temp
     if max_tokens is not None:
-        payload["max_completion_tokens"] = int(max_tokens)
+        # Responses API usa max_output_tokens
+        payload["max_output_tokens"] = int(max_tokens)
 
-    # _chat_create_safe ya devuelve un string con el texto final
-    out = _chat_create_safe(**payload)
-    return (out or "").strip()
+    # _chat_create_safe ahora devuelve texto directo (string)
+    return _chat_create_safe(**payload)
 
 # ==================== RAG liviano sobre KB (sin NumPy) ====================
 def _cosine_py(a: List[float], b: List[float]) -> float:
