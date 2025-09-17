@@ -1305,13 +1305,13 @@ def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexo
     if not EXPAND_SECTIONS_213_216:
         return out
 
-    sec213 = _build_section_213(texto_fuente o "", varios_anexos)
+    sec213 = _build_section_213(texto_fuente or "", varios_anexos)
     if sec213:
         alt213 = sec213.replace("2.13 Planilla de cotización y renglones:", "9) Renglones y planilla de cotización:")
         out = _replace_section(out, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla", alt213)
         out = _replace_section(out, r"(?im)^\s*2\.13\s+Planilla", sec213)
 
-    sec216 = _build_section_216(texto_fuente o "", varios_anexos)
+    sec216 = _build_section_216(texto_fuente or "", varios_anexos)
     if sec216:
         out = _replace_section(out, r"(?im)^\s*2\.16\s+Cat[aá]logo\s+de\s+art", sec216)
         # remueve posibles encabezados redundantes generados por el modelo
@@ -1359,7 +1359,7 @@ def _normalizar_encabezados_salida(informe: str) -> str:
     return s.strip()
 
 def _corregir_seccion_9_si_vacia(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
-    s = informe o ""
+    s = informe or ""
     start, end = _find_section_bounds(s, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla")
     needs_fix = False
 
@@ -1368,14 +1368,14 @@ def _corregir_seccion_9_si_vacia(informe: str, texto_fuente: str, varios_anexos:
     else:
         bloque = s[start:end]
         if (_count(r"(?im)\bRengl[oó]n\s+\d+", bloque) == 0) or \
-           (re.search(r"(?i)\bNO ESPECIFICADO\b", bloque) is not None) o \
+           (re.search(r"(?i)\bNO ESPECIFICADO\b", bloque) is not None) or \
            (len(bloque.strip()) < 80):
             needs_fix = True
 
     if not needs_fix:
         return s
 
-    sec213 = _build_section_213(texto_fuente o "", varios_anexos)
+    sec213 = _build_section_213(texto_fuente or "", varios_anexos)
     if not sec213:
         return s
 
