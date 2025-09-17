@@ -266,6 +266,7 @@
       });
     }
 
+    // 🚀 Mejora: ahora llama al endpoint que devuelve el modal
     document.getElementById('analyze-btn').addEventListener('click', async () => {
       if (!archivosSeleccionados.length) {
         document.getElementById('result').innerHTML =
@@ -279,19 +280,24 @@
       document.getElementById('result').innerHTML =
         '<div class="alert alert-info">⏳ Analizando pliegos...</div>';
 
-      const r = await fetch('/analizar-pliego', { method: 'POST', body: fd });
-      const j = await r.json();
+      try {
+        const r = await fetch('/analizar-pliego-ui', { method: 'POST', body: fd });
+        const html = await r.text();
 
-      if (r.ok) {
-        resumenGlobal = j.resumen;
-        ultimoPDF = j.pdf;
-        document.getElementById('result').innerHTML =
-          `<div class="alert alert-success"><strong>✅ Análisis completo.</strong><br><br>${resumenGlobal}</div>`;
+        if (!r.ok) throw new Error('No se pudo analizar.');
+
+        // Inyecta el modal en el body
+        document.body.insertAdjacentHTML('beforeend', html);
+
+        // Limpia el mensaje de cargando
+        document.getElementById('result').innerHTML = '';
+
+        // Recarga historial
         await Historial.load();
         document.getElementById('historial')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      } else {
+      } catch (err) {
         document.getElementById('result').innerHTML =
-          `<div class="alert alert-danger">❌ ${j.error || 'No se pudo analizar.'}</div>`;
+          `<div class="alert alert-danger">❌ ${err?.message || 'Error en análisis.'}</div>`;
       }
     });
 
