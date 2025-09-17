@@ -301,13 +301,9 @@
       }
     });
 
+    // 👉 Simplificado: descarga siempre el último PDF generado por el backend
     document.getElementById('generate-btn').addEventListener('click', () => {
-      if (!ultimoPDF) {
-        document.getElementById('result').innerHTML =
-          '<div class="alert alert-danger">❌ Primero analizá un pliego.</div>';
-        return;
-      }
-      window.location.href = `/descargar/${ultimoPDF}`;
+      window.location.href = '/descargar-ultimo-pdf';
     });
 
     function limpiar() {
