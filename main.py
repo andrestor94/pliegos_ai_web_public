@@ -14,7 +14,7 @@ import logging  # PATCH: logging básico para mejor trazabilidad
 from functools import partial  # PATCH: lo usaremos con run_in_threadpool (Parte 2)
 from importlib import import_module  # import robusto para utils/Kb
 from math import ceil
-from typing import List, Optional, Dict, Set, Iterable, Tuple
+from typing import List, Optional, Dict, Set, Iterable, Tuple, Any
 from contextlib import contextmanager, nullcontext  # kb_session fallback
 from pathlib import Path  # PATCH: paths robustos
 import shutil  # PATCH: copy2 para reubicar PDFs
@@ -611,6 +611,35 @@ def _tojson(value):
 
 templates.env.filters["tojson"] = _tojson
 
+# ---------- Helpers robustos para AnalysisResponse / JSON ----------
+def _normalize_analysis_input(analysis_json: Any) -> Dict[str, Any]:
+    """
+    Acepta:
+      - str JSON (posiblemente con espacios)
+      - dict/obj ya parseado
+      - None/"" -> levanta HTTP 400
+    Devuelve un dict listo para construir AnalysisResponse.
+    """
+    if analysis_json is None:
+        raise HTTPException(status_code=400, detail="Falta analysis_json")
+    if isinstance(analysis_json, (dict, list)):
+        return analysis_json  # ya viene parseado
+    s = str(analysis_json or "").strip()
+    if not s:
+        raise HTTPException(status_code=400, detail="analysis_json vacío")
+    try:
+        return json.loads(s)
+    except Exception:
+        # Si vino HTML-encoded por error, último intento muy defensivo
+        try:
+            return json.loads(s.encode("utf-8", "ignore").decode("utf-8"))
+        except Exception:
+            raise HTTPException(status_code=400, detail="analysis_json inválido (no es JSON)")
+
+def _parse_analysis_response(analysis_json: Any) -> AnalysisResponse:
+    data = _normalize_analysis_input(analysis_json)
+    return AnalysisResponse(**data)
+
 # No-cache para HTML (evita que el browser/CDN te muestre UI vieja)
 @app.middleware("http")
 async def _no_cache_html(request, call_next):
@@ -885,6 +914,52 @@ def kb_session():
     # 3) Último recurso: devolver None en un contexto nulo
     with nullcontext() as _:
         yield None
+
+# --- Helper para intentar ingestas con y sin 'rubric' (evita TypeError) ---
+def _kb_safe_ingest(ingester, db, source_ref: str, path: str, meta: Optional[dict] = None, rubric: Optional[str] = None):
+    """
+    Prueba múltiples firmas comunes de kb_ingest_file:
+      (db, source, path)
+      (db, source, path, meta)
+      (db, source, path, rubric=...)
+      (db, source, path, meta=..., rubric=...)
+      (source, path) / (source, path, meta) / (source, path, rubric=...)
+    """
+    if not callable(ingester):
+        return False
+
+    meta = meta or {}
+    rubric = rubric or source_ref
+    # Con DB primero
+    if db is not None:
+        for call in (
+            lambda: ingester(db, source_ref, path, meta),
+            lambda: ingester(db, source_ref, path, meta=meta, rubric=rubric),
+            lambda: ingester(db, source_ref, path, rubric=rubric),
+            lambda: ingester(db, source_ref, path),
+        ):
+            try:
+                call()
+                return True
+            except TypeError:
+                continue
+            except Exception:
+                continue
+    # Sin DB
+    for call in (
+        lambda: ingester(source_ref, path, meta),
+        lambda: ingester(source_ref, path, meta=meta, rubric=rubric),
+        lambda: ingester(source_ref, path, rubric=rubric),
+        lambda: ingester(source_ref, path),
+    ):
+        try:
+            call()
+            return True
+        except TypeError:
+            continue
+        except Exception:
+            continue
+    return False
 
 # =========================
 # Helpers de historial/paginación (usados en Partes 2/3)
@@ -1497,6 +1572,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
 
     return {"ok": True, "message": "Valoración registrada", "historial_id": historial_id}
 
+
 # ===== Helper: construir AnalysisResponse mínimo desde un 'resumen' plano =====
 def _make_minimal_analysis_response(resumen_texto: str, analisis_id: str) -> AnalysisResponse:
     """
@@ -1523,7 +1599,8 @@ def _make_minimal_analysis_response(resumen_texto: str, analisis_id: str) -> Ana
     }
     return AnalysisResponse(**payload)
 
-# *** AJUSTADO ***: unificación de ruta de PDFs tras la generación
+
+# *** AJUSTADO ***: unificación de ruta de PDFs tras la generación + ingesta KB robusta
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
     usuario = request.session.get("usuario", "Anónimo")
@@ -1605,7 +1682,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             pass
         historial_id = None
 
-    # 4) Guardar originales + ingesta KB (si está habilitada)
+    # 4) Guardar originales + ingesta KB (si está habilitada) — usando _kb_safe_ingest
     saved_paths: List[str] = []
     try:
         if os.getenv("KB_SAVE_ORIGINALS", "1") == "1":
@@ -1629,6 +1706,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             src_name = f"default:{_email_safe(usuario)}"
             try:
                 with kb_session() as db:
+                    # create_or_get_source tolerante
                     try:
                         source_ref = fns["create_or_get_source"](db, src_name)
                     except TypeError:
@@ -1636,14 +1714,15 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
                             source_ref = fns["create_or_get_source"](db, src_name, {"owner": usuario})
                         except Exception:
                             source_ref = src_name
+                    ingester = fns["ingest_file"]
                     for p in saved_paths:
-                        try:
-                            try:
-                                fns["ingest_file"](db, source_ref, p, {"uploaded_by": usuario, "timestamp": timestamp})
-                            except TypeError:
-                                fns["ingest_file"](db, source_ref, p)
-                        except Exception as ie:
-                            logger.warning("Ingest fallida para %s: %r", p, ie)
+                        ok = _kb_safe_ingest(
+                            ingester, db, source_ref, p,
+                            meta={"uploaded_by": usuario, "timestamp": timestamp},
+                            rubric=src_name
+                        )
+                        if not ok:
+                            logger.warning("Ingest fallida para %s (todas las variantes)", p)
             except Exception as e:
                 logger.info("KB ingest omitida: %r", e)
     except Exception as e:
@@ -1666,6 +1745,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         "analisis_id": analisis_id,
     }
 
+
 # ===== Modal UI: corre análisis y abre el modal con 2 opciones =====
 @app.post("/analizar-pliego-ui", response_class=HTMLResponse)
 async def analizar_pliego_ui(request: Request, archivos: List[UploadFile] = File(...)):
@@ -1684,20 +1764,49 @@ async def analizar_pliego_ui(request: Request, archivos: List[UploadFile] = File
     analisis_id = (result or {}).get("analisis_id", uuid.uuid4().hex)
 
     analysis = _make_minimal_analysis_response(resumen, analisis_id)
+
+    # Soporte para ambos nombres de template (por si creaste analysis_modal.html)
+    tpl_name = "analysis/analysis_modal.html"
+    try:
+        templates.env.get_template(tpl_name)
+    except Exception:
+        tpl_name = "analysis/modal.html"
+
     # Pintamos el modal (HTMX lo inyecta sobre <body>)
     return templates.TemplateResponse(
-        "analysis/modal.html",
+        tpl_name,
         {
             "request": request,
             "analysis_json": analysis.dict()
         }
     )
 
-# ===== Render (parcial) para tabs del modal =====
+
+# ===== Render (parcial) para tabs del modal) — robusto ante cuerpos vacíos =====
 @app.post("/render/structured", response_class=HTMLResponse)
-async def render_structured(analysis_json: str = Body(...)):
-    data = json.loads(analysis_json)
-    analysis = AnalysisResponse(**data)
+async def render_structured(request: Request, analysis_json: Optional[str] = Body(default=None)):
+    if analysis_json is None:
+        # Intentar leer JSON completo o form-urlencoded
+        payload = None
+        try:
+            payload = await request.json()
+        except Exception:
+            try:
+                form = await request.form()
+                payload = dict(form)
+            except Exception:
+                payload = None
+        if isinstance(payload, (dict, list)) and "analysis_json" in payload:
+            analysis_json = payload["analysis_json"]
+        else:
+            analysis_json = payload
+
+    try:
+        analysis = _parse_analysis_response(analysis_json)
+    except HTTPException as e:
+        msg = getattr(e, "detail", "analysis_json inválido")
+        return HTMLResponse(f"<div class='p-3 text-danger'>Error: {msg}</div>", status_code=400)
+
     html = templates.get_template("analysis/structured.html").render(
         request=None,
         s=analysis.structured,
@@ -1708,9 +1817,28 @@ async def render_structured(analysis_json: str = Body(...)):
 
 
 @app.post("/render/deep", response_class=HTMLResponse)
-async def render_deep(analysis_json: str = Body(...)):
-    data = json.loads(analysis_json)
-    analysis = AnalysisResponse(**data)
+async def render_deep(request: Request, analysis_json: Optional[str] = Body(default=None)):
+    if analysis_json is None:
+        payload = None
+        try:
+            payload = await request.json()
+        except Exception:
+            try:
+                form = await request.form()
+                payload = dict(form)
+            except Exception:
+                payload = None
+        if isinstance(payload, (dict, list)) and "analysis_json" in payload:
+            analysis_json = payload["analysis_json"]
+        else:
+            analysis_json = payload
+
+    try:
+        analysis = _parse_analysis_response(analysis_json)
+    except HTTPException as e:
+        msg = getattr(e, "detail", "analysis_json inválido")
+        return HTMLResponse(f"<div class='p-3 text-danger'>Error: {msg}</div>", status_code=400)
+
     html = templates.get_template("analysis/deep.html").render(
         request=None,
         s=analysis.structured,
@@ -1718,11 +1846,22 @@ async def render_deep(analysis_json: str = Body(...)):
         analysis_id=analysis.analysis_id,
     )
     return HTMLResponse(html)
+
+
 # ===== Exportar a PDF (estructurado / profundo) =====
 @app.post("/export/pdf/estructurado")
-async def export_pdf_estructurado(analysis_json: str = Body(...)):
-    data = json.loads(analysis_json)
-    analysis = AnalysisResponse(**data)
+async def export_pdf_estructurado(request: Request, analysis_json: Optional[str] = Body(default=None)):
+    if analysis_json is None:
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = None
+        if isinstance(payload, (dict, list)) and "analysis_json" in payload:
+            analysis_json = payload["analysis_json"]
+        else:
+            analysis_json = payload
+
+    analysis = _parse_analysis_response(analysis_json)
     html = templates.get_template("analysis/structured.html").render(
         request=None,
         s=analysis.structured,
@@ -1738,9 +1877,18 @@ async def export_pdf_estructurado(analysis_json: str = Body(...)):
 
 
 @app.post("/export/pdf/profundo")
-async def export_pdf_profundo(analysis_json: str = Body(...)):
-    data = json.loads(analysis_json)
-    analysis = AnalysisResponse(**data)
+async def export_pdf_profundo(request: Request, analysis_json: Optional[str] = Body(default=None)):
+    if analysis_json is None:
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = None
+        if isinstance(payload, (dict, list)) and "analysis_json" in payload:
+            analysis_json = payload["analysis_json"]
+        else:
+            analysis_json = payload
+
+    analysis = _parse_analysis_response(analysis_json)
     html = templates.get_template("analysis/deep.html").render(
         request=None,
         s=analysis.structured,
@@ -1753,6 +1901,8 @@ async def export_pdf_profundo(analysis_json: str = Body(...)):
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=analisis_profundo.pdf"},
     )
+
+
 # ===== Guardar feedback por sección (✅/❌ + comentario) =====
 @app.post("/feedback")
 async def save_feedback_endpoint(request: Request):
@@ -1792,7 +1942,6 @@ async def save_feedback_endpoint(request: Request):
         return JSONResponse({"ok": False, "error": f"No se pudo guardar: {e}"}, status_code=500)
 
     return {"ok": True}
-
 # =========================
 # main.py — PARTE 3 / 6
 # (historial, usuario/avatares, diagnóstico)
@@ -2104,7 +2253,10 @@ async def _call_chat_llm(mensaje: str, usuario_actual: str) -> str:
 # ================== API puente (Chat OpenAI) ==================
 @app.post("/chat-openai")
 async def chat_openai(request: Request):
-    data = await request.json()
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
     mensaje = (data.get("mensaje") or "").strip()
     usuario_actual = request.session.get("usuario", "Desconocido")
 
@@ -2121,7 +2273,7 @@ async def chat_openai(request: Request):
 
 
 @app.post("/api/chat-openai")
-async def api_chat_openai(request: Request, payload: dict = Body(...)):
+async def api_chat_openai(request: Request, payload: dict = Body(default={})):
     mensaje = (payload or {}).get("message", "").strip()
     usuario_actual = request.session.get("usuario", "Desconocido")
 
@@ -2258,7 +2410,7 @@ async def api_buscar_usuarios(request: Request, term: str = "", limit: int = 8):
         return {"items": []}
 
     try:
-        raw = buscar_usuarios(term, limit=limit) or []
+        raw = buscar_usuarios(term, limit=max(1, min(limit, 50))) or []
         norm = [_user_row_to_dict(u) for u in raw]
         return {"items": [{"id": u["id"], "nombre": u["nombre"], "email": u["email"]} for u in norm]}
     except Exception as e:
@@ -2643,7 +2795,7 @@ async def admin_users_list(request: Request, q: str = "", limit: int = 500):
     q = (q or "").strip().lower()
     if q:
         items = [u for u in items if q in (u["email"] + " " + (u["nombre"] or "").lower())]
-    return {"items": items[:limit]}
+    return {"items": items[: max(1, min(int(limit or 500), 500))]}
 
 
 # alias de compatibilidad
@@ -2658,12 +2810,32 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
     actor_user_id, ip = _actor_info(request)
 
     email = payload.email.lower()
-    # Bloquea sólo si EXISTE y está ACTIVO. Si existe inactivo, se permitirá re-crear (restaurar).
     row = obtener_usuario_por_email(email)  # (id, nombre, email, password, rol, activo)
-    if row and bool(row[5]):  # activo = 1
+    if row and bool(row[5]):  # ya existe activo
         return JSONResponse({"error": "El email ya existe"}, status_code=409)
 
+    # Si existe inactivo, intentamos restaurar; si no, crear nuevo.
     try:
+        if row and not bool(row[5]):
+            # Restaurar con helpers disponibles; si falla, activar y actualizar datos básicos.
+            try:
+                # Si tu database.crear_o_restaurar_usuario soporta kwargs:
+                _ = crear_o_restaurar_usuario(
+                    nombre=payload.nombre.strip(),
+                    email=email,
+                    rol=_norm_rol(payload.rol),
+                    password=DEFAULT_NEW_USER_PASSWORD,
+                    actor_user_id=actor_user_id,
+                    ip=ip,
+                )
+                return {"ok": True, "restaurado": True}
+            except Exception:
+                # Fallback: reactivar y ajustar rol
+                cambiar_estado_usuario(email, 1, actor_user_id=actor_user_id, ip=ip)
+                cambiar_rol(email, _norm_rol(payload.rol), actor_user_id=actor_user_id, ip=ip)
+                return {"ok": True, "restaurado": True}
+
+        # Crear nuevo
         user_id = agregar_usuario(
             nombre=payload.nombre.strip(),
             email=email,
@@ -2673,9 +2845,8 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
             ip=ip,
         )
         if user_id:
-            restored = bool(row and not bool(row[5]))
-            return {"ok": True, "restaurado": restored}
-        return JSONResponse({"error": "No se pudo crear/restaurar el usuario"}, status_code=500)
+            return {"ok": True, "restaurado": False}
+        return JSONResponse({"error": "No se pudo crear el usuario"}, status_code=500)
     except Exception as e:
         print("? admin_users_create:", repr(e))
         return JSONResponse({"error": "No se pudo crear/restaurar el usuario"}, status_code=500)
