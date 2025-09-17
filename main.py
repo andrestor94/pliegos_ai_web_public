@@ -1782,125 +1782,86 @@ async def analizar_pliego_ui(request: Request, archivos: List[UploadFile] = File
     )
 
 
-# ===== Render (parcial) para tabs del modal) — robusto ante cuerpos vacíos =====
-@app.post("/render/structured", response_class=HTMLResponse)
-async def render_structured(request: Request, analysis_json: Optional[str] = Body(default=None)):
-    if analysis_json is None:
-        # Intentar leer JSON completo o form-urlencoded
-        payload = None
-        try:
-            payload = await request.json()
-        except Exception:
-            try:
-                form = await request.form()
-                payload = dict(form)
-            except Exception:
-                payload = None
-        if isinstance(payload, (dict, list)) and "analysis_json" in payload:
-            analysis_json = payload["analysis_json"]
-        else:
-            analysis_json = payload
+# ===== Render (parcial) para tabs del modal =====
+from fastapi import Form  # (arriba ya lo tenés importado)
 
+@app.post("/render/structured", response_class=HTMLResponse)
+async def render_structured(
+    request: Request,
+    analysis_json: Optional[str] = Body(default=None),
+    analysis_json_form: Optional[str] = Form(default=None),
+):
+    raw = analysis_json or analysis_json_form
+    if not raw:
+        return HTMLResponse("<div class='text-danger'>No llegó analysis_json.</div>", status_code=400)
     try:
-        analysis = _parse_analysis_response(analysis_json)
-    except HTTPException as e:
-        msg = getattr(e, "detail", "analysis_json inválido")
-        return HTMLResponse(f"<div class='p-3 text-danger'>Error: {msg}</div>", status_code=400)
+        data = json.loads(raw)
+        analysis = AnalysisResponse(**data)
+    except Exception as e:
+        return HTMLResponse(f"<div class='text-danger'>Payload inválido: {e}</div>", status_code=400)
 
     html = templates.get_template("analysis/structured.html").render(
-        request=None,
-        s=analysis.structured,
-        deep=analysis.deep_analysis,
-        analysis_id=analysis.analysis_id,
+        request=None, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
     )
     return HTMLResponse(html)
 
 
 @app.post("/render/deep", response_class=HTMLResponse)
-async def render_deep(request: Request, analysis_json: Optional[str] = Body(default=None)):
-    if analysis_json is None:
-        payload = None
-        try:
-            payload = await request.json()
-        except Exception:
-            try:
-                form = await request.form()
-                payload = dict(form)
-            except Exception:
-                payload = None
-        if isinstance(payload, (dict, list)) and "analysis_json" in payload:
-            analysis_json = payload["analysis_json"]
-        else:
-            analysis_json = payload
-
+async def render_deep(
+    request: Request,
+    analysis_json: Optional[str] = Body(default=None),
+    analysis_json_form: Optional[str] = Form(default=None),
+):
+    raw = analysis_json or analysis_json_form
+    if not raw:
+        return HTMLResponse("<div class='text-danger'>No llegó analysis_json.</div>", status_code=400)
     try:
-        analysis = _parse_analysis_response(analysis_json)
-    except HTTPException as e:
-        msg = getattr(e, "detail", "analysis_json inválido")
-        return HTMLResponse(f"<div class='p-3 text-danger'>Error: {msg}</div>", status_code=400)
+        data = json.loads(raw)
+        analysis = AnalysisResponse(**data)
+    except Exception as e:
+        return HTMLResponse(f"<div class='text-danger'>Payload inválido: {e}</div>", status_code=400)
 
     html = templates.get_template("analysis/deep.html").render(
-        request=None,
-        s=analysis.structured,
-        deep=analysis.deep_analysis,
-        analysis_id=analysis.analysis_id,
+        request=None, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
     )
     return HTMLResponse(html)
 
 
 # ===== Exportar a PDF (estructurado / profundo) =====
 @app.post("/export/pdf/estructurado")
-async def export_pdf_estructurado(request: Request, analysis_json: Optional[str] = Body(default=None)):
-    if analysis_json is None:
-        try:
-            payload = await request.json()
-        except Exception:
-            payload = None
-        if isinstance(payload, (dict, list)) and "analysis_json" in payload:
-            analysis_json = payload["analysis_json"]
-        else:
-            analysis_json = payload
-
-    analysis = _parse_analysis_response(analysis_json)
+async def export_pdf_estructurado(
+    analysis_json: Optional[str] = Body(default=None),
+    analysis_json_form: Optional[str] = Form(default=None),
+):
+    raw = analysis_json or analysis_json_form
+    if not raw:
+        return JSONResponse({"error": "Falta analysis_json"}, status_code=400)
+    data = json.loads(raw)
+    analysis = AnalysisResponse(**data)
     html = templates.get_template("analysis/structured.html").render(
-        request=None,
-        s=analysis.structured,
-        deep=analysis.deep_analysis,
-        analysis_id=analysis.analysis_id,
+        request=None, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
     )
     pdf_bytes = html_to_pdf_bytes(html)
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes),
-        media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=estructurado.pdf"},
-    )
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=estructurado.pdf"})
 
 
 @app.post("/export/pdf/profundo")
-async def export_pdf_profundo(request: Request, analysis_json: Optional[str] = Body(default=None)):
-    if analysis_json is None:
-        try:
-            payload = await request.json()
-        except Exception:
-            payload = None
-        if isinstance(payload, (dict, list)) and "analysis_json" in payload:
-            analysis_json = payload["analysis_json"]
-        else:
-            analysis_json = payload
-
-    analysis = _parse_analysis_response(analysis_json)
+async def export_pdf_profundo(
+    analysis_json: Optional[str] = Body(default=None),
+    analysis_json_form: Optional[str] = Form(default=None),
+):
+    raw = analysis_json or analysis_json_form
+    if not raw:
+        return JSONResponse({"error": "Falta analysis_json"}, status_code=400)
+    data = json.loads(raw)
+    analysis = AnalysisResponse(**data)
     html = templates.get_template("analysis/deep.html").render(
-        request=None,
-        s=analysis.structured,
-        deep=analysis.deep_analysis,
-        analysis_id=analysis.analysis_id,
+        request=None, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
     )
     pdf_bytes = html_to_pdf_bytes(html)
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes),
-        media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=analisis_profundo.pdf"},
-    )
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=analisis_profundo.pdf"})
 
 
 # ===== Guardar feedback por sección (✅/❌ + comentario) =====
