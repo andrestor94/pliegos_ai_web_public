@@ -1298,7 +1298,7 @@ def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexo
     if sec23:
         out = _replace_section(out, r"(?im)^\s*2\.3\s+Contactos", sec23)
 
-    sec215 = _build_section_215(texto_fuente o "", varios_anexos)
+    sec215 = _build_section_215(texto_fuente or "", varios_anexos)
     if sec215:
         out = _replace_section(out, r"(?im)^\s*2\.15\s+Normativa", sec215)
 
