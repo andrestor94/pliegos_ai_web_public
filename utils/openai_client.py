@@ -1,107 +1,75 @@
-# backend/utils/openai_client.py
+# utils/openai_client.py
 import os
-import logging
-from typing import List, Dict, Any, Optional
-
+from typing import List, Dict, Any
 from openai import OpenAI
 
-log = logging.getLogger(__name__)
+# ===== DEBUG de arranque (lo vas a ver en Render) =====
+print("[BOOT] utils.openai_client -> RESPONSES API activo")
 
-# Cliente único
-_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+def _client() -> OpenAI:
+    api_key = os.getenv("OPENAI_API_KEY")
+    base_url = os.getenv("OPENAI_BASE_URL") or None
+    return OpenAI(api_key=api_key, base_url=base_url)
 
-# Modelos por defecto (podés cambiarlos en Render -> Environment)
-RESPONSES_MODEL = os.getenv("OPENAI_RESPONSES_MODEL", "gpt-5-mini")
-EMBED_MODEL      = os.getenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-small")
+def _model(default: str = "gpt-5-mini") -> str:
+    # Permite override por ENV
+    return os.getenv("OPENAI_RESPONSES_MODEL", default)
 
-def _responses_text(resp) -> str:
-    """
-    Extrae texto de la Responses API sin importar el shape.
-    """
-    # SDK nuevo: resp.output_text ya concatena todo
-    txt = getattr(resp, "output_text", None)
-    if txt:
-        return txt.strip()
-
-    # Fallback por si cambia el shape
+def _max_out(default: int) -> int:
     try:
-        parts = []
-        for item in getattr(resp, "output", []) or []:
-            if getattr(item, "type", "") == "message":
-                for c in getattr(item, "content", []) or []:
-                    if getattr(c, "type", "") == "text":
-                        parts.append(c.text or "")
-        return "".join(parts).strip()
+        return int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", str(default)))
+    except Exception:
+        return default
+
+def _responses(messages: List[Dict[str, str]], max_output_tokens: int) -> str:
+    """
+    Llama SIEMPRE a Responses API (nada de chat.completions).
+    """
+    model = _model()
+    print(f"[OPENAI] Responses API model={model} max_out={max_output_tokens}")  # <- traza clara
+    client = _client()
+    # Flatten de mensajes a un solo prompt (system + user concatenado) — sencillo/robusto
+    sys = "\n".join(m["content"] for m in messages if m["role"] == "system")
+    usr = "\n".join(m["content"] for m in messages if m["role"] == "user")
+    prompt = (sys + "\n\n" + usr).strip()
+    resp = client.responses.create(
+        model=model,
+        input=prompt,
+        temperature=0.2,
+        max_output_tokens=max_output_tokens,
+    )
+    # salida segura
+    if resp.output_text:
+        return resp.output_text
+    try:
+        return resp.output[0].content[0].text
     except Exception:
         return ""
 
-def embed_text(text: str, model: Optional[str] = None) -> List[float]:
-    """
-    Devuelve el embedding (list[float]) del texto.
-    """
-    m = model or EMBED_MODEL
-    r = _client.embeddings.create(model=m, input=text)
-    return r.data[0].embedding
+# ------------- API pública usada por main.py -------------
+def responder_chat_openai(mensaje: str, contexto: str = "") -> str:
+    messages = [
+        {"role": "system", "content": (contexto or "Sos un asistente experto. Responde en español.")},
+        {"role": "user", "content": mensaje},
+    ]
+    return _responses(messages, max_output_tokens=_max_out(800))
 
-def analizar_con_openai(
-    prompt_or_messages: Any,
-    model: Optional[str] = None,
-    temperature: float = 0.2,
-    max_output_tokens: int = 1500,
-) -> str:
-    """
-    Llama a **Responses API**. Acepta un string o una lista de mensajes [{"role": "...", "content": "..."}].
-    """
-    m = model or RESPONSES_MODEL
-
-    # normalizamos a mensajes (Responses admite directamente messages)
-    if isinstance(prompt_or_messages, str):
-        messages = [{"role": "user", "content": prompt_or_messages}]
-    else:
-        messages = prompt_or_messages
-
-    resp = _client.responses.create(
-        model=m,
-        input=messages,
-        temperature=temperature,
-        max_output_tokens=max_output_tokens,
+def analizar_con_openai(texto: str, objetivo: str, lang: str = "es", max_out: int = 2200) -> str:
+    sys = (
+        "Sos un analista experto en pliegos. Escribe claro, con subtítulos y bullets. "
+        "Si falta info, indicalo sin inventar."
     )
-    out = _responses_text(resp)
-    log.info("[OPENAI] responses.create model=%s out_tokens=%s", m, getattr(resp, "usage", None))
-    return out or ""
+    sys += " Responde SIEMPRE en español." if lang == "es" else " Answer in English."
+    user = f"{objetivo}\n\n--- TEXTO DEL PLIEGO ---\n{texto}\n------------------------"
+    messages = [
+        {"role": "system", "content": sys},
+        {"role": "user", "content": user},
+    ]
+    return _responses(messages, max_output_tokens=_max_out(max_out))
 
-# --------- Compatibilidad para el chat del topbar ----------
-def responder_chat_openai(
-    mensaje: str,
-    contexto: Optional[str] = None,
-    usuario: Optional[str] = None,
-    model: Optional[str] = None,
-    temperature: float = 0.2,
-    max_output_tokens: int = 800,
-) -> str:
-    """
-    Chat simple vía **Responses API** (reemplaza cualquier uso previo de Chat Completions).
-    """
-    m = model or RESPONSES_MODEL
-
-    system = (
-        "Sos un asistente de Suizo Argentina. Respondé corto, claro y en español. "
-        "Si te preguntan por un pliego, recordá que el análisis se hace desde la página."
-    )
-    if usuario:
-        system += f" Usuario actual: {usuario}."
-
-    messages = [{"role": "system", "content": system}]
-    if contexto:
-        messages.append({"role": "user", "content": f"Contexto: {contexto}"})
-    messages.append({"role": "user", "content": mensaje})
-
-    resp = _client.responses.create(
-        model=m,
-        input=messages,
-        temperature=temperature,
-        max_output_tokens=max_output_tokens,
-    )
-    out = _responses_text(resp)
-    log.info("[OPENAI] chat via responses.create model=%s", m)
-    return out or "No pude generar respuesta."
+# (opcional) embeddings pequeño y barato
+def embed_text(texto: str) -> list:
+    client = _client()
+    model = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
+    out = client.embeddings.create(model=model, input=texto)
+    return out.data[0].embedding

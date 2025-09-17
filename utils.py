@@ -11,7 +11,7 @@ Módulo utilitario para:
 
 Notas:
 - Se usa lazy-import para evitar ciclos (p.ej. con prompts.py o modelos SQLAlchemy).
-- Wrapper de Chat Completions compatible con max_completion_tokens / max_tokens (en Parte 2).
+- Wrapper de Responses API en Parte 2 (reemplaza chat.completions).
 - Esta es la PARTE 1/4: Base + funciones de KB. Las demás partes completan el módulo.
 """
 
@@ -132,16 +132,21 @@ def _kb_extract_text_from_path(path: str) -> Tuple[str, Dict[str, Any]]:
         meta["json_keys"] = list(obj.keys()) if isinstance(obj, dict) else None
         return json.dumps(obj, ensure_ascii=False), meta
     if ext == ".pdf":
-        doc = fitz.open(path)
-        texts: List[str] = []
-        spans: List[Dict[str, Any]] = []
-        for p in range(len(doc)):
-            t = (doc[p].get_text("text") or "").strip()
-            texts.append(t)
-            spans.append({"page": p + 1, "chars": len(t)})
-        meta["pages"] = len(doc)
-        meta["spans"] = spans
-        return "\n".join(texts), meta
+        try:
+            # Uso de context manager para cerrar el doc correctamente
+            with fitz.open(path) as doc:
+                texts: List[str] = []
+                spans: List[Dict[str, Any]] = []
+                for p in range(len(doc)):
+                    t = (doc[p].get_text("text") or "").strip()
+                    texts.append(t)
+                    spans.append({"page": p + 1, "chars": len(t)})
+                meta["pages"] = len(doc)
+                meta["spans"] = spans
+                return "\n".join(texts), meta
+        except Exception:
+            # si falla la apertura/lectura, indexa sin texto
+            return "", {"unsupported": True, "ext": ext, "error": "pdf_read_error"}
     # binario no soportado para texto: indexa sin texto
     return "", {"unsupported": True, "ext": ext}
 
@@ -282,7 +287,6 @@ def kb_upsert_priority(db, rubric: str, label: str, details: str = "", weight: f
 # utils.py — Parte 2/4 (Prompts + Extracción base) — versión mejorada
 
 # ========================= Prompts (lazy import) =========================
-# utils.py
 _prom = None
 
 def _get_prom():
@@ -460,48 +464,144 @@ def _rasterizar_pagina(page, dpi: int = VISION_DPI) -> bytes:
     pix = page.get_pixmap(matrix=mat, alpha=False)
     return pix.tobytes("png")
 
+# ==================== Wrapper Responses API ====================
+def _resp_to_text(resp) -> str:
+    """
+    Extrae texto de la Responses API de forma robusta.
+    """
+    # SDKs recientes
+    try:
+        txt = (getattr(resp, "output_text", None) or "").strip()
+        if txt:
+            return txt
+    except Exception:
+        pass
+
+    # Fallback por si cambia el SDK
+    try:
+        partes = []
+        for item in getattr(resp, "output", []) or []:
+            if getattr(item, "type", "") == "message":
+                for c in getattr(item, "content", []) or []:
+                    if getattr(c, "type", "") in ("output_text", "text"):
+                        partes.append(getattr(c, "text", ""))
+        return "".join(partes).strip()
+    except Exception:
+        return ""
+
 def _chat_create_safe(**kw):
     """
-    Wrapper para compatibilidad + timeout efectivo por request:
-      - Prefiere max_completion_tokens (modelos nuevos).
-      - Si falla, intenta con max_tokens (legacy).
-      - Nunca envía temperature=None.
-      - Usa client_timed (ver Parte 1) para respetar OPENAI_TIMEOUT.
+    VERSION RESPONSES API (reemplaza chat.completions).
+    Acepta: model, messages, max_completion_tokens / max_tokens / max_output_tokens,
+            temperature, tools, tool_choice, metadata.
+    Devuelve SIEMPRE el texto (str).
     """
+    # Normalizar temperature
     if kw.get("temperature", None) is None:
         kw.pop("temperature", None)
 
-    tok = kw.pop("max_tokens", kw.pop("max_completion_tokens", None))
-    base = dict(kw)
+    # Mapear topes de salida
+    tok = kw.pop("max_output_tokens", None) or kw.pop("max_completion_tokens", None) or kw.pop("max_tokens", None)
 
-    intents = []
+    # Extraer mensajes
+    messages = kw.pop("messages", []) or []
+
+    # Modelo por defecto seguro (evita NameError si _pick_model aún no está definido)
+    try:
+        default_model = _pick_model(final_pass=False)  # type: ignore[name-defined]
+    except Exception:
+        default_model = MODEL_ANALISIS
+
+    model = kw.pop("model", default_model)
+
+    base_kwargs: Dict[str, Any] = {"model": model}
     if tok is not None:
-        intents.append({**base, "max_completion_tokens": int(tok)})
-        intents.append({**base, "max_tokens": int(tok)})
-    else:
-        intents.append(base)
+        try:
+            base_kwargs["max_output_tokens"] = int(tok)
+        except Exception:
+            pass
+
+    # Passthrough opcional
+    for k in ("temperature", "tools", "tool_choice", "metadata"):
+        if k in kw:
+            base_kwargs[k] = kw[k]
+
+    # Construir 'input' tipado (input_text / input_image) desde messages
+    input_items: List[Dict[str, Any]] = []
+    for m in messages:
+        role = m.get("role") or "user"
+        content = m.get("content")
+        if isinstance(content, list):  # mensaje con partes (texto + imagen)
+            parts = []
+            for p in content:
+                ptype = (p.get("type") or "").lower()
+                if ptype in ("text", "input_text"):
+                    if p.get("text"):
+                        parts.append({"type": "input_text", "text": p["text"]})
+                elif ptype in ("image_url", "input_image", "image"):
+                    raw = p.get("image_url") or p.get("image") or {}
+                    url = raw.get("url") if isinstance(raw, dict) else (raw if isinstance(raw, str) else None)
+                    if url:
+                        parts.append({"type": "input_image", "image_url": {"url": url}})
+            if not parts and isinstance(content, str):
+                parts = [{"type": "input_text", "text": content}]
+            input_items.append({"role": role, "content": parts})
+        else:
+            input_items.append({"role": role, "content": [{"type": "input_text", "text": str(content or "")}]})
+
+    # Intento A: input tipado
+    intents: List[Dict[str, Any]] = [{**base_kwargs, "input": input_items}]
+
+    # Intento B: degradar a strings simples si A falla (concatenando textos y dejando marcador de imagen)
+    simple_items: List[Dict[str, Any]] = []
+    for m in messages:
+        role = m.get("role") or "user"
+        content = m.get("content")
+        if isinstance(content, list):
+            texts = []
+            for p in content:
+                t = (p.get("type") or "").lower()
+                if t in ("text", "input_text") and p.get("text"):
+                    texts.append(p["text"])
+                elif t in ("image_url", "input_image", "image"):
+                    raw = p.get("image_url") or p.get("image") or {}
+                    url = raw.get("url") if isinstance(raw, dict) else (raw if isinstance(raw, str) else "")
+                    if url:
+                        texts.append(f"[imagen: {url}]")
+            simple_items.append({"role": role, "content": "\n".join(texts)})
+        else:
+            simple_items.append({"role": role, "content": str(content or "")})
+    intents.append({**base_kwargs, "input": simple_items})
 
     last_err = None
-    for payload in intents:
+    for attempt in intents:
         try:
-            return client_timed.chat.completions.create(**payload)
+            r = client_timed.responses.create(**attempt)
+            return _resp_to_text(r)
         except Exception as e:
             last_err = e
             time.sleep(0.2)
             continue
 
-    # último intento sin temperature
-    payload = dict(intents[0])
-    payload.pop("temperature", None)
-    return client_timed.chat.completions.create(**payload)
+    # Intento final: sin temperature
+    try:
+        attempt = dict(intents[0])
+        attempt.pop("temperature", None)
+        r = client_timed.responses.create(**attempt)
+        return _resp_to_text(r)
+    except Exception as e:
+        return f"[OPENAI-ERROR] {e}"
 
 def _ocr_openai_imagen_b64(b64_img: str, mime: str = "image/png") -> str:
+    """
+    OCR con Vision vía Responses API. Recibe una imagen en base64 y devuelve texto literal.
+    """
     prompt = (
         "Extraé el TEXTO literal de esta imagen escaneada de un pliego. "
         "Conservá títulos, tablas como líneas con separadores, listas y números. No resumas ni interpretes."
     )
     try:
-        resp = _chat_create_safe(
+        return _chat_create_safe(
             model=VISION_MODEL,
             messages=[{
                 "role": "user",
@@ -511,8 +611,7 @@ def _ocr_openai_imagen_b64(b64_img: str, mime: str = "image/png") -> str:
                 ]
             }],
             max_completion_tokens=900,
-        )
-        return (resp.choices[0].message.content or "").strip()
+        ).strip()
     except Exception as e:
         return f"[OCR-ERROR] {e}"
 
@@ -967,7 +1066,8 @@ def _extraer_articulos_con_snippets(texto: str) -> List[Tuple[str, str, int, Opt
             p = _pagina_de_indice(idx, start)
             ax = _anexo_en_pos(idx_ax, start)
             rotulo = (m.group(1) or "").strip()
-            snippet = ((m.group(2) or "").strip())[:200].replace("\n", " ")
+            contenido = ((m.group(2) or "").strip())
+            snippet = (contenido[:200]).replace("\n", " ").strip()
             res.append((rotulo, snippet, p, ax))
 
     return res
@@ -1127,7 +1227,7 @@ def _build_section_23(texto: str, varios_anexos: bool) -> str:
         return ""
     out = ["2.3 Contactos y portales:"]
     for (t, v, p, ax) in items:
-        etiqueta = "Email" if t == "email" else "URL"
+        etiqueta = "Email" si t == "email" else "URL"
         cita = f"(Anexo {ax}, p. {p})" if varios_anexos and ax else (f"(p. {p})" if p else "(Fuente: documento provisto)")
         out.append(f" - {etiqueta}: {v} {cita}")
     return "\n".join(out)
@@ -1196,24 +1296,24 @@ def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexo
     out = informe or ""
 
     # Siempre normalizar 2.3 y 2.15 desde extracción determinística (evita ruido/omisiones)
-    sec23 = _build_section_23(texto_fuente or "", varios_anexos)
+    sec23 = _build_section_23(texto_fuente o "", varios_anexos)
     if sec23:
         out = _replace_section(out, r"(?im)^\s*2\.3\s+Contactos", sec23)
 
-    sec215 = _build_section_215(texto_fuente or "", varios_anexos)
+    sec215 = _build_section_215(texto_fuente o "", varios_anexos)
     if sec215:
         out = _replace_section(out, r"(?im)^\s*2\.15\s+Normativa", sec215)
 
     if not EXPAND_SECTIONS_213_216:
         return out
 
-    sec213 = _build_section_213(texto_fuente or "", varios_anexos)
+    sec213 = _build_section_213(texto_fuente o "", varios_anexos)
     if sec213:
         alt213 = sec213.replace("2.13 Planilla de cotización y renglones:", "9) Renglones y planilla de cotización:")
         out = _replace_section(out, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla", alt213)
         out = _replace_section(out, r"(?im)^\s*2\.13\s+Planilla", sec213)
 
-    sec216 = _build_section_216(texto_fuente or "", varios_anexos)
+    sec216 = _build_section_216(texto_fuente o "", varios_anexos)
     if sec216:
         out = _replace_section(out, r"(?im)^\s*2\.16\s+Cat[aá]logo\s+de\s+art", sec216)
         # remueve posibles encabezados redundantes generados por el modelo
@@ -1261,7 +1361,7 @@ def _normalizar_encabezados_salida(informe: str) -> str:
     return s.strip()
 
 def _corregir_seccion_9_si_vacia(informe: str, texto_fuente: str, varios_anexos: bool) -> str:
-    s = informe or ""
+    s = informe o ""
     start, end = _find_section_bounds(s, r"(?im)^\s*9\)\s*Renglones\s+y\s+planilla")
     needs_fix = False
 
@@ -1270,14 +1370,14 @@ def _corregir_seccion_9_si_vacia(informe: str, texto_fuente: str, varios_anexos:
     else:
         bloque = s[start:end]
         if (_count(r"(?im)\bRengl[oó]n\s+\d+", bloque) == 0) or \
-           (re.search(r"(?i)\bNO ESPECIFICADO\b", bloque) is not None) or \
+           (re.search(r"(?i)\bNO ESPECIFICADO\b", bloque) is not None) o \
            (len(bloque.strip()) < 80):
             needs_fix = True
 
     if not needs_fix:
         return s
 
-    sec213 = _build_section_213(texto_fuente or "", varios_anexos)
+    sec213 = _build_section_213(texto_fuente o "", varios_anexos)
     if not sec213:
         return s
 
@@ -1458,6 +1558,9 @@ def _msg_single_block(varios_anexos: bool, texto_fuente: str, texto_hints: str =
     return [{"role": "system", "content": sys}, {"role": "user", "content": content}]
 
 def _call_chat(messages: List[Dict[str, Any]], model: Optional[str] = None, max_tokens: Optional[int] = None) -> str:
+    """
+    Wrapper fino que usa _chat_create_safe (Responses API) y devuelve SIEMPRE str.
+    """
     payload: Dict[str, Any] = {
         "model": model or _pick_model(final_pass=False),
         "messages": messages,
@@ -1468,8 +1571,9 @@ def _call_chat(messages: List[Dict[str, Any]], model: Optional[str] = None, max_
     if max_tokens is not None:
         payload["max_completion_tokens"] = int(max_tokens)
 
-    resp = _chat_create_safe(**payload)
-    return (resp.choices[0].message.content or "").strip()
+    # _chat_create_safe ya devuelve un string con el texto final
+    out = _chat_create_safe(**payload)
+    return (out or "").strip()
 
 # ==================== RAG liviano sobre KB (sin NumPy) ====================
 def _cosine_py(a: List[float], b: List[float]) -> float:
@@ -1948,11 +2052,9 @@ def responder_chat_openai(
     if tool_choice:
         payload["tool_choice"] = tool_choice
 
-    resp = _chat_create_safe(**payload)
-    try:
-        return (resp.choices[0].message.content or "").strip()
-    except Exception:
-        return ""
+    # _chat_create_safe devuelve str directamente
+    out = _chat_create_safe(**payload)
+    return (out or "").strip()
 
 # ==================== Compat/alias ====================
 def analizar_con_openai(

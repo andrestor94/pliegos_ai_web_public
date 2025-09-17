@@ -48,6 +48,7 @@ from fastapi.responses import (
     FileResponse,
     JSONResponse,
     Response,
+    StreamingResponse,   # <- lo usas en /export/pdf/*
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -64,9 +65,7 @@ from jinja2 import ChoiceLoader, FileSystemLoader  # loader sin cache
 # --- Import base de utils (las funciones “no KB”) ---
 from utils import (
     extraer_texto_de_pdf,
-    analizar_con_openai,
     generar_pdf_con_plantilla,
-    responder_chat_openai,
 )
 
 # Import del módulo utils para llamadas dinámicas (KB, extractores, etc.)
@@ -1529,7 +1528,6 @@ def _make_minimal_analysis_response(resumen_texto: str, analisis_id: str) -> Ana
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
     usuario = request.session.get("usuario", "Anónimo")
 
-    # Bloqueo si falta config de IA (evita colgarse adentro de utils)
     if not (os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY_1") or os.getenv("OPENAI_API_BASE")):
         return JSONResponse(
             {"error": "Falta configurar el proveedor de IA (OPENAI_API_KEY / OPENAI_API_BASE)."},
@@ -1544,11 +1542,10 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             continue
         _validate_ext(a.filename)
 
-    # --- TIMEOUTS CONFIGURABLES ---
-    ANALYZE_TIMEOUT = float(os.getenv("ANALYZE_TIMEOUT", "180"))  # 3 min
-    PDF_TIMEOUT = float(os.getenv("PDF_TIMEOUT", "60"))           # 1 min
+    ANALYZE_TIMEOUT = float(os.getenv("ANALYZE_TIMEOUT", "180"))
+    PDF_TIMEOUT = float(os.getenv("PDF_TIMEOUT", "60"))
 
-    # 1) Analizar anexos con timeout
+    # 1) Analizar anexos
     try:
         resumen = await asyncio.wait_for(
             run_in_threadpool(analizar_anexos, archivos),
@@ -1564,15 +1561,12 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         logger.exception("Error en /analizar-pliego -> analizar_anexos")
         return JSONResponse({"error": f"Fallo en el análisis: {e}"}, status_code=500)
 
-    # 2) Generar PDF con timeout (y luego asegurar que quede en el directorio servido)
+    # 2) Generar PDF en la carpeta servida
     timestamp = now_stamp_ar()
     nombre_archivo_pdf = f"resumen_{timestamp}.pdf"
-
-    # NUEVO: path absoluto de destino en la carpeta servida
     target_abs = str((PDF_SERVE_DIR / nombre_archivo_pdf).resolve())
 
     try:
-        # Preferimos usar partial para evitar kwargs en run_in_threadpool
         await asyncio.wait_for(
             run_in_threadpool(partial(generar_pdf_con_plantilla, resumen, nombre_archivo_pdf=target_abs)),
             timeout=PDF_TIMEOUT
@@ -1582,6 +1576,95 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     except Exception as e:
         logger.exception("Error en /analizar-pliego -> generar_pdf_con_plantilla")
         return JSONResponse({"error": f"Fallo al generar PDF: {e}", "resumen": resumen}, status_code=500)
+
+    # 2.b) Asegurar que el PDF quede accesible por /generated_pdfs
+    try:
+        pdf_abs = _ensure_pdf_in_serve_dir(nombre_archivo_pdf)
+        logger.info("[PDF] ensure -> %s | serve_dir=%s", pdf_abs, str(PDF_SERVE_DIR))
+        if not pdf_abs:
+            return JSONResponse({"error": "El PDF se generó pero no se pudo ubicar para descarga."}, status_code=500)
+    except Exception as e:
+        logger.exception("[PDF] Error asegurando PDF en carpeta servida")
+        return JSONResponse({"error": f"No se pudo preparar el PDF para descarga: {e}"}, status_code=500)
+
+    # 3) Guardar en historial
+    analisis_id = uuid.uuid4().hex
+    try:
+        historial_id = iniciar_analisis_historial(
+            usuario=usuario,
+            nombre_archivo=nombre_archivo_pdf,
+            ruta_pdf=nombre_archivo_pdf,  # guardamos basename
+            analisis_id=analisis_id,
+            resumen_texto=resumen,
+        )
+    except Exception as e:
+        logger.warning("iniciar_analisis_historial falló, uso guardar_en_historial(): %r", e)
+        try:
+            guardar_en_historial(timestamp, usuario, nombre_archivo_pdf, nombre_archivo_pdf, resumen)
+        except Exception:
+            pass
+        historial_id = None
+
+    # 4) Guardar originales + ingesta KB (si está habilitada)
+    saved_paths: List[str] = []
+    try:
+        if os.getenv("KB_SAVE_ORIGINALS", "1") == "1":
+            user_dir = os.path.join(KB_STORAGE_DIR, _email_safe(usuario), timestamp)
+            os.makedirs(user_dir, exist_ok=True)
+            for i, a in enumerate(archivos, start=1):
+                if not a or not a.filename:
+                    continue
+                base = _safe_basename(a.filename)
+                ext = os.path.splitext(a.filename)[1].lower()
+                dst = os.path.join(user_dir, f"{i:02d}_{base}{ext}")
+                try:
+                    await a.seek(0)
+                    await _save_upload_stream(a, dst)
+                    saved_paths.append(dst)
+                except Exception as e:
+                    logger.warning("No se pudo guardar original KB %s: %r", a.filename, e)
+
+        if saved_paths and _kb_enabled():
+            fns = _kb_funcs()
+            src_name = f"default:{_email_safe(usuario)}"
+            try:
+                with kb_session() as db:
+                    try:
+                        source_ref = fns["create_or_get_source"](db, src_name)
+                    except TypeError:
+                        try:
+                            source_ref = fns["create_or_get_source"](db, src_name, {"owner": usuario})
+                        except Exception:
+                            source_ref = src_name
+                    for p in saved_paths:
+                        try:
+                            try:
+                                fns["ingest_file"](db, source_ref, p, {"uploaded_by": usuario, "timestamp": timestamp})
+                            except TypeError:
+                                fns["ingest_file"](db, source_ref, p)
+                        except Exception as ie:
+                            logger.warning("Ingest fallida para %s: %r", p, ie)
+            except Exception as e:
+                logger.info("KB ingest omitida: %r", e)
+    except Exception as e:
+        logger.info("KB save/ingest error: %r", e)
+
+    # 5) Registrar rating pendiente
+    try:
+        _pr_add(usuario, historial_id, timestamp, nombre_archivo_pdf)
+    except Exception as e:
+        logger.info("No se pudo registrar pending_ratings: %r", e)
+
+    logger.info("[ANALISIS] usuario=%s | pdf=%s | chars=%d",
+                usuario, nombre_archivo_pdf, len(resumen or ""))
+
+    return {
+        "resumen": resumen,
+        "pdf": nombre_archivo_pdf,
+        "timestamp": timestamp,
+        "historial_id": historial_id,
+        "analisis_id": analisis_id,
+    }
 
 # ===== Modal UI: corre análisis y abre el modal con 2 opciones =====
 @app.post("/analizar-pliego-ui", response_class=HTMLResponse)
@@ -1710,103 +1793,6 @@ async def save_feedback_endpoint(request: Request):
 
     return {"ok": True}
 
-    # === NUEVO: asegurar que el PDF quede accesible en /generated_pdfs ===
-    try:
-        pdf_abs = _ensure_pdf_in_serve_dir(nombre_archivo_pdf)  # usa PDF_SERVE_DIR (definido en Parte 1)
-        logger.info("[PDF] ensure -> %s | serve_dir=%s", pdf_abs, str(PDF_SERVE_DIR))
-        if not pdf_abs:
-            logger.error("[PDF] No pude localizar '%s' en candidatos; botón de descarga fallaría.", nombre_archivo_pdf)
-            return JSONResponse({"error": "El PDF se generó pero no se pudo ubicar para descarga."}, status_code=500)
-    except Exception as e:
-        logger.exception("[PDF] Error asegurando PDF en carpeta servida")
-        return JSONResponse({"error": f"No se pudo preparar el PDF para descarga: {e}"}, status_code=500)
-
-    # 3) Guardar en historial (guardar SOLO el basename; la ruta se reconstruye al descargar)
-    analisis_id = uuid.uuid4().hex
-    try:
-        historial_id = iniciar_analisis_historial(
-            usuario=usuario,
-            nombre_archivo=nombre_archivo_pdf,
-            ruta_pdf=nombre_archivo_pdf,
-            analisis_id=analisis_id,
-            resumen_texto=resumen,
-        )
-    except Exception as e:
-        print("· Error iniciar_analisis_historial:", repr(e))
-        try:
-            guardar_en_historial(timestamp, usuario, nombre_archivo_pdf, nombre_archivo_pdf, resumen)
-        except Exception:
-            pass
-        historial_id = None
-
-    # 4) KB: guardar originales e intentar ingesta si hay helpers disponibles
-    saved_paths: List[str] = []
-    try:
-        # Guardar originales en storage/kb/<usuario>/<timestamp>/
-        if os.getenv("KB_SAVE_ORIGINALS", "1") == "1":
-            user_dir = os.path.join(KB_STORAGE_DIR, _email_safe(usuario), timestamp)
-            os.makedirs(user_dir, exist_ok=True)
-            for i, a in enumerate(archivos, start=1):
-                if not a or not a.filename:
-                    continue
-                base = _safe_basename(a.filename)
-                ext = os.path.splitext(a.filename)[1].lower()
-                dst = os.path.join(user_dir, f"{i:02d}_{base}{ext}")
-                try:
-                    await a.seek(0)
-                    await _save_upload_stream(a, dst)
-                    saved_paths.append(dst)
-                except Exception as e:
-                    print("· No se pudo guardar original KB:", a.filename, repr(e))
-
-        # Intentar ingesta silenciosa si existen funciones en utils.*
-        if saved_paths and _kb_enabled():
-            fns = _kb_funcs()
-            src_name = f"default:{_email_safe(usuario)}"
-            try:
-                with kb_session() as db:
-                    # create_or_get_source: tolerante a firmas
-                    try:
-                        source_ref = fns["create_or_get_source"](db, src_name)
-                    except TypeError:
-                        try:
-                            source_ref = fns["create_or_get_source"](db, src_name, {"owner": usuario})
-                        except Exception:
-                            source_ref = src_name  # fallback: pasar nombre
-                    # Ingestar cada archivo con firmas flexibles
-                    for p in saved_paths:
-                        try:
-                            try:
-                                fns["ingest_file"](db, source_ref, p, {"uploaded_by": usuario, "timestamp": timestamp})
-                            except TypeError:
-                                fns["ingest_file"](db, source_ref, p)
-                        except Exception as ie:
-                            print("· Ingest fallida para", p, repr(ie))
-            except Exception as e:
-                print("· KB ingest omitida:", repr(e))
-    except Exception as e:
-        print("· KB save/ingest error:", repr(e))
-
-    # 5) Registrar rating pendiente
-    try:
-        _pr_add(usuario, historial_id, timestamp, nombre_archivo_pdf)
-    except Exception as e:
-        print("· No se pudo registrar pending_ratings:", repr(e))
-
-    logger.info(
-        "[ANALISIS] usuario=%s | pdf=%s | chars=%d",
-        usuario,
-        nombre_archivo_pdf,
-        len(resumen or ""),
-    )
-
-    return {
-        "resumen": resumen,
-        "pdf": nombre_archivo_pdf,  # basename (el endpoint construye la ruta)
-        "timestamp": timestamp,
-        "historial_id": historial_id,
-        "analisis_id": analisis_id,
-    }
 # =========================
 # main.py — PARTE 3 / 6
 # (historial, usuario/avatares, diagnóstico)
@@ -2080,28 +2066,28 @@ async def _call_chat_llm(mensaje: str, usuario_actual: str) -> str:
         CHAT_LLM_TIMEOUT = 60.0
 
     def _bridge():
-        # 1) (msg, ctx, user)
+        # Intentos contra services.ai_client.chat (firmas comunes)
         try:
-            return responder_chat_openai(mensaje, contexto, usuario_actual)
+            return chat(mensaje, contexto, usuario_actual)                # (msg, ctx, user)
         except TypeError:
             pass
-        # 2) con kwargs
         try:
-            return responder_chat_openai(mensaje, contexto=contexto, usuario=usuario_actual)
+            return chat(mensaje, contexto=contexto, usuario=usuario_actual)  # kwargs ES/EN
         except TypeError:
             pass
-        # 3) (msg, ctx)
         try:
-            return responder_chat_openai(mensaje, contexto)
+            return chat(mensaje, usuario_actual)                           # (msg, user)
         except TypeError:
             pass
-        # 4) (msg, user)
         try:
-            return responder_chat_openai(mensaje, usuario_actual)
+            return chat(mensaje, context=contexto, user=usuario_actual)    # kwargs EN
         except TypeError:
             pass
-        # 5) (msg) — la más común
-        return responder_chat_openai(mensaje)
+        try:
+            return chat(message=mensaje, context=contexto, user=usuario_actual)  # todo kwargs
+        except TypeError:
+            pass
+        return chat(mensaje)  # último recurso
 
     try:
         logger.info("Chat LLM: usuario=%s, len(mensaje)=%d, timeout=%.1fs",
