@@ -1,35 +1,28 @@
 <!-- templates/analysis/modal.html -->
-<div id="analysis-modal" class="sa-modal-overlay" role="dialog" aria-modal="true">
-  <div class="sa-modal" role="document">
-    <div class="sa-modal-header">
-      <h3 class="m-0">Seleccioná el tipo de análisis</h3>
-      <button type="button" class="sa-close" data-close>✕</button>
+<div id="analysis-modal" class="sa-overlay" role="dialog" aria-modal="true">
+  <div class="sa-modal" role="document" aria-labelledby="sa-title">
+    <div class="sa-hdr">
+      <h3 id="sa-title" class="m-0">Seleccioná el tipo de análisis</h3>
+      <button type="button" class="sa-x" data-close aria-label="Cerrar">✕</button>
     </div>
 
-    <div class="sa-modal-body">
-      <!-- STEP 1: Selector -->
+    <div class="sa-body">
+      <!-- PASO 1: Tarjetas -->
       <div id="step-chooser">
-        <div class="row g-3">
-          <div class="col-12 col-md-6">
-            <button type="button" class="sa-pick cardx w-100" data-mode="structured">
-              <div class="p-3">
-                <div class="h5 mb-2">Análisis Estructurado</div>
-                <div class="text-muted small">
-                  Extracción de datos clave (tablas, cantidades, fechas, requisitos).
-                </div>
-              </div>
-            </button>
-          </div>
-          <div class="col-12 col-md-6">
-            <button type="button" class="sa-pick cardx w-100" data-mode="deep">
-              <div class="p-3">
-                <div class="h5 mb-2">Análisis Profundo</div>
-                <div class="text-muted small">
-                  Resumen redactado e insights de contexto y riesgos.
-                </div>
-              </div>
-            </button>
-          </div>
+        <div class="sa-grid">
+          <button type="button" class="sa-card" data-mode="structured">
+            <div class="sa-card-inner">
+              <div class="sa-card-title">Análisis Estructurado</div>
+              <div class="sa-card-sub">Extracción de datos clave (tablas, cantidades, fechas, requisitos).</div>
+            </div>
+          </button>
+
+          <button type="button" class="sa-card" data-mode="deep">
+            <div class="sa-card-inner">
+              <div class="sa-card-title">Análisis Profundo</div>
+              <div class="sa-card-sub">Resumen redactado e insights de contexto y riesgos.</div>
+            </div>
+          </button>
         </div>
 
         <div class="d-flex justify-content-end mt-3">
@@ -37,58 +30,89 @@
         </div>
       </div>
 
-      <!-- STEP 2: Resultado -->
-      <div id="step-result" class="d-none">
+      <!-- PASO 2: Resultado (oculto al abrir) -->
+      <div id="step-result" style="display:none">
         <div class="d-flex align-items-center justify-content-between mb-2">
           <h4 id="result-title" class="m-0">Resultado</h4>
           <div class="d-flex gap-2">
             <button class="btn btn-outline-secondary btn-sm" id="go-back">Volver</button>
-            <button class="btn btn-primary btn-sm" id="download-pdf">
-              Descargar informe completo
-            </button>
+            <button class="btn btn-primary btn-sm" id="download-pdf">Descargar informe completo</button>
           </div>
         </div>
-
+        <!-- Contenido con scroll interno; nunca toca los bordes -->
         <div id="analysis-view" class="sa-result"></div>
       </div>
 
-      <!-- JSON una sola vez -->
+      <!-- JSON del análisis (una sola vez) -->
       <input type="hidden" id="analysis-json" value='{{ analysis_json | tojson | safe }}'>
     </div>
   </div>
 </div>
 
 <style>
-.sa-modal-overlay{
-  position:fixed; inset:0; background:rgba(0,0,0,.45);
-  z-index:1055; display:flex; align-items:center; justify-content:center;
-  padding:24px;
+/* Overlay flotante centrado, con respiro a los bordes */
+.sa-overlay{
+  position:fixed; inset:0; z-index:1055;
+  background:rgba(0,0,0,.45); backdrop-filter: blur(2px);
+  display:flex; align-items:center; justify-content:center;
+  padding:clamp(16px,4vh,32px) clamp(16px,4vw,32px);
 }
 .sa-modal{
-  background:#fff; border-radius:16px; box-shadow:0 10px 40px rgba(0,0,0,.2);
-  width:min(1080px,96vw); max-height:92vh; display:flex; flex-direction:column; overflow:hidden;
+  width:min(980px, 90vw);
+  max-height:86vh; overflow:hidden;
+  background:#fff; border-radius:16px;
+  box-shadow:0 12px 48px rgba(0,0,0,.2);
+  display:flex; flex-direction:column;
+  transform:translateY(0); animation:sa-pop .12s ease-out;
 }
-.sa-modal-header{
-  display:flex; align-items:center; justify-content:space-between;
-  padding:14px 18px; border-bottom:1px solid #e5e7eb;
+@keyframes sa-pop{ from{ transform:translateY(6px); opacity:.92 } to{ transform:translateY(0); opacity:1 } }
+
+.sa-hdr{ padding:14px 18px; border-bottom:1px solid #e9edf1; display:flex; justify-content:space-between; align-items:center; }
+.sa-body{ padding:16px 18px 20px; overflow:auto; }
+
+/* Botón cerrar */
+.sa-x{ border:0; background:transparent; padding:6px 10px; border-radius:8px; }
+.sa-x:hover{ background:#f2f4f7; }
+
+/* Grid de tarjetas del mismo tamaño */
+.sa-grid{ display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+@media (max-width: 720px){ .sa-grid{ grid-template-columns: 1fr; } }
+
+.sa-card{
+  display:block; width:100%;
+  border:1px solid #e3e7ec; border-radius:14px;
+  background:#fff; text-align:left;
+  transition: box-shadow .15s, border-color .15s, transform .05s;
 }
-.sa-modal-body{ padding:16px 18px 20px; overflow:auto; }
-.sa-close{ border:0; background:transparent; padding:6px 10px; border-radius:8px; }
-.sa-close:hover{ background:#f2f4f7; }
+.sa-card:focus, .sa-card:hover{ border-color:#cfd6de; box-shadow:0 6px 24px rgba(0,0,0,.06); }
+.sa-card:active{ transform: translateY(1px); }
+.sa-card.active{ border-color:#0d6efd; box-shadow:0 0 0 3px rgba(13,110,253,.18); }
 
-/* tarjetas selector */
-.sa-pick{ border:1px solid #e6e8eb; border-radius:12px; text-align:left; transition:all .15s; }
-.sa-pick:hover{ border-color:#cfd4da; box-shadow:0 2px 10px rgba(0,0,0,.05); }
-.sa-pick.active{ border-color:#0d6efd; box-shadow:0 0 0 3px rgba(13,110,253,.15); }
+.sa-card-inner{
+  display:flex; flex-direction:column; justify-content:center;
+  min-height:120px; padding:18px 20px;
+}
+.sa-card-title{ font-size:1.25rem; font-weight:600; margin-bottom:6px; }
+.sa-card-sub{ color:#6b7280; font-size:.95rem; }
 
-/* contenedor de resultado con scroll interno si es largo */
-.sa-result{ border:1px solid #eef0f2; border-radius:12px; padding:12px; max-height:66vh; overflow:auto; }
+/* Contenedor de resultado con scroll interno y bordes */
+.sa-result{
+  border:1px solid #eef1f4; border-radius:12px;
+  max-height:64vh; overflow:auto;
+  padding:12px;
+}
 </style>
 
 <script>
 (function(){
   const overlay = document.getElementById('analysis-modal');
-  const picks = overlay.querySelectorAll('.sa-pick');
+  // Bloquear scroll del fondo
+  const prevHtmlOverflow = document.documentElement.style.overflow;
+  const prevBodyOverflow = document.body.style.overflow;
+  document.documentElement.style.overflow = 'hidden';
+  document.body.style.overflow = 'hidden';
+
+  const cards = overlay.querySelectorAll('.sa-card');
   const confirmBtn = overlay.querySelector('#confirm-mode');
   const stepChooser = overlay.querySelector('#step-chooser');
   const stepResult  = overlay.querySelector('#step-result');
@@ -98,30 +122,34 @@
   const btnBack = overlay.querySelector('#go-back');
   const btnPdf  = overlay.querySelector('#download-pdf');
 
-  let chosen = null;      // "structured" | "deep"
-  let pdfEndpoint = "";   // /export/pdf/estructurado | /export/pdf/profundo
+  let chosen = null;      // 'structured' | 'deep'
+  let pdfEndpoint = '';   // endpoints de descarga
 
-  // Cerrar con botón o ESC
-  function close(){ overlay.remove(); }
+  function close(){
+    overlay.remove();
+    // Restaurar scroll del fondo
+    document.documentElement.style.overflow = prevHtmlOverflow;
+    document.body.style.overflow = prevBodyOverflow;
+  }
   overlay.querySelector('[data-close]')?.addEventListener('click', close);
   document.addEventListener('keydown', function onEsc(e){
     if(e.key === 'Escape'){ close(); document.removeEventListener('keydown', onEsc); }
   });
 
   // Selección de tarjeta
-  picks.forEach(b=>{
-    b.addEventListener('click', ()=>{
-      picks.forEach(x=>x.classList.remove('active'));
-      b.classList.add('active');
-      chosen = b.getAttribute('data-mode');
+  cards.forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      cards.forEach(x=>x.classList.remove('active'));
+      btn.classList.add('active');
+      chosen = btn.getAttribute('data-mode');
       confirmBtn.disabled = !chosen;
     });
   });
 
-  // Cargar vista seleccionada
+  // Cargar el resultado elegido
   async function loadView(){
     const endpoint = chosen === 'structured' ? '/render/structured' : '/render/deep';
-    pdfEndpoint = chosen === 'structured' ? '/export/pdf/estructurado' : '/export/pdf/profundo';
+    pdfEndpoint     = chosen === 'structured' ? '/export/pdf/estructurado' : '/export/pdf/profundo';
     titleEl.textContent = chosen === 'structured'
       ? 'Resultado del Análisis Estructurado'
       : 'Resultado del Análisis Profundo';
@@ -130,24 +158,28 @@
     body.set('analysis_json', jsonEl.value);
 
     viewEl.innerHTML = '<div class="text-muted">Cargando…</div>';
-    const r = await fetch(endpoint, { method:'POST', body });
-    viewEl.innerHTML = r.ok ? await r.text() : '<div class="text-danger">No se pudo renderizar.</div>';
+    try{
+      const r = await fetch(endpoint, { method:'POST', body });
+      viewEl.innerHTML = r.ok ? await r.text() : '<div class="text-danger">No se pudo renderizar.</div>';
+    }catch(_){
+      viewEl.innerHTML = '<div class="text-danger">No se pudo renderizar.</div>';
+    }
   }
 
   confirmBtn.addEventListener('click', async ()=>{
     if(!chosen) return;
-    stepChooser.classList.add('d-none');
-    stepResult.classList.remove('d-none');
+    stepChooser.style.display = 'none';
+    stepResult.style.display  = '';
     await loadView();
   });
 
   btnBack.addEventListener('click', ()=>{
-    stepResult.classList.add('d-none');
-    stepChooser.classList.remove('d-none');
+    stepResult.style.display  = 'none';
+    stepChooser.style.display = '';
     viewEl.innerHTML = '';
   });
 
-  // Descargar PDF asegurando que analysis_json viaja SIEMPRE
+  // Descargar PDF (siempre con analysis_json)
   btnPdf.addEventListener('click', ()=>{
     if(!pdfEndpoint) return;
     const form = document.createElement('form');
