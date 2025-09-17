@@ -1,44 +1,31 @@
 <!-- templates/analysis/modal.html -->
-<div id="analysis-modal" class="analysis-modal-overlay">
-  <div class="analysis-modal">
-    <button class="close" onclick="document.getElementById('analysis-modal').remove()">×</button>
+<div id="analysis-modal" class="analysis-modal-overlay" aria-modal="true" role="dialog">
+  <div class="analysis-modal" role="document">
+    <button class="close" type="button" aria-label="Cerrar"
+            onclick="(function(){const el=document.getElementById('analysis-modal'); if(el) el.remove();})();">×</button>
 
     <h3 class="title">Seleccioná el tipo de análisis</h3>
 
-    <!-- Lleva el JSON al backend con hx-include / y a los formularios de descarga -->
+    <!-- JSON para backend -->
     <textarea id="analysis-json" name="analysis_json" hidden>{{ analysis_json|tojson }}</textarea>
 
     <div class="options">
-      <!-- Estructurado -->
-      <button class="card" id="opt-estr"
-              hx-post="/render/structured"
-              hx-include="#analysis-json"
-              hx-target="#analysis-result"
-              hx-swap="innerHTML"
-              onclick="window.__analysisMode='estructurado';
-                       document.getElementById('dl-estr').style.display='inline-block';
-                       document.getElementById('dl-deep').style.display='none';">
+      <button class="card" id="opt-estr" type="button">
         <div class="icon">📊</div>
         <div class="card-title">Análisis Estructurado</div>
         <div class="desc">Extracción de datos clave (tablas, cantidades, fechas, requisitos).</div>
       </button>
 
-      <!-- Profundo -->
-      <button class="card" id="opt-deep"
-              hx-post="/render/deep"
-              hx-include="#analysis-json"
-              hx-target="#analysis-result"
-              hx-swap="innerHTML"
-              onclick="window.__analysisMode='profundo';
-                       document.getElementById('dl-estr').style.display='none';
-                       document.getElementById('dl-deep').style.display='inline-block';">
+      <button class="card" id="opt-deep" type="button">
         <div class="icon">📝</div>
         <div class="card-title">Análisis Profundo</div>
         <div class="desc">Resumen redactado e insights de contexto y riesgos.</div>
       </button>
     </div>
 
-    <div id="analysis-result" class="result"></div>
+    <div id="analysis-result" class="result">
+      <!-- Aquí se inyecta el HTML devuelto por /render/* -->
+    </div>
 
     <div class="actions">
       <!-- Descarga según selección -->
@@ -52,18 +39,60 @@
         <button type="submit" class="btn">Descargar PDF</button>
       </form>
 
-      <button class="btn outline" onclick="document.getElementById('analysis-modal').remove()">Cerrar</button>
+      <button class="btn outline" type="button"
+              onclick="(function(){const el=document.getElementById('analysis-modal'); if(el) el.remove();})();">
+        Cerrar
+      </button>
     </div>
   </div>
 </div>
 
 <script>
-  // Copia el JSON a los formularios de descarga
-  (function () {
-    const json = document.getElementById('analysis-json').value || '';
-    const estr = document.getElementById('aj-estr'); if (estr) estr.value = json;
-    const deep = document.getElementById('aj-deep'); if (deep) deep.value = json;
-  })();
+(function(){
+  // 1) Asegura que el overlay cuelgue del <body> (para que sea realmente flotante)
+  const root = document.getElementById('analysis-modal');
+  if (root && root.parentElement !== document.body) {
+    document.body.appendChild(root);
+  }
+
+  // 2) Copia el JSON a los formularios de descarga
+  const json = document.getElementById('analysis-json')?.value || '';
+  const estrHidden = document.getElementById('aj-estr');
+  const deepHidden = document.getElementById('aj-deep');
+  if (estrHidden) estrHidden.value = json;
+  if (deepHidden) deepHidden.value = json;
+
+  // 3) Utilidad para POST y pintar resultado
+  async function renderTo(url){
+    const out = document.getElementById('analysis-result');
+    try {
+      const fd = new FormData();
+      fd.append('analysis_json', json);
+      const r = await fetch(url, { method: 'POST', body: fd, headers: { 'X-Requested-With': 'fetch' }});
+      const html = await r.text();
+      out.innerHTML = html;
+      out.scrollTop = 0;
+    } catch(e) {
+      out.innerHTML = '<div class="text-danger">Error renderizando la vista.</div>';
+    }
+  }
+
+  // 4) Handlers de tarjetas (sin HTMX)
+  function show(which){
+    document.getElementById('dl-estr').style.display = (which==='estr') ? 'inline-block' : 'none';
+    document.getElementById('dl-deep').style.display = (which==='deep') ? 'inline-block' : 'none';
+  }
+
+  document.getElementById('opt-estr')?.addEventListener('click', () => {
+    show('estr'); renderTo('/render/structured');
+  });
+  document.getElementById('opt-deep')?.addEventListener('click', () => {
+    show('deep'); renderTo('/render/deep');
+  });
+
+  // 5) Preselección (opcional): carga Estructurado de arranque
+  // show('estr'); renderTo('/render/structured');
+})();
 </script>
 
 <style>
@@ -71,11 +100,11 @@
     display:flex;align-items:center;justify-content:center;z-index:9999;padding:24px}
   .analysis-modal{position:relative;background:#fff;border-radius:14px;
     box-shadow:0 20px 60px rgba(0,0,0,.25);max-width:980px;width:100%;padding:20px}
-  .analysis-modal .close{position:absolute;right:14px;top:10px;border:0;background:transparent;font-size:22px}
+  .analysis-modal .close{position:absolute;right:14px;top:10px;border:0;background:transparent;font-size:22px;line-height:1}
   .title{margin:0 0 8px 0}
   .options{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:12px 0 10px}
   .card{display:flex;flex-direction:column;align-items:center;gap:6px;border:1px solid #e5e7eb;
-    border-radius:12px;padding:22px;background:#f8fafc;cursor:pointer}
+    border-radius:12px;padding:22px;background:#f8fafc;cursor:pointer; width:100%}
   .card:hover{background:#eef2ff;border-color:#c7d2fe}
   .card-title{font-weight:600}
   .desc{font-size:14px;color:#475569;text-align:center}
