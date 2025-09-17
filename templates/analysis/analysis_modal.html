@@ -1,0 +1,191 @@
+{# templates/analysis/analysis_modal.html #}
+<div id="analysis-chooser-overlay"
+     class="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6 bg-black/40">
+  <!-- Contenedor centrado, con aire y scroll interno si hace falta -->
+  <div class="w-full max-w-5xl max-h-[88vh] bg-white rounded-2xl shadow-2xl overflow-hidden"
+       role="dialog" aria-modal="true" aria-labelledby="analysis-chooser-title">
+    <div class="flex items-center justify-between px-5 py-4 border-b">
+      <h3 id="analysis-chooser-title" class="text-xl font-semibold">Seleccioná el tipo de análisis</h3>
+      <button type="button"
+              class="px-3 py-1 rounded hover:bg-gray-100"
+              onclick="AnalysisModal.closeChooser()">✕</button>
+    </div>
+
+    <!-- GRID de opciones (sin texto de resumen debajo) -->
+    <div class="p-5">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <button type="button"
+                data-mode="structured"
+                class="analysis-card group w-full text-left border rounded-2xl p-5 hover:border-blue-400 hover:shadow-md transition
+                       focus:outline-none focus:ring-2 focus:ring-blue-400">
+          <div class="flex items-start gap-3">
+            <div class="shrink-0 rounded-xl p-2 bg-blue-50 text-blue-600">📊</div>
+            <div>
+              <div class="font-semibold text-lg">Análisis Estructurado</div>
+              <div class="text-sm text-gray-600">
+                Extracción de datos clave (tablas, cantidades, fechas, requisitos).
+              </div>
+            </div>
+          </div>
+        </button>
+
+        <button type="button"
+                data-mode="deep"
+                class="analysis-card group w-full text-left border rounded-2xl p-5 hover:border-blue-400 hover:shadow-md transition
+                       focus:outline-none focus:ring-2 focus:ring-blue-400">
+          <div class="flex items-start gap-3">
+            <div class="shrink-0 rounded-xl p-2 bg-purple-50 text-purple-600">🧠</div>
+            <div>
+              <div class="font-semibold text-lg">Análisis Profundo</div>
+              <div class="text-sm text-gray-600">
+                Resumen redactado e insights de contexto y riesgos.
+              </div>
+            </div>
+          </div>
+        </button>
+      </div>
+
+      <div class="mt-5 flex items-center justify-end gap-2">
+        <button type="button" class="btn" onclick="AnalysisModal.closeChooser()">Cancelar</button>
+        <button id="analysis-chooser-confirm"
+                type="button"
+                class="btn btn-primary disabled:opacity-50"
+                disabled
+                onclick="AnalysisModal.confirm()">
+          Confirmar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal de VISOR (se crea vacío y se completa dinámicamente al confirmar) -->
+<div id="analysis-viewer-overlay"
+     class="fixed inset-0 z-[101] hidden items-center justify-center p-4 md:p-6 bg-black/40">
+  <div class="w-full max-w-6xl max-h-[88vh] bg-white rounded-2xl shadow-2xl overflow-hidden"
+       role="dialog" aria-modal="true" aria-labelledby="analysis-viewer-title">
+    <div class="flex items-center justify-between px-5 py-4 border-b">
+      <div class="flex items-center gap-3">
+        <button type="button" class="btn btn-ghost" onclick="AnalysisModal.backToChooser()">← Volver</button>
+        <h3 id="analysis-viewer-title" class="text-lg font-semibold">Resultado</h3>
+      </div>
+      <div class="flex items-center gap-2">
+        <!-- Botón PDF: el action y el input oculto se ajustan según el modo -->
+        <form id="analysis-pdf-form" method="post" target="_blank">
+          <input type="hidden" name="analysis_json" id="analysis-pdf-json">
+          <button type="submit" class="btn btn-primary">Descargar PDF</button>
+        </form>
+        <button type="button" class="px-3 py-1 rounded hover:bg-gray-100"
+                onclick="AnalysisModal.closeViewer()">✕</button>
+      </div>
+    </div>
+    <div id="analysis-viewer-body" class="px-5 pt-4 pb-6 overflow-auto max-h-[calc(88vh-64px)]">
+      <!-- Aquí se inyecta el HTML renderizado -->
+    </div>
+  </div>
+</div>
+
+<script>
+  // Guardamos el JSON del análisis en una variable global segura.
+  // Si viene por contexto Jinja, lo cargamos; si no, respetamos el valor existente.
+  (function ensureAnalysisJSON(){
+    try {
+      {% if analysis_json is defined %}
+      window.__ANALYSIS_JSON__ = JSON.parse({{ analysis_json | tojson | safe }});
+      {% endif %}
+    } catch (_) {
+      /* noop */
+    }
+  })();
+
+  const AnalysisModal = (function(){
+    const chooser = document.getElementById('analysis-chooser-overlay');
+    const viewer  = document.getElementById('analysis-viewer-overlay');
+    const confirmBtn = document.getElementById('analysis-chooser-confirm');
+    let selectedMode = null;
+
+    // selección visual
+    chooser.querySelectorAll('.analysis-card').forEach(card => {
+      card.addEventListener('click', () => {
+        chooser.querySelectorAll('.analysis-card').forEach(c => c.classList.remove('ring', 'ring-2', 'ring-blue-400'));
+        card.classList.add('ring','ring-2','ring-blue-400');
+        selectedMode = card.getAttribute('data-mode');
+        confirmBtn.disabled = false;
+      });
+    });
+
+    // Cerrar por fondo/ESC
+    chooser.addEventListener('click', (e) => {
+      if (e.target === chooser) AnalysisModal.closeChooser();
+    });
+    viewer.addEventListener('click', (e) => {
+      if (e.target === viewer) AnalysisModal.closeViewer();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (!viewer.classList.contains('hidden')) closeViewer();
+        else closeChooser();
+      }
+    });
+
+    function closeChooser(){ chooser.remove(); document.body.classList.remove('overflow-hidden'); }
+    function closeViewer(){ viewer.remove(); document.body.classList.remove('overflow-hidden'); }
+
+    function backToChooser(){
+      // cerramos el visor y volvemos a crear el chooser limpio
+      viewer.classList.add('hidden');
+      chooser.classList.remove('hidden');
+    }
+
+    async function confirm(){
+      if (!selectedMode) return;
+      // Prepara POST con analysis_json serializado SIEMPRE
+      const fd = new FormData();
+      try {
+        const payload = JSON.stringify(window.__ANALYSIS_JSON__ || {});
+        fd.append('analysis_json', payload);
+      } catch (e) {
+        alert('No se pudo preparar el análisis. Volvé a ejecutar el proceso.');
+        return;
+      }
+
+      const url = selectedMode === 'structured' ? '/render/structured' : '/render/deep';
+      const pdfAction = selectedMode === 'structured' ? '/export/pdf/estructurado' : '/export/pdf/profundo';
+
+      // UI: abrir visor limpio
+      chooser.classList.add('hidden');
+      viewer.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden');
+      const title = selectedMode === 'structured' ? 'Formato estructurado' : 'Análisis profundo';
+      document.getElementById('analysis-viewer-title').textContent = title;
+
+      // Configura formulario de PDF
+      const pdfForm = document.getElementById('analysis-pdf-form');
+      const pdfInput = document.getElementById('analysis-pdf-json');
+      pdfForm.action = pdfAction;
+      pdfInput.value = JSON.stringify(window.__ANALYSIS_JSON__ || {});
+
+      // Carga del HTML renderizado
+      const container = document.getElementById('analysis-viewer-body');
+      container.innerHTML = '<div class="text-sm text-gray-500">Cargando…</div>';
+      try {
+        const resp = await fetch(url, { method: 'POST', body: fd });
+        const html = await resp.text();
+        if (!resp.ok) throw new Error('No se pudo renderizar el resultado.');
+        container.innerHTML = html; // el endpoint devuelve un fragmento HTML
+      } catch (err) {
+        container.innerHTML = `<div class="text-red-600">❌ ${err.message || 'Error al renderizar.'}</div>`;
+      }
+    }
+
+    // Al abrir el primer modal, bloqueamos scroll del body
+    document.body.classList.add('overflow-hidden');
+
+    return {
+      confirm,
+      closeChooser,
+      closeViewer,
+      backToChooser
+    };
+  })();
+</script>
