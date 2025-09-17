@@ -1294,7 +1294,7 @@ def _ampliar_secciones_especificas(informe: str, texto_fuente: str, varios_anexo
     out = informe or ""
 
     # Siempre normalizar 2.3 y 2.15 desde extracción determinística (evita ruido/omisiones)
-    sec23 = _build_section_23(texto_fuente o "", varios_anexos)
+    sec23 = _build_section_23(texto_fuente or "", varios_anexos)
     if sec23:
         out = _replace_section(out, r"(?im)^\s*2\.3\s+Contactos", sec23)
 
