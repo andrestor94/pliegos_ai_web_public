@@ -1,36 +1,103 @@
-<div id="analysis-modal" class="fixed inset-0 bg-black/40 z-50 flex items-start justify-center p-6">
-  <div class="bg-white w-full max-w-6xl rounded-2xl shadow-xl overflow-hidden">
-    <div class="flex items-center justify-between px-5 py-4 border-b">
-      <h3 class="text-lg font-semibold">Resultado del análisis</h3>
-      <button class="px-3 py-1 rounded hover:bg-gray-100" onclick="document.getElementById('analysis-modal').remove()">✕</button>
+<!-- templates/analysis/modal.html -->
+<div id="analysis-modal" class="sa-modal-overlay" role="dialog" aria-modal="true">
+  <div class="sa-modal" role="document">
+    <div class="sa-modal-header">
+      <h3 class="m-0">Resultado del análisis</h3>
+      <button type="button" class="sa-close" data-close>✕</button>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
-      <div class="border rounded-xl p-4">
-        <h4 class="font-semibold mb-2">Formato estructurado</h4>
-        <p class="text-sm text-gray-600 mb-3">Vista tabular como en las capturas.</p>
-        <div class="flex gap-2">
-          <form method="post" action="/export/pdf/estructurado" target="_blank">
-            <input type="hidden" name="analysis_json" value='{{ analysis_json | tojson | safe }}'>
-            <button class="btn btn-primary">Descargar PDF</button>
-          </form>
-          <a class="btn" hx-post="/render/structured" hx-vals='{"analysis_json": {{ analysis_json | tojson | safe }} }' hx-target="#analysis-render" hx-swap="innerHTML">Ver en pantalla</a>
+    <div class="sa-modal-body">
+      <div class="row g-3">
+        <!-- Estructurado -->
+        <div class="col-12 col-md-6">
+          <div class="sa-card p-3">
+            <h4 class="mb-1">Formato estructurado</h4>
+            <p class="text-muted mb-3">Vista tabular como en las capturas.</p>
+
+            <div class="d-flex gap-2">
+              <form method="post" action="/export/pdf/estructurado" target="_blank" class="m-0">
+                <input type="hidden" name="analysis_json" value='{{ analysis_json | tojson | safe }}'>
+                <button class="btn btn-primary btn-sm">Descargar PDF</button>
+              </form>
+
+              <button
+                type="button"
+                class="btn btn-outline-primary btn-sm"
+                hx-post="/render/structured"
+                hx-target="#analysis-render"
+                hx-include="#analysis-json"
+                hx-swap="innerHTML">
+                Ver en pantalla
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Profundo -->
+        <div class="col-12 col-md-6">
+          <div class="sa-card p-3">
+            <h4 class="mb-1">Análisis profundo</h4>
+            <p class="text-muted mb-3">Redacción detallada por secciones.</p>
+
+            <div class="d-flex gap-2">
+              <form method="post" action="/export/pdf/profundo" target="_blank" class="m-0">
+                <input type="hidden" name="analysis_json" value='{{ analysis_json | tojson | safe }}'>
+                <button class="btn btn-primary btn-sm">Descargar PDF</button>
+              </form>
+
+              <button
+                type="button"
+                class="btn btn-outline-primary btn-sm"
+                hx-post="/render/deep"
+                hx-target="#analysis-render"
+                hx-include="#analysis-json"
+                hx-swap="innerHTML">
+                Ver en pantalla
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="border rounded-xl p-4">
-        <h4 class="font-semibold mb-2">Análisis profundo</h4>
-        <p class="text-sm text-gray-600 mb-3">Redacción detallada por secciones.</p>
-        <div class="flex gap-2">
-          <form method="post" action="/export/pdf/profundo" target="_blank">
-            <input type="hidden" name="analysis_json" value='{{ analysis_json | tojson | safe }}'>
-            <button class="btn btn-primary">Descargar PDF</button>
-          </form>
-          <a class="btn" hx-post="/render/deep" hx-vals='{"analysis_json": {{ analysis_json | tojson | safe }} }' hx-target="#analysis-render" hx-swap="innerHTML">Ver en pantalla</a>
-        </div>
-      </div>
-    </div>
+      <!-- Pasamos el JSON una sola vez y lo incluimos con hx-include -->
+      <input type="hidden" id="analysis-json" name="analysis_json" value='{{ analysis_json | tojson | safe }}' />
 
-    <div id="analysis-render" class="px-5 pb-6"></div>
+      <!-- Aquí se inyecta el resultado “bonito” -->
+      <div id="analysis-render" class="mt-3"></div>
+    </div>
   </div>
 </div>
+
+<style>
+/* Overlay y modal (sin Tailwind) */
+.sa-modal-overlay{
+  position:fixed; inset:0; background:rgba(0,0,0,.45);
+  z-index:1055; display:flex; align-items:flex-start; justify-content:center;
+  overflow:auto; padding:24px;
+}
+.sa-modal{
+  background:#fff; border-radius:16px; box-shadow:0 10px 40px rgba(0,0,0,.2);
+  width:min(1100px,96vw); margin:auto; overflow:hidden;
+}
+.sa-modal-header{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 18px; border-bottom:1px solid #e5e7eb;
+}
+.sa-modal-body{ padding:16px 18px 20px; }
+.sa-card{ border:1px solid #e6e8eb; border-radius:12px; background:#fff; }
+.sa-close{
+  border:0; background:transparent; padding:6px 10px; border-radius:8px; line-height:1;
+}
+.sa-close:hover{ background:#f2f4f7; }
+</style>
+
+<script>
+(function(){
+  const overlay = document.getElementById('analysis-modal');
+  function close(){ overlay.remove(); }
+  overlay.querySelector('[data-close]')?.addEventListener('click', close);
+  document.addEventListener('keydown', function esc(e){
+    if(e.key === 'Escape'){ close(); document.removeEventListener('keydown', esc); }
+  });
+})();
+</script>
