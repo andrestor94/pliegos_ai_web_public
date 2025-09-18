@@ -25,14 +25,16 @@
         <div class="cardx">
           <div class="title mb-2"><i class="bi bi-upload me-2"></i> Subir pliegos para análisis</div>
           <form id="form-analyze" class="mb-2">
-            <input type="file" id="file-hidden" class="form-control d-none" multiple />
+            <!-- ✅ data-role agregado -->
+            <input type="file" id="file-hidden" class="form-control d-none" multiple data-role="file-pliego" />
             <div class="mb-2">
               <button type="button" class="btn btn-outline-secondary btn-sm" onclick="agregarArchivos()">+ Agregar archivo</button>
             </div>
             <small class="text-muted d-block mb-2">Tamaño máximo recomendado por archivo: 25 MB</small>
             <ul id="lista-archivos" class="list-group mb-3"></ul>
             <div class="d-flex flex-wrap gap-2">
-              <button type="button" id="analyze-btn" class="btn btn-primary">
+              <!-- ✅ data-role agregado -->
+              <button type="button" id="analyze-btn" class="btn btn-primary" data-role="btn-analizar">
                 <i class="bi bi-rocket-takeoff me-1"></i> Analizar
               </button>
               <button type="button" id="generate-btn" class="btn btn-outline-primary">
@@ -171,6 +173,9 @@
       </div>
     </div>
   </div>
+
+  <!-- ✅ Modal estático incluido (lo usaremos de base) -->
+  {% include "analysis/analysis_modal.html" %}
 {% endblock %}
 
 {% block extra_scripts %}

@@ -2772,12 +2772,12 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
 
     email = payload.email.lower()
     row = obtener_usuario_por_email(email)  # (id, nombre, email, password, rol, activo)
-    if row and bool(row[5]):  # ya existe activo
+    if row && bool(row[5]):  # ya existe activo
         return JSONResponse({"error": "El email ya existe"}, status_code=409)
 
     # Si existe inactivo, intentamos restaurar; si no, crear nuevo.
     try:
-        if row and not bool(row[5]):
+        if row && not bool(row[5]):
             # Restaurar con helpers disponibles; si falla, activar y actualizar datos básicos.
             try:
                 # Si tu database.crear_o_restaurar_usuario soporta kwargs:
