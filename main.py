@@ -1764,20 +1764,21 @@ async def analizar_pliego_ui(request: Request, archivos: List[UploadFile] = File
     analisis_id = (result or {}).get("analisis_id", uuid.uuid4().hex)
 
     analysis = _make_minimal_analysis_response(resumen, analisis_id)
+    analysis_json_str = json.dumps(analysis.dict(), ensure_ascii=False)
 
-    # Soporte para ambos nombres de template (por si creaste analysis_modal.html)
+    # Soporte para ambos nombres de template
     tpl_name = "analysis/analysis_modal.html"
     try:
         templates.env.get_template(tpl_name)
     except Exception:
         tpl_name = "analysis/modal.html"
 
-    # Pintamos el modal (HTMX lo inyecta sobre <body>)
+    # Render del modal
     return templates.TemplateResponse(
         tpl_name,
         {
             "request": request,
-            "analysis_json": analysis.dict()
+            "analysis_json": analysis_json_str,   # 👈 ahora es string JSON
         }
     )
 
