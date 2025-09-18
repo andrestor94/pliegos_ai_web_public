@@ -1,30 +1,98 @@
-<div id="modalDeep" class="sa-modal-overlay">
-  <div class="sa-modal">
-    <button class="sa-modal-close" onclick="this.closest('#modalDeep').remove()">✕</button>
-    <h2 class="sa-modal-title">Resultado del Análisis Profundo</h2>
-
-    <div class="sa-block">
-      <div class="sa-block-body">{{ deep.resumen or deep | safe }}</div>
+<!-- templates/analysis/deep_result.html -->
+<div class="dr-wrap">
+  <!-- Resumen narrativo (si viene raw HTML, respetar) -->
+  {% if deep.resumen %}
+    <div class="dr-block">
+      <div class="dr-title">Resumen</div>
+      <div class="dr-body">{{ deep.resumen | safe }}</div>
     </div>
-
-    <div class="sa-block">
-      <div class="sa-block-title">Objeto y Alcance</div>
-      <div class="sa-block-body">{{ deep.objeto_alcance or '—' }}</div>
+  {% elif deep %}
+    <div class="dr-block">
+      <div class="dr-title">Resumen</div>
+      <div class="dr-body">{{ deep | safe }}</div>
     </div>
+  {% endif %}
 
-    <div class="sa-block">
-      <div class="sa-block-title">Cronograma Clave</div>
-      <div class="sa-block-body">{{ deep.cronograma_clave or '—' }}</div>
-    </div>
-
-    <div class="sa-block">
-      <div class="sa-block-title">Riesgos / Observaciones</div>
-      <div class="sa-block-body">{{ deep.riesgos or '—' }}</div>
-    </div>
-
-    <div class="d-flex justify-content-end gap-2 mt-3">
-      <a class="btn btn-primary" href="/descargar-ultimo-pdf">Descargar Informe Completo</a>
-      <button class="btn btn-outline-secondary" onclick="document.getElementById('modalDeep').remove()">Volver</button>
-    </div>
+  <!-- Objeto y alcance -->
+  {% if deep.objeto_alcance %}
+  <div class="dr-block">
+    <div class="dr-title">Objeto y alcance</div>
+    <div class="dr-body">{{ deep.objeto_alcance | safe }}</div>
   </div>
+  {% endif %}
+
+  <!-- Cronograma clave -->
+  {% if deep.cronograma_clave or deep.cronograma %}
+  <div class="dr-block">
+    <div class="dr-title">Cronograma clave</div>
+    {% if deep.cronograma_list %}
+      <div class="dr-table">
+        <div class="dr-thead"><div>Hito</div><div>Fecha / Detalle</div></div>
+        {% for it in deep.cronograma_list %}
+          <div class="dr-row">
+            <div>{{ it.label or it.hito or '—' }}</div>
+            <div>{{ it.value or it.fecha or '—' }}</div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="dr-body">{{ deep.cronograma_clave or deep.cronograma | safe }}</div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <!-- Requisitos (si los hay en narrativo) -->
+  {% if deep.requisitos %}
+  <div class="dr-block">
+    <div class="dr-title">Requisitos</div>
+    {% if deep.requisitos is string %}
+      <div class="dr-body">{{ deep.requisitos | safe }}</div>
+    {% else %}
+      <ul class="dr-ul">
+        {% for r in deep.requisitos %}<li>{{ r }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <!-- Riesgos / Observaciones -->
+  {% if deep.riesgos or deep.observaciones %}
+  <div class="dr-block">
+    <div class="dr-title">Riesgos y observaciones</div>
+    <div class="dr-body">{{ deep.riesgos or deep.observaciones | safe }}</div>
+  </div>
+  {% endif %}
+
+  <!-- Excepciones / Advertencias (si están) -->
+  {% if deep.excepciones or deep.advertencias %}
+  <div class="dr-block">
+    <div class="dr-title">Excepciones / Advertencias</div>
+    <div class="dr-body">{{ deep.excepciones or deep.advertencias | safe }}</div>
+  </div>
+  {% endif %}
+
+  <!-- Recomendaciones -->
+  {% if deep.recomendaciones %}
+  <div class="dr-block">
+    <div class="dr-title">Recomendaciones</div>
+    <div class="dr-body">{{ deep.recomendaciones | safe }}</div>
+  </div>
+  {% endif %}
 </div>
+
+<style>
+/* ====== Scoped styles (dr-*) ====== */
+.dr-wrap .dr-block{background:#f7f8fa;border:1px solid #e6e8eb;border-radius:12px;padding:12px 14px;margin-bottom:12px}
+.dr-wrap .dr-title{font-weight:700;margin-bottom:8px}
+.dr-wrap .dr-body{white-space:pre-wrap}
+.dr-wrap .dr-ul{margin:0;padding-left:16px}
+.dr-wrap .dr-ul li{margin-bottom:4px}
+.dr-wrap .dr-table{border:1px solid #e6e8eb;border-radius:12px;overflow:hidden}
+.dr-wrap .dr-thead,.dr-wrap .dr-row{display:grid;grid-template-columns:240px 1fr}
+.dr-wrap .dr-thead>div{font-weight:700;background:#eef2f6;padding:8px 10px;border-right:1px solid #e6e8eb}
+.dr-wrap .dr-row>div{padding:8px 10px;border-top:1px solid #e6e8eb;border-right:1px solid #e6e8eb}
+.dr-wrap .dr-thead>div:last-child,.dr-wrap .dr-row>div:last-child{border-right:none}
+@media (max-width: 992px){
+  .dr-wrap .dr-thead,.dr-wrap .dr-row{grid-template-columns:180px 1fr}
+}
+</style>

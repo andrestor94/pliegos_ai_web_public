@@ -1,50 +1,130 @@
 <!-- templates/analysis/choose.html -->
-<div id="modalChoose" class="sa-modal-overlay">
-  <div class="sa-modal">
-    <button class="sa-modal-close" onclick="this.closest('#modalChoose').remove()">✕</button>
-    <h2 class="sa-modal-title">Seleccioná tipo de análisis</h2>
+<div id="modalAnalysis" class="sa-modal-overlay">
+  <div class="sa-modal sa-modal-lg">
+    <button class="sa-modal-close" onclick="this.closest('#modalAnalysis')?.remove()">✕</button>
+    <h2 class="sa-modal-title">Resultado del análisis</h2>
 
-    <div class="row g-3 my-2">
-      <div class="col-12 col-md-6">
-        <div class="sa-card-choice">
-          <div class="sa-card-title">Análisis Estructurado</div>
-          <p class="mb-3">Extracción tabular, campos clave y secciones.</p>
-          <button
-            class="btn btn-primary w-100"
-            hx-post="/render/structured"
-            hx-target="body"
-            hx-swap="beforeend"
-            onclick="document.getElementById('modalChoose')?.remove()">
-            Ver estructurado
-          </button>
+    <!-- Tabs -->
+    <div class="sa-tabs mb-3" role="tablist" aria-label="Tipos de vista">
+      <button class="sa-tab active" data-tab="structured" role="tab" aria-selected="true">
+        Vista estructurada
+      </button>
+      <button class="sa-tab" data-tab="deep" role="tab" aria-selected="false">
+        Análisis profundo
+      </button>
+    </div>
+
+    <!-- Contenido -->
+    <div class="sa-tabpanes">
+      <!-- Pane: Estructurado (auto-carga) -->
+      <div id="pane-structured" class="sa-pane active" role="tabpanel" aria-labelledby="tab-structured"
+           hx-post="/render/structured_result"
+           hx-trigger="load"
+           hx-target="#pane-structured"
+           hx-swap="innerHTML">
+        <div class="sa-skel">
+          <div class="sa-skel-line w-30"></div>
+          <div class="sa-skel-line w-80"></div>
+          <div class="sa-skel-line w-90"></div>
+          <div class="sa-skel-line w-70"></div>
         </div>
       </div>
-      <div class="col-12 col-md-6">
-        <div class="sa-card-choice alt">
-          <div class="sa-card-title">Análisis Profundo</div>
-          <p class="mb-3">Comprensión contextual y redacción por secciones.</p>
-          <button
-            class="btn btn-success w-100"
-            hx-post="/render/deep"
-            hx-target="body"
-            hx-swap="beforeend"
-            onclick="document.getElementById('modalChoose')?.remove()">
-            Ver profundo
-          </button>
-        </div>
+
+      <!-- Pane: Profundo (carga perezosa al seleccionar) -->
+      <div id="pane-deep" class="sa-pane" role="tabpanel" aria-labelledby="tab-deep" data-loaded="false">
+        <div class="text-muted small">Seleccioná “Análisis profundo” para cargar la narrativa detallada…</div>
       </div>
     </div>
   </div>
 </div>
 
 <style>
-/* Estilos mínimos (se integran bien con tu theme) */
-.sa-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:1050;display:flex;align-items:center;justify-content:center;padding:16px;}
-.sa-modal{background:#fff;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);width:min(860px,96vw);padding:20px 20px 24px;}
-.sa-modal-title{font-size:22px;font-weight:700;margin:6px 0 16px;}
-.sa-modal-close{border:0;background:transparent;font-size:18px;position:absolute;margin:-6px 0 0;right:22px;cursor:pointer;opacity:.65}
+/* ===== Modal base ===== */
+.sa-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:1050;display:flex;align-items:center;justify-content:center;padding:16px}
+.sa-modal{background:#fff;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.12);width:min(980px,96vw);padding:20px 20px 24px;position:relative}
+.sa-modal-title{font-size:22px;font-weight:700;margin:6px 0 16px}
+.sa-modal-close{border:0;background:transparent;font-size:18px;position:absolute;top:16px;right:18px;cursor:pointer;opacity:.65}
 .sa-modal-close:hover{opacity:1}
-.sa-card-choice{border:2px solid var(--sa-border,#e6e8eb);border-radius:14px;padding:16px}
-.sa-card-choice .sa-card-title{font-weight:700;margin-bottom:6px}
-.sa-card-choice.alt{border-color:#dbece3;background:#f7fbf9}
+
+/* ===== Tabs ===== */
+.sa-tabs{display:flex;gap:8px;border-bottom:1px solid var(--sa-border,#e6e8eb)}
+.sa-tab{appearance:none;border:0;background:transparent;padding:10px 14px;border-bottom:2px solid transparent;font-weight:600;cursor:pointer;border-top-left-radius:8px;border-top-right-radius:8px}
+.sa-tab.active{border-color:var(--sa-primary,#0d6efd);color:var(--sa-primary,#0d6efd);background:rgba(13,110,253,.06)}
+.sa-tab:focus{outline:2px solid rgba(13,110,253,.25);outline-offset:2px}
+
+/* ===== Panes ===== */
+.sa-tabpanes{padding-top:12px}
+.sa-pane{display:none}
+.sa-pane.active{display:block}
+
+/* ===== Skeleton ===== */
+.sa-skel{display:grid;gap:10px;padding:8px 0}
+.sa-skel-line{height:12px;background:linear-gradient(90deg,#eee 25%,#f5f5f5 37%,#eee 63%);background-size:400% 100%;animation:saShine 1.2s ease-in-out infinite;border-radius:6px}
+.sa-skel-line.w-30{width:30%}.sa-skel-line.w-70{width:70%}.sa-skel-line.w-80{width:80%}.sa-skel-line.w-90{width:90%}
+@keyframes saShine{0%{background-position:100% 0}100%{background-position:-100% 0}}
 </style>
+
+<script>
+(() => {
+  const root = document.getElementById('modalAnalysis');
+  if (!root) return;
+
+  // Toggle de tabs y carga perezosa del tab "deep"
+  root.querySelectorAll('.sa-tab').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const tab = e.currentTarget.dataset.tab;
+
+      // Activar tab
+      root.querySelectorAll('.sa-tab').forEach(b => {
+        b.classList.toggle('active', b.dataset.tab === tab);
+        b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false');
+      });
+
+      // Mostrar pane correspondiente
+      root.querySelectorAll('.sa-pane').forEach(p => p.classList.remove('active'));
+      const pane = root.querySelector(`#pane-${tab}`);
+      pane.classList.add('active');
+
+      // Carga perezosa del profundo
+      if (tab === 'deep' && pane.dataset.loaded !== 'true') {
+        // Mostrar skeleton simple mientras llega
+        const skel = document.createElement('div');
+        skel.className = 'sa-skel';
+        skel.innerHTML = `
+          <div class="sa-skel-line w-50"></div>
+          <div class="sa-skel-line w-90"></div>
+          <div class="sa-skel-line w-85"></div>
+          <div class="sa-skel-line w-70"></div>`;
+        pane.replaceChildren(skel);
+
+        // Usamos HTMX si está disponible; si no, fetch como fallback
+        const loadWithHtmx = () => {
+          htmx.ajax('POST', '/render/deep_result', { target: '#pane-deep', swap: 'innerHTML' });
+        };
+        const loadWithFetch = async () => {
+          try {
+            const resp = await fetch('/render/deep_result', { method: 'POST' });
+            const html = await resp.text();
+            pane.innerHTML = html;
+          } catch (err) {
+            pane.innerHTML = `<div class="alert alert-danger">No se pudo cargar el análisis profundo.</div>`;
+          }
+        };
+
+        if (window.htmx) {
+          loadWithHtmx();
+        } else {
+          loadWithFetch();
+        }
+
+        pane.dataset.loaded = 'true';
+      }
+    });
+  });
+
+  // Accesibilidad: permitir Esc para cerrar
+  root.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') root.remove();
+  });
+})();
+</script>
