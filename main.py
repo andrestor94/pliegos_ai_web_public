@@ -1,5 +1,5 @@
-# =========================
-# main.py ó PARTE 1 / 6
+Ôªø# =========================
+# main.py ‚Äî PARTE 1 / 6
 # (imports, helpers base, app init, WS, utils, + KB bootstrap)
 # =========================
 
@@ -10,7 +10,7 @@ import asyncio
 import re
 import json
 import unicodedata  # PATCH: para normalizar en _email_safe
-import logging  # PATCH: logging b·sico para mejor trazabilidad
+import logging  # PATCH: logging b√°sico para mejor trazabilidad
 from functools import partial  # PATCH: lo usaremos con run_in_threadpool (Parte 2)
 from importlib import import_module  # import robusto para utils/Kb
 from math import ceil
@@ -62,13 +62,13 @@ from sqlalchemy import or_
 from pydantic import BaseModel, EmailStr
 from jinja2 import ChoiceLoader, FileSystemLoader  # loader sin cache
 
-# --- Import base de utils (las funciones ìno KBî) ---
+# --- Import base de utils (las funciones ‚Äúno KB‚Äù) ---
 from utils import (
     extraer_texto_de_pdf,
     generar_pdf_con_plantilla,
 )
 
-# Import del mÛdulo utils para llamadas din·micas (KB, extractores, etc.)
+# Import del m√≥dulo utils para llamadas din√°micas (KB, extractores, etc.)
 import utils as U
 
 import utils
@@ -90,11 +90,11 @@ try:
 except Exception:
     def _email_safe(email: Optional[str]) -> str:
         """
-        Devuelve una versiÛn segura para IDs/rutas a partir de un email.
+        Devuelve una versi√≥n segura para IDs/rutas a partir de un email.
         - Normaliza acentos
         - Lowercase
         - Reemplaza '@' y '+' por tokens
-        - Deja solo [a-z0-9_-], todo lo dem·s -> '_'
+        - Deja solo [a-z0-9_-], todo lo dem√°s -> '_'
         - Corta a 120 chars por seguridad
         """
         if not email:
@@ -107,7 +107,7 @@ except Exception:
 
 # ==== Helpers de archivos / seguridad =========================================
 def _safe_basename(name: str) -> str:
-    """Nombre base sin ruta ni extensiÛn, saneado para usar en archivos."""
+    """Nombre base sin ruta ni extensi√≥n, saneado para usar en archivos."""
     if not name:
         return "archivo"
     base = os.path.basename(name)
@@ -118,8 +118,8 @@ def _safe_basename(name: str) -> str:
 
 def _get_allowed_ext() -> Set[str]:
     """
-    Junta las extensiones permitidas declaradas m·s abajo (CHAT/INCID/KB).
-    Si a˙n no est·n definidas (orden de carga), usa un set razonable por defecto.
+    Junta las extensiones permitidas declaradas m√°s abajo (CHAT/INCID/KB).
+    Si a√∫n no est√°n definidas (orden de carga), usa un set razonable por defecto.
     """
     acc: Set[str] = set()
     for key in ("CHAT_ALLOWED_EXT", "INCID_ALLOWED_EXT", "KB_ALLOWED_EXT"):
@@ -137,14 +137,14 @@ def _get_allowed_ext() -> Set[str]:
 def _validate_ext(filename: str):
     ext = os.path.splitext(filename or "")[1].lower()
     if not ext:
-        raise HTTPException(status_code=400, detail="Archivo sin extensiÛn")
+        raise HTTPException(status_code=400, detail="Archivo sin extensi√≥n")
     allowed = _get_allowed_ext()
     if ext not in allowed:
-        raise HTTPException(status_code=400, detail=f"ExtensiÛn no permitida: {ext}")
+        raise HTTPException(status_code=400, detail=f"Extensi√≥n no permitida: {ext}")
 
 async def _save_upload_stream(fup: UploadFile, dst_path: str, chunk_size: int = 1024 * 1024) -> int:
     """
-    Guarda un UploadFile a disco por streams (asÌncrono). Devuelve bytes escritos.
+    Guarda un UploadFile a disco por streams (as√≠ncrono). Devuelve bytes escritos.
     """
     os.makedirs(os.path.dirname(dst_path), exist_ok=True)
     written = 0
@@ -160,7 +160,7 @@ async def _save_upload_stream(fup: UploadFile, dst_path: str, chunk_size: int = 
 # ==== Helpers de actor/req =====================================================
 def _actor_info(request: Request) -> Tuple[Optional[int], Optional[str]]:
     """
-    Devuelve (actor_user_id, ip) para auditorÌa.
+    Devuelve (actor_user_id, ip) para auditor√≠a.
     actor_user_id viene de la tabla usuarios (columna id).
     """
     email = request.session.get("usuario")
@@ -176,8 +176,8 @@ def _actor_info(request: Request) -> Tuple[Optional[int], Optional[str]]:
 # ==== Anexos (puente) ==========================================================
 def analizar_anexos(archivos: List[UploadFile]) -> str:
     """
-    Analizador local forzado (usa el pipeline nuevo determinÌstico).
-    Si querÈs volver a delegar a utils.analizar_anexos, sete· FORCE_LOCAL_ANALYZER=0.
+    Analizador local forzado (usa el pipeline nuevo determin√≠stico).
+    Si quer√©s volver a delegar a utils.analizar_anexos, sete√° FORCE_LOCAL_ANALYZER=0.
     """
     use_local = os.getenv("FORCE_LOCAL_ANALYZER", "1") == "1"
     if (not use_local) and callable(_analizar_anexos):
@@ -209,7 +209,7 @@ def analizar_anexos(archivos: List[UploadFile]) -> str:
         except TypeError:
             return U.analizar_y_generar_informe(corpus)
     except Exception as e:
-        return f"[Error de an·lisis] {e}"
+        return f"[Error de an√°lisis] {e}"
 
 from database import (
     DB_PATH,
@@ -244,14 +244,14 @@ from database import (
     iniciar_analisis_historial,
     marcar_valoracion_historial,
     tiene_valoracion_pendiente,
-    # ?? importamos para usarlo en la secciÛn Admin (PARTE 4+)
+    # ?? importamos para usarlo en la secci√≥n Admin (PARTE 4+)
     crear_o_restaurar_usuario,
 )
 
-# === Helper de conexiÛn SQLite unificado (para endpoints nuevos)
+# === Helper de conexi√≥n SQLite unificado (para endpoints nuevos)
 def get_db_connection(timeout: int = 10) -> sqlite3.Connection:
     """
-    Devuelve una conexiÛn SQLite a usuarios.db con foreign_keys activado.
+    Devuelve una conexi√≥n SQLite a usuarios.db con foreign_keys activado.
     Usalo en bloques cortos: with get_db_connection() as conn: ...
     """
     conn = sqlite3.connect(DB_PATH, timeout=timeout)
@@ -267,21 +267,21 @@ from db_orm import inicializar_bd_orm, SessionLocal, AuditLog
 # ---------- KB: init ORM si hay models.py ----------
 def _kb_init_orm():
     """
-    Garantiza que las tablas de la KB existan si est· el mÛdulo models.py
+    Garantiza que las tablas de la KB existan si est√° el m√≥dulo models.py
     con declarativos (KBSource/KBFile/KBChunk/KBPriority).
     No detiene la app si no existe.
     """
     try:
         import models as KBM  # debe exponer Base + clases KB*
-        # obtener engine desde una sesiÛn viva
+        # obtener engine desde una sesi√≥n viva
         with SessionLocal() as s:
             engine = s.get_bind()
         if engine is not None and hasattr(KBM, "Base"):
             KBM.Base.metadata.create_all(bind=engine)
             print("? KB: tablas verificadas/creadas")
     except Exception as e:
-        # si no est· models.py o falla algo, no frenamos la app
-        print("∑ KB init omitido:", repr(e))
+        # si no est√° models.py o falla algo, no frenamos la app
+        print("¬∑ KB init omitido:", repr(e))
 
 # ================== TZ & helpers ==================
 TZ_AR = ZoneInfo("America/Argentina/Buenos_Aires")
@@ -343,27 +343,27 @@ SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "session")
 SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "0") == "1"  # https_only
 
 if SESSION_SECRET == "change-this-in-prod":
-    print("??  SESSION_SECRET por defecto: configur· SESSION_SECRET en producciÛn.")
+    print("??  SESSION_SECRET por defecto: configur√° SESSION_SECRET en producci√≥n.")
 
 _middlewares: List[Middleware] = [
-    # Cookie de sesiÛn m·s robusta y persistente
+    # Cookie de sesi√≥n m√°s robusta y persistente
     Middleware(
         SessionMiddleware,
         secret_key=SESSION_SECRET,
         same_site="lax",
-        max_age=60 * 60 * 24 * 30,  # 30 dÌas
+        max_age=60 * 60 * 24 * 30,  # 30 d√≠as
         https_only=SESSION_COOKIE_SECURE,
         session_cookie=SESSION_COOKIE_NAME,
     )
 ]
 
-# (Opcional) compresiÛn de respuestas
+# (Opcional) compresi√≥n de respuestas
 if os.getenv("ENABLE_GZIP", "1") == "1":
     try:
         from starlette.middleware.gzip import GZipMiddleware
         _middlewares.append(Middleware(GZipMiddleware, minimum_size=1024))
     except Exception as _egzip:
-        print("∑ GZip no disponible:", repr(_egzip))
+        print("¬∑ GZip no disponible:", repr(_egzip))
 
 # (Opcional) CORS para frontends externos
 if os.getenv("ENABLE_CORS", "0") == "1":
@@ -381,7 +381,7 @@ if os.getenv("ENABLE_CORS", "0") == "1":
             )
         )
     except Exception as _ecors:
-        print("∑ CORS no disponible:", repr(_ecors))
+        print("¬∑ CORS no disponible:", repr(_ecors))
 
 # (Opcional) Trusted Host para evitar Host header attacks
 _trusted = os.getenv("TRUSTED_HOSTS", "").strip()
@@ -392,11 +392,11 @@ if _trusted:
         if _hosts:
             _middlewares.append(Middleware(TrustedHostMiddleware, allowed_hosts=_hosts))
     except Exception as _ehost:
-        print("∑ TrustedHost no disponible:", repr(_ehost))
+        print("¬∑ TrustedHost no disponible:", repr(_ehost))
 
 app = FastAPI(middleware=_middlewares)
 
-# PATCH: ConfiguraciÛn de logging (nivel via env LOG_LEVEL)
+# PATCH: Configuraci√≥n de logging (nivel via env LOG_LEVEL)
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -467,7 +467,7 @@ def ensure_chat_tables():
                 """
             )
     except Exception as e:
-        print("∑ ensure_chat_tables() no pudo crear tablas:", repr(e))
+        print("¬∑ ensure_chat_tables() no pudo crear tablas:", repr(e))
     finally:
         try:
             conn.close()
@@ -476,14 +476,14 @@ def ensure_chat_tables():
 
 # Inicializa BD SQLite (usuarios, historial, tickets, mensajes, hilos_ocultos, adjuntos)
 inicializar_bd()
-# Asegurar explÌcitamente las tablas de chat (por si el mÛdulo de DB venÌa sin creadoras)
+# Asegurar expl√≠citamente las tablas de chat (por si el m√≥dulo de DB ven√≠a sin creadoras)
 ensure_chat_tables()
 # Inicializa ORM (audit_logs)
 inicializar_bd_orm()
 # Inicializa (si existe) el esquema de la KB en el mismo engine
 _kb_init_orm()
 
-# ---------- Bootstrap de admin si DB est· vacÌa ----------
+# ---------- Bootstrap de admin si DB est√° vac√≠a ----------
 def ensure_default_admin():
     """
     Si no hay usuarios en la DB, crea un admin inicial.
@@ -518,21 +518,21 @@ def ensure_default_admin():
             )
             print(f"? Admin inicial creado: {default_email}")
     except Exception as e:
-        print("∑ ensure_default_admin() error:", repr(e))
+        print("¬∑ ensure_default_admin() error:", repr(e))
 
 ensure_default_admin()
 # ---------- fin bootstrap ----------
 
-# ================== Static & PDFs (UNIFICACI”N DE RUTAS) ==================
+# ================== Static & PDFs (UNIFICACI√ìN DE RUTAS) ==================
 os.makedirs("static", exist_ok=True)
 
-# Canon: servimos SIEMPRE desde /opt/render/project/src/generated_pdfs (raÌz src)
+# Canon: servimos SIEMPRE desde /opt/render/project/src/generated_pdfs (ra√≠z src)
 # Puedes overridear con env: PDF_DIR=/ruta/absoluta
 APP_DIR = Path(__file__).resolve().parent                  # .../src
 ROOT_DIR = APP_DIR.parent                                  # .../project
 PDF_SERVE_DIR = Path(os.getenv("PDF_DIR", ROOT_DIR / "generated_pdfs")).resolve()
 
-# Otros lugares donde podrÌa estar escribiendo utils.generar_pdf_con_plantilla
+# Otros lugares donde podr√≠a estar escribiendo utils.generar_pdf_con_plantilla
 PDF_CANDIDATE_DIRS = [
     PDF_SERVE_DIR,                 # /opt/render/project/generated_pdfs
     ROOT_DIR,                      # /opt/render/project
@@ -555,10 +555,10 @@ def _pdf_candidates(filename: str) -> List[Path]:
 
 def _ensure_pdf_in_serve_dir(filename: str) -> Optional[str]:
     """
-    Garantiza que <filename> estÈ en PDF_SERVE_DIR.
-    - Si ya est·, devuelve su ruta.
+    Garantiza que <filename> est√© en PDF_SERVE_DIR.
+    - Si ya est√°, devuelve su ruta.
     - Si aparece en otro candidato, lo copia a PDF_SERVE_DIR y devuelve ruta destino.
-    - Si no existe en ning˙n lado, devuelve None.
+    - Si no existe en ning√∫n lado, devuelve None.
     """
     target = PDF_SERVE_DIR / os.path.basename(filename)
     if target.exists() and target.is_file():
@@ -575,7 +575,7 @@ def _ensure_pdf_in_serve_dir(filename: str) -> Optional[str]:
     return None
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
-# Montamos /generated_pdfs apuntando al directorio CAN”NICO
+# Montamos /generated_pdfs apuntando al directorio CAN√ìNICO
 app.mount("/generated_pdfs", StaticFiles(directory=str(PDF_SERVE_DIR)), name="generated_pdfs")
 
 templates = Jinja2Templates(directory="templates")
@@ -626,15 +626,15 @@ def _normalize_analysis_input(analysis_json: Any) -> Dict[str, Any]:
         return analysis_json  # ya viene parseado
     s = str(analysis_json or "").strip()
     if not s:
-        raise HTTPException(status_code=400, detail="analysis_json vacÌo")
+        raise HTTPException(status_code=400, detail="analysis_json vac√≠o")
     try:
         return json.loads(s)
     except Exception:
-        # Si vino HTML-encoded por error, ˙ltimo intento muy defensivo
+        # Si vino HTML-encoded por error, √∫ltimo intento muy defensivo
         try:
             return json.loads(s.encode("utf-8", "ignore").decode("utf-8"))
         except Exception:
-            raise HTTPException(status_code=400, detail="analysis_json inv·lido (no es JSON)")
+            raise HTTPException(status_code=400, detail="analysis_json inv√°lido (no es JSON)")
 
 def _parse_analysis_response(analysis_json: Any) -> AnalysisResponse:
     data = _normalize_analysis_input(analysis_json)
@@ -651,7 +651,7 @@ async def _no_cache_html(request, call_next):
         resp.headers["Expires"] = "0"
     return resp
 
-# Headers de seguridad b·sicos
+# Headers de seguridad b√°sicos
 @app.middleware("http")
 async def _security_headers(request: Request, call_next):
     resp = await call_next(request)
@@ -687,7 +687,7 @@ def require_admin(request: Request):
 # ================== Preferencias de respuesta (HTML/JSON) ==================
 def wants_json(request: Request) -> bool:
     """
-    True si el cliente espera JSON (˙til para que /incidencias/cerrar|eliminar respondan {ok:true}
+    True si el cliente espera JSON (√∫til para que /incidencias/cerrar|eliminar respondan {ok:true}
     cuando vienen por fetch).
     """
     acc = (request.headers.get("accept") or "").lower()
@@ -820,7 +820,7 @@ AVATAR_MAX_MB = 2  # MB
 KB_STORAGE_DIR = os.path.join("storage", "kb")
 os.makedirs(KB_STORAGE_DIR, exist_ok=True)
 
-# Extensiones permitidas para KB (reusa y amplÌa)
+# Extensiones permitidas para KB (reusa y ampl√≠a)
 KB_ALLOWED_EXT = set(CHAT_ALLOWED_EXT) | {".md", ".json", ".yaml", ".yml"}
 
 def _kb_slugify(name: str) -> str:
@@ -832,7 +832,7 @@ def _import_utils_module():
     """
     Importa utils como *paquete* para que funcionen imports relativos internos
     (evita 'attempted relative import with no known parent package').
-    Prueba varios nombres comunes de raÌz.
+    Prueba varios nombres comunes de ra√≠z.
     """
     candidates = ["utils", "app.utils", "backend.utils", "server.utils", "src.utils", "sa.utils"]
     last_err = None
@@ -841,15 +841,15 @@ def _import_utils_module():
             return import_module(name)
         except Exception as e:
             last_err = e
-    # ˙ltimo intento: devolver el ya importado U (si existe) o propagar
+    # √∫ltimo intento: devolver el ya importado U (si existe) o propagar
     try:
         return U
     except Exception:
-        print("∑ KB utils import error:", repr(last_err))
+        print("¬∑ KB utils import error:", repr(last_err))
         return None
 
 def _kb_funcs():
-    """Descubre funciones KB en utils.* sin romper si no est·n todavÌa."""
+    """Descubre funciones KB en utils.* sin romper si no est√°n todav√≠a."""
     mod = _import_utils_module()
     get = (lambda m, n: getattr(m, n, None)) if mod else (lambda *_: None)
     return {
@@ -871,7 +871,7 @@ def _kb_enabled() -> bool:
 @contextmanager
 def kb_session():
     """
-    Usa utils.kb_session() si existe; si no, devuelve una sesiÛn SQLAlchemy local;
+    Usa utils.kb_session() si existe; si no, devuelve una sesi√≥n SQLAlchemy local;
     y si tampoco, un contexto nulo.
     """
     f = _kb_funcs().get("session")
@@ -884,7 +884,7 @@ def kb_session():
                 yield db
                 return
         except TypeError:
-            # Caso B: f() devuelve una sesiÛn simple (no context manager)
+            # Caso B: f() devuelve una sesi√≥n simple (no context manager)
             try:
                 db = f()
                 try:
@@ -898,10 +898,10 @@ def kb_session():
                         pass
                 return
             except Exception as e:
-                print("∑ kb_session(): utils.kb_session() no usable:", repr(e))
+                print("¬∑ kb_session(): utils.kb_session() no usable:", repr(e))
         except Exception as e:
             # Cualquier otro error: seguir con fallbacks
-            print("∑ kb_session(): error usando utils.kb_session():", repr(e))
+            print("¬∑ kb_session(): error usando utils.kb_session():", repr(e))
 
     # 2) Fallback: usar SessionLocal() si existe
     try:
@@ -909,16 +909,16 @@ def kb_session():
             yield db
             return
     except Exception as e:
-        print("∑ kb_session(): fallback SessionLocal() no disponible:", repr(e))
+        print("¬∑ kb_session(): fallback SessionLocal() no disponible:", repr(e))
 
-    # 3) ⁄ltimo recurso: devolver None en un contexto nulo
+    # 3) √öltimo recurso: devolver None en un contexto nulo
     with nullcontext() as _:
         yield None
 
 # --- Helper para intentar ingestas con y sin 'rubric' (evita TypeError) ---
 def _kb_safe_ingest(ingester, db, source_ref: str, path: str, meta: Optional[dict] = None, rubric: Optional[str] = None):
     """
-    Prueba m˙ltiples firmas comunes de kb_ingest_file:
+    Prueba m√∫ltiples firmas comunes de kb_ingest_file:
       (db, source, path)
       (db, source, path, meta)
       (db, source, path, rubric=...)
@@ -962,7 +962,7 @@ def _kb_safe_ingest(ingester, db, source_ref: str, path: str, meta: Optional[dic
     return False
 
 # =========================
-# Helpers de historial/paginaciÛn (usados en Partes 2/3)
+# Helpers de historial/paginaci√≥n (usados en Partes 2/3)
 # =========================
 def _paginate(items: List[dict], page: int, per_page: int) -> Tuple[List[dict], int, int, int, int]:
     total_items = len(items)
@@ -981,7 +981,7 @@ def _extraer_ts_de_nombre(nombre: str) -> Optional[str]:
 
 def _historial_para_home(email: str, rol: str, q: str = "") -> List[dict]:
     """
-    Agrega una capa de filtrado/b˙squeda para la vista/endpoint de historial.
+    Agrega una capa de filtrado/b√∫squeda para la vista/endpoint de historial.
     Si es admin, puede ver todo; si no, solo su propio historial.
     """
     q = (q or "").strip().lower()
@@ -995,7 +995,7 @@ def _historial_para_home(email: str, rol: str, q: str = "") -> List[dict]:
 
     out = []
     for h in data:
-        # normalizamos claves mÌnimas esperadas
+        # normalizamos claves m√≠nimas esperadas
         item = {
             "id": h.get("id") if isinstance(h, dict) else (h[0] if isinstance(h, (list, tuple)) and len(h) > 0 else None),
             "historial_id": h.get("historial_id") if isinstance(h, dict) else None,
@@ -1016,8 +1016,8 @@ def _historial_para_home(email: str, rol: str, q: str = "") -> List[dict]:
 
 def _buscar_historial_usuario(user: str, timestamp: Optional[str] = None, nombre_pdf: Optional[str] = None) -> Optional[dict]:
     """
-    Localiza el an·lisis del usuario por timestamp y/o nombre de PDF.
-    Sirve para asociar la valoraciÛn cuando el front no envÌa el id.
+    Localiza el an√°lisis del usuario por timestamp y/o nombre de PDF.
+    Sirve para asociar la valoraci√≥n cuando el front no env√≠a el id.
     """
     try:
         data = obtener_historial(user) or []
@@ -1052,11 +1052,11 @@ def _buscar_historial_usuario(user: str, timestamp: Optional[str] = None, nombre
             if ts and ts == timestamp:
                 return h
 
-    # fallback: el m·s reciente
+    # fallback: el m√°s reciente
     norm.sort(key=lambda x: _parse_dt_utc(x.get("fecha")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
     return norm[0] if norm else None
 # =========================
-# main.py ó PARTE 2 / 6
+# main.py ‚Äî PARTE 2 / 6
 # (login/logout, cambiar password, rating, analizar pliego)
 # =========================
 
@@ -1206,7 +1206,7 @@ async def login(
     remember: Optional[str] = Form(default=None)  # "on" si tildan Recordarme
 ):
     """
-    NormalizaciÛn:
+    Normalizaci√≥n:
     - recorta espacios y pasa a lower
     - si no trae '@', agrega dominio por defecto (LOGIN_DEFAULT_DOMAIN, por defecto suizo.com)
     """
@@ -1222,7 +1222,7 @@ async def login(
     if isinstance(usuario, (list, tuple)) and len(usuario) >= 6:
         is_active = bool(usuario[5])
 
-    # Limpiar la sesiÛn previa para evitar fijaciÛn de sesiÛn
+    # Limpiar la sesi√≥n previa para evitar fijaci√≥n de sesi√≥n
     try:
         request.session.clear()
     except Exception:
@@ -1235,7 +1235,7 @@ async def login(
         request.session["nombre"] = usuario[1] or usuario[2]
         request.session["remember"] = bool(remember)
 
-        # Registrar sesiÛn en tabla local (calendar.sqlite3)
+        # Registrar sesi√≥n en tabla local (calendar.sqlite3)
         sid = uuid.uuid4().hex
         request.session["sid"] = sid
         nombre_s = request.session.get("nombre") or usuario[1] or usuario[2]
@@ -1271,9 +1271,9 @@ async def login(
 
         return RedirectResponse("/", status_code=303)
 
-    # Mensajes de error m·s claros
+    # Mensajes de error m√°s claros
     if usuario and not is_active:
-        err = "Tu usuario est· desactivado. Consult· con un administrador."
+        err = "Tu usuario est√° desactivado. Consult√° con un administrador."
     else:
         err = "Credenciales incorrectas"
 
@@ -1305,7 +1305,7 @@ async def logout_get(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
-# ================== Cambiar contraseÒa (vista + alias + post) ==================
+# ================== Cambiar contrase√±a (vista + alias + post) ==================
 
 @app.get("/cambiar-password", response_class=HTMLResponse)
 async def cambiar_password_view(request: Request):
@@ -1315,7 +1315,7 @@ async def cambiar_password_view(request: Request):
     return templates.TemplateResponse("cambiar_password.html", {"request": request, "error": None, "ok": ok})
 
 
-# Alias con guion_bajo -> redirige a la ruta canÛnica con guion (GET)
+# Alias con guion_bajo -> redirige a la ruta can√≥nica con guion (GET)
 @app.get("/cambiar_password", response_class=HTMLResponse)
 async def cambiar_password_alias():
     return RedirectResponse("/cambiar-password", status_code=307)
@@ -1327,7 +1327,7 @@ async def cambiar_password_trailing_get():
     return RedirectResponse("/cambiar-password", status_code=307)
 
 
-# POST canÛnico
+# POST can√≥nico
 @app.post("/cambiar-password")
 async def cambiar_password_post(
     request: Request,
@@ -1342,7 +1342,7 @@ async def cambiar_password_post(
     if (not nueva) or (nueva != confirmar):
         return templates.TemplateResponse(
             "cambiar_password.html",
-            {"request": request, "error": "Las contraseÒas no coinciden."},
+            {"request": request, "error": "Las contrase√±as no coinciden."},
             status_code=400,
         )
 
@@ -1352,32 +1352,32 @@ async def cambiar_password_post(
             "cambiar_password.html", {"request": request, "error": "Usuario no encontrado."}, status_code=404
         )
 
-    # ValidaciÛn de contraseÒa actual (seg˙n tu esquema plano)
+    # Validaci√≥n de contrase√±a actual (seg√∫n tu esquema plano)
     if str(row[3]) != str(actual):
         return templates.TemplateResponse(
-            "cambiar_password.html", {"request": request, "error": "La contraseÒa actual es incorrecta."}, status_code=400
+            "cambiar_password.html", {"request": request, "error": "La contrase√±a actual es incorrecta."}, status_code=400
         )
 
     actor_user_id, ip = _actor_info(request)
     try:
         actualizar_password(email.lower(), nueva, actor_user_id=actor_user_id, ip=ip)
     except Exception as e:
-        print("∑ cambiar_password_post:", repr(e))
+        print("¬∑ cambiar_password_post:", repr(e))
         return templates.TemplateResponse(
             "cambiar_password.html",
-            {"request": request, "error": "No se pudo actualizar la contraseÒa."},
+            {"request": request, "error": "No se pudo actualizar la contrase√±a."},
             status_code=500,
         )
 
     try:
-        await notify_async(email, "ContraseÒa actualizada", "Tu contraseÒa fue actualizada correctamente.")
+        await notify_async(email, "Contrase√±a actualizada", "Tu contrase√±a fue actualizada correctamente.")
     except Exception:
         pass
 
     return RedirectResponse("/cambiar-password?ok=1", status_code=303)
 
 
-# NUEVO: aceptar barra final en POST (reusa la lÛgica canÛnica)
+# NUEVO: aceptar barra final en POST (reusa la l√≥gica can√≥nica)
 @app.post("/cambiar-password/")
 async def cambiar_password_trailing_post(
     request: Request,
@@ -1410,7 +1410,7 @@ async def cambiar_password_underscore_post_slash(
     return await cambiar_password_post(request, actual=actual, nueva=nueva, confirmar=confirmar)
 
 
-# ================== Rating/An·lisis ==================
+# ================== Rating/An√°lisis ==================
 
 class RatingIn(BaseModel):
     historial_id: Optional[int] = None
@@ -1483,7 +1483,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
         rating = None
 
     if not rating or rating < 1 or rating > 5:
-        return JSONResponse({"error": "Rating inv·lido. Use un entero 1..5."}, status_code=400)
+        return JSONResponse({"error": "Rating inv√°lido. Use un entero 1..5."}, status_code=400)
 
     # Helper para castear a int seguro
     def _to_int(v):
@@ -1495,7 +1495,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
         except Exception:
             return None
 
-    # 2) Resolver historial_id (prioridad: explÌcito ? b˙squeda por params ? pending_ratings ? ˙ltimo del usuario)
+    # 2) Resolver historial_id (prioridad: expl√≠cito ? b√∫squeda por params ? pending_ratings ? √∫ltimo del usuario)
     historial_id = _to_int(payload.historial_id)
 
     # 2.a) Por timestamp/nombre_pdf (si vinieron)
@@ -1527,7 +1527,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
                     hid2 = h2.get("historial_id") or h2.get("id")
                     historial_id = _to_int(hid2)
 
-    # 2.c) ⁄ltimo del usuario (como ˙ltima red)
+    # 2.c) √öltimo del usuario (como √∫ltima red)
     if not historial_id:
         h3 = _buscar_historial_usuario(user)
         if h3:
@@ -1537,7 +1537,7 @@ async def enviar_rating(request: Request, payload: RatingIn):
     if not historial_id:
         # Mensaje claro para UI
         return JSONResponse(
-            {"error": "No pude identificar el an·lisis a valorar. Reintent· desde el informe m·s reciente o gener· uno nuevo."},
+            {"error": "No pude identificar el an√°lisis a valorar. Reintent√° desde el informe m√°s reciente o gener√° uno nuevo."},
             status_code=400
         )
 
@@ -1553,10 +1553,10 @@ async def enviar_rating(request: Request, payload: RatingIn):
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
-        print("∑ Error enviar_rating:", repr(e))
-        return JSONResponse({"error": "No se pudo registrar la valoraciÛn"}, status_code=500)
+        print("¬∑ Error enviar_rating:", repr(e))
+        return JSONResponse({"error": "No se pudo registrar la valoraci√≥n"}, status_code=500)
 
-    # 4) Limpiar ìpendienteî y notificar
+    # 4) Limpiar ‚Äúpendiente‚Äù y notificar
     try:
         _pr_clear(user)
     except Exception:
@@ -1564,22 +1564,22 @@ async def enviar_rating(request: Request, payload: RatingIn):
 
     try:
         if payload.comentario:
-            await notify_async(user, "°Gracias por tu valoraciÛn!", f"Dejaste {rating}/5: {payload.comentario[:140]}")
+            await notify_async(user, "¬°Gracias por tu valoraci√≥n!", f"Dejaste {rating}/5: {payload.comentario[:140]}")
         else:
-            await notify_async(user, "°Gracias por tu valoraciÛn!", f"CalificaciÛn {rating}/5 registrada.")
+            await notify_async(user, "¬°Gracias por tu valoraci√≥n!", f"Calificaci√≥n {rating}/5 registrada.")
     except Exception:
         pass
 
-    return {"ok": True, "message": "ValoraciÛn registrada", "historial_id": historial_id}
+    return {"ok": True, "message": "Valoraci√≥n registrada", "historial_id": historial_id}
 
 
-# ===== Helper: construir AnalysisResponse mÌnimo desde un 'resumen' plano =====
+# ===== Helper: construir AnalysisResponse m√≠nimo desde un 'resumen' plano =====
 def _make_minimal_analysis_response(resumen_texto: str, analisis_id: str) -> AnalysisResponse:
     """
-    Crea un AnalysisResponse 'mÌnimo' para poder renderizar el modal (estructurado + profundo)
-    aun cuando todavÌa no mapeamos todos los campos estructurados.
-    - structured: queda con campos vacÌos (para que el template cargue sin errores)
-    - deep_analysis: una secciÛn con el resumen en <pre> (legible)
+    Crea un AnalysisResponse 'm√≠nimo' para poder renderizar el modal (estructurado + profundo)
+    aun cuando todav√≠a no mapeamos todos los campos estructurados.
+    - structured: queda con campos vac√≠os (para que el template cargue sin errores)
+    - deep_analysis: una secci√≥n con el resumen en <pre> (legible)
     """
     # Sanitizar el contenido para evitar HTML no deseado
     safe_html = f"<pre style='white-space:pre-wrap'>{markupsafe.escape(resumen_texto or '').strip()}</pre>"
@@ -1600,10 +1600,10 @@ def _make_minimal_analysis_response(resumen_texto: str, analisis_id: str) -> Ana
     return AnalysisResponse(**payload)
 
 
-# *** AJUSTADO ***: unificaciÛn de ruta de PDFs tras la generaciÛn + ingesta KB robusta
+# *** AJUSTADO ***: unificaci√≥n de ruta de PDFs tras la generaci√≥n + ingesta KB robusta
 @app.post("/analizar-pliego")
 async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(...)):
-    usuario = request.session.get("usuario", "AnÛnimo")
+    usuario = request.session.get("usuario", "An√≥nimo")
 
     if not (os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY_1") or os.getenv("OPENAI_API_BASE")):
         return JSONResponse(
@@ -1612,7 +1612,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         )
 
     if not archivos:
-        return JSONResponse({"error": "SubÌ al menos un archivo"}, status_code=400)
+        return JSONResponse({"error": "Sub√≠ al menos un archivo"}, status_code=400)
 
     for a in archivos:
         if not a or not a.filename:
@@ -1630,13 +1630,13 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         )
     except asyncio.TimeoutError:
         return JSONResponse(
-            {"error": f"El an·lisis tardÛ m·s de {int(ANALYZE_TIMEOUT)}s y fue cancelado (timeout). "
-                      "Prob· de nuevo o reducÌ el tamaÒo del archivo."},
+            {"error": f"El an√°lisis tard√≥ m√°s de {int(ANALYZE_TIMEOUT)}s y fue cancelado (timeout). "
+                      "Prob√° de nuevo o reduc√≠ el tama√±o del archivo."},
             status_code=504
         )
     except Exception as e:
         logger.exception("Error en /analizar-pliego -> analizar_anexos")
-        return JSONResponse({"error": f"Fallo en el an·lisis: {e}"}, status_code=500)
+        return JSONResponse({"error": f"Fallo en el an√°lisis: {e}"}, status_code=500)
 
     # 2) Generar PDF en la carpeta servida
     timestamp = now_stamp_ar()
@@ -1659,7 +1659,7 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
         pdf_abs = _ensure_pdf_in_serve_dir(nombre_archivo_pdf)
         logger.info("[PDF] ensure -> %s | serve_dir=%s", pdf_abs, str(PDF_SERVE_DIR))
         if not pdf_abs:
-            return JSONResponse({"error": "El PDF se generÛ pero no se pudo ubicar para descarga."}, status_code=500)
+            return JSONResponse({"error": "El PDF se gener√≥ pero no se pudo ubicar para descarga."}, status_code=500)
     except Exception as e:
         logger.exception("[PDF] Error asegurando PDF en carpeta servida")
         return JSONResponse({"error": f"No se pudo preparar el PDF para descarga: {e}"}, status_code=500)
@@ -1675,14 +1675,14 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
             resumen_texto=resumen,
         )
     except Exception as e:
-        logger.warning("iniciar_analisis_historial fallÛ, uso guardar_en_historial(): %r", e)
+        logger.warning("iniciar_analisis_historial fall√≥, uso guardar_en_historial(): %r", e)
         try:
             guardar_en_historial(timestamp, usuario, nombre_archivo_pdf, nombre_archivo_pdf, resumen)
         except Exception:
             pass
         historial_id = None
 
-    # 4) Guardar originales + ingesta KB (si est· habilitada) ó usando _kb_safe_ingest
+    # 4) Guardar originales + ingesta KB (si est√° habilitada) ‚Äî usando _kb_safe_ingest
     saved_paths: List[str] = []
     try:
         if os.getenv("KB_SAVE_ORIGINALS", "1") == "1":
@@ -1746,16 +1746,16 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     }
 
 
-# ===== Modal UI: corre an·lisis y abre el modal con 2 opciones =====
+# ===== Modal UI: corre an√°lisis y abre el modal con 2 opciones =====
 @app.post("/analizar-pliego-ui", response_class=HTMLResponse)
 async def analizar_pliego_ui(request: Request, archivos: List[UploadFile] = File(...)):
     """
-    EnvÌa los archivos, corre el pipeline (reutilizando /analizar-pliego) y devuelve
-    el modal con las opciones: Formato estructurado / An·lisis profundo.
+    Env√≠a los archivos, corre el pipeline (reutilizando /analizar-pliego) y devuelve
+    el modal con las opciones: Formato estructurado / An√°lisis profundo.
     """
-    # Reutilizamos la lÛgica ya probada llamando al endpoint existente:
+    # Reutilizamos la l√≥gica ya probada llamando al endpoint existente:
     result = await analizar_pliego(request, archivos=archivos)
-    # Si /analizar-pliego devolviÛ un Response de error, lo propagamos tal cual.
+    # Si /analizar-pliego devolvi√≥ un Response de error, lo propagamos tal cual.
     if isinstance(result, Response):
         return result
 
@@ -1783,7 +1783,7 @@ async def analizar_pliego_ui(request: Request, archivos: List[UploadFile] = File
 
 
 # ===== Render (parcial) para tabs del modal =====
-from fastapi import Form  # (arriba ya lo tenÈs importado)
+from fastapi import Form  # (arriba ya lo ten√©s importado)
 
 @app.post("/render/structured", response_class=HTMLResponse)
 async def render_structured(
@@ -1793,12 +1793,12 @@ async def render_structured(
 ):
     raw = analysis_json or analysis_json_form
     if not raw:
-        return HTMLResponse("<div class='text-danger'>No llegÛ analysis_json.</div>", status_code=400)
+        return HTMLResponse("<div class='text-danger'>No lleg√≥ analysis_json.</div>", status_code=400)
     try:
         data = json.loads(raw)
         analysis = AnalysisResponse(**data)
     except Exception as e:
-        return HTMLResponse(f"<div class='text-danger'>Payload inv·lido: {e}</div>", status_code=400)
+        return HTMLResponse(f"<div class='text-danger'>Payload inv√°lido: {e}</div>", status_code=400)
 
     html = templates.get_template("analysis/structured.html").render(
         request=None, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
@@ -1814,12 +1814,12 @@ async def render_deep(
 ):
     raw = analysis_json or analysis_json_form
     if not raw:
-        return HTMLResponse("<div class='text-danger'>No llegÛ analysis_json.</div>", status_code=400)
+        return HTMLResponse("<div class='text-danger'>No lleg√≥ analysis_json.</div>", status_code=400)
     try:
         data = json.loads(raw)
         analysis = AnalysisResponse(**data)
     except Exception as e:
-        return HTMLResponse(f"<div class='text-danger'>Payload inv·lido: {e}</div>", status_code=400)
+        return HTMLResponse(f"<div class='text-danger'>Payload inv√°lido: {e}</div>", status_code=400)
 
     html = templates.get_template("analysis/deep.html").render(
         request=None, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
@@ -1864,7 +1864,7 @@ async def export_pdf_profundo(
         headers={"Content-Disposition": "attachment; filename=analisis_profundo.pdf"})
 
 
-# ===== Guardar feedback por secciÛn (?/? + comentario) =====
+# ===== Guardar feedback por secci√≥n (?/? + comentario) =====
 @app.post("/feedback")
 async def save_feedback_endpoint(request: Request):
     try:
@@ -1877,7 +1877,7 @@ async def save_feedback_endpoint(request: Request):
     is_correct = (data or {}).get("is_correct")
     comment = (data or {}).get("comment", "")
 
-    # Validaciones mÌnimas
+    # Validaciones m√≠nimas
     if not analysis_id or not section_key:
         return JSONResponse({"ok": False, "error": "Faltan analysis_id o section_key"}, status_code=400)
 
@@ -1888,7 +1888,7 @@ async def save_feedback_endpoint(request: Request):
     except Exception:
         val = None
     if val is None and is_correct is not None:
-        # tolerante: cualquier string no vacÌo distinto de "false"/"0" lo tomamos como True
+        # tolerante: cualquier string no vac√≠o distinto de "false"/"0" lo tomamos como True
         val = 0 if str(is_correct).strip().lower() in ("0", "false", "no") else 1
 
     try:
@@ -1904,8 +1904,8 @@ async def save_feedback_endpoint(request: Request):
 
     return {"ok": True}
 # =========================
-# main.py ó PARTE 3 / 6
-# (historial, usuario/avatares, diagnÛstico)
+# main.py ‚Äî PARTE 3 / 6
+# (historial, usuario/avatares, diagn√≥stico)
 # =========================
 
 # ===== Historial (usa helpers definidos en PARTE 1) =====
@@ -1919,7 +1919,7 @@ async def ver_historial(
 ):
     """
     Devuelve el historial paginado en JSON (filtrado por usuario/rol).
-    ⁄til para futuras mejoras de UI (carga perezosa, b˙squeda, etc.).
+    √ötil para futuras mejoras de UI (carga perezosa, b√∫squeda, etc.).
     """
     if not request.session.get("usuario"):
         return JSONResponse({"error": "No autenticado"}, status_code=401)
@@ -1957,8 +1957,8 @@ async def alias_analisis():
 async def descargar_pdf(archivo: str):
     name = os.path.basename(archivo or "")
     if not name or not name.lower().endswith(".pdf"):
-        return JSONResponse({"error": "Nombre de archivo inv·lido"}, status_code=400)
-    final_abs = _ensure_pdf_in_serve_dir(name)  # usa la versiÛn de PARTE 1
+        return JSONResponse({"error": "Nombre de archivo inv√°lido"}, status_code=400)
+    final_abs = _ensure_pdf_in_serve_dir(name)  # usa la versi√≥n de PARTE 1
     if not final_abs or not os.path.isfile(final_abs):
         return JSONResponse({"error": "Archivo no encontrado"}, status_code=404)
     return FileResponse(final_abs, media_type="application/pdf", filename=name)
@@ -2035,13 +2035,13 @@ async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
     data = await avatar.read()
     size_mb = len(data) / (1024 * 1024)
     if size_mb > AVATAR_MAX_MB:
-        return JSONResponse({"error": f"M·ximo {AVATAR_MAX_MB} MB"}, status_code=400)
+        return JSONResponse({"error": f"M√°ximo {AVATAR_MAX_MB} MB"}, status_code=400)
 
     email = request.session.get("usuario")
     prefix = _email_safe(email)
     dst = os.path.join(AVATAR_DIR, prefix + ext)
 
-    # elimina variantes anteriores (si existÌan)
+    # elimina variantes anteriores (si exist√≠an)
     for e in (".webp", ".png", ".jpg", ".jpeg"):
         p = os.path.join(AVATAR_DIR, prefix + e)
         if os.path.isfile(p) and p != dst:
@@ -2056,19 +2056,19 @@ async def subir_avatar(request: Request, avatar: UploadFile = File(...)):
     url = f"/{dst.replace(os.sep, '/')}"
 
     try:
-        await emit_alert(email, "Perfil actualizado", "Tu avatar se actualizÛ correctamente")
+        await emit_alert(email, "Perfil actualizado", "Tu avatar se actualiz√≥ correctamente")
     except Exception:
         pass
 
     return {"ok": True, "avatar_url": url}
 
 
-# ================== DiagnÛstico (controlado por env) ==================
+# ================== Diagn√≥stico (controlado por env) ==================
 @app.get("/__diag/auth")
 async def diag_auth(request: Request):
     """
     Habilitar con ENABLE_DIAG=1 (no expone secretos).
-    ⁄til para verificar si la cookie de sesiÛn se est· guardando.
+    √ötil para verificar si la cookie de sesi√≥n se est√° guardando.
     """
     if (os.getenv("ENABLE_DIAG", "0") != "1"):
         raise HTTPException(status_code=404, detail="Not found")
@@ -2093,7 +2093,7 @@ async def diag_auth(request: Request):
     }
 
 
-# ? DiagnÛstico de templates/loader
+# ? Diagn√≥stico de templates/loader
 @app.get("/__diag/templates")
 async def _diag_templates():
     if (os.getenv("ENABLE_DIAG", "0") != "1"):
@@ -2104,7 +2104,7 @@ async def _diag_templates():
     }
 
 
-# DiagnÛstico r·pido siempre disponible (no revela info sensible)
+# Diagn√≥stico r√°pido siempre disponible (no revela info sensible)
 @app.get("/debug/whoami")
 async def debug_whoami(request: Request):
     sess = request.session or {}
@@ -2121,32 +2121,32 @@ async def debug_whoami(request: Request):
         "route": str(request.url),
     }
 # =========================
-# main.py ó PARTE 4 / 6
+# main.py ‚Äî PARTE 4 / 6
 # (chat OpenAI, chat interno)
 # =========================
 
 # ================== Helpers de contexto para Chat OpenAI ==================
 def _build_chat_context(historial: List[dict], usuario_actual: str, max_items: int = 8, max_chars: int = 1500) -> str:
     """
-    Construye un contexto compacto usando el ˙ltimo an·lisis del usuario + extractos del historial.
+    Construye un contexto compacto usando el √∫ltimo an√°lisis del usuario + extractos del historial.
     Limita cantidad de items y longitud para evitar prompts gigantes.
     """
     if not historial:
-        return "(Sin historial todavÌa.)"
+        return "(Sin historial todav√≠a.)"
 
-    # ˙ltimo an·lisis del usuario
+    # √∫ltimo an√°lisis del usuario
     mine = [h for h in historial if h.get("usuario") == usuario_actual and h.get("resumen")]
     mine.sort(key=lambda h: _parse_dt_utc(h.get("fecha")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
     ultimo = mine[0] if mine else None
     if ultimo:
         ultimo_resumen = (
-            f"\n ?? ⁄ltimo an·lisis del usuario actual:\n"
+            f"\n ?? √öltimo an√°lisis del usuario actual:\n"
             f" - Fecha: {ultimo.get('fecha')}\n"
             f" - Archivo: {ultimo.get('nombre_archivo')}\n"
             f" - Resumen: {ultimo.get('resumen')}\n"
         )
     else:
-        ultimo_resumen = "(El usuario a˙n no tiene an·lisis registrados.)"
+        ultimo_resumen = "(El usuario a√∫n no tiene an√°lisis registrados.)"
 
     # resto del historial (global), ordenado nuevo?viejo
     others = [h for h in historial if h.get("resumen")]
@@ -2156,8 +2156,8 @@ def _build_chat_context(historial: List[dict], usuario_actual: str, max_items: i
     for h in others[:max_items]:
         resumen = str(h.get("resumen") or "").strip()
         if len(resumen) > max_chars:
-            resumen = resumen[:max_chars] + "Ö"
-        lines.append(f"- [{h.get('fecha')}] {h.get('usuario')} analizÛ '{h.get('nombre_archivo')}' y obtuvo:\n{resumen}\n")
+            resumen = resumen[:max_chars] + "‚Ä¶"
+        lines.append(f"- [{h.get('fecha')}] {h.get('usuario')} analiz√≥ '{h.get('nombre_archivo')}' y obtuvo:\n{resumen}\n")
 
     contexto_general = "\n".join(lines)
     return f"{ultimo_resumen}\n\n?? Historial breve:\n{contexto_general}"
@@ -2197,7 +2197,7 @@ async def _call_chat_llm(mensaje: str, usuario_actual: str) -> str:
             return chat(message=mensaje, context=contexto, user=usuario_actual)  # todo kwargs
         except TypeError:
             pass
-        return chat(mensaje)  # ˙ltimo recurso
+        return chat(mensaje)  # √∫ltimo recurso
 
     try:
         logger.info("Chat LLM: usuario=%s, len(mensaje)=%d, timeout=%.1fs",
@@ -2205,7 +2205,7 @@ async def _call_chat_llm(mensaje: str, usuario_actual: str) -> str:
         return await asyncio.wait_for(run_in_threadpool(_bridge), timeout=CHAT_LLM_TIMEOUT)
     except asyncio.TimeoutError:
         logger.warning("Chat LLM timeout (%.1fs) para usuario=%s", CHAT_LLM_TIMEOUT, usuario_actual)
-        return "Estoy tardando m·s de lo normal en responder. Prob· de nuevo en un momento."
+        return "Estoy tardando m√°s de lo normal en responder. Prob√° de nuevo en un momento."
     except Exception as e:
         logger.exception("Error en _call_chat_llm")
         return f"[Error de chat] {e}"
@@ -2222,12 +2222,12 @@ async def chat_openai(request: Request):
     usuario_actual = request.session.get("usuario", "Desconocido")
 
     if not mensaje:
-        return JSONResponse({"respuesta": "Decime quÈ necesit·s revisar del pliego ??"})
+        return JSONResponse({"respuesta": "Decime qu√© necesit√°s revisar del pliego ??"})
 
-    # Chequeo r·pido de clave (evita silencio si falta)
+    # Chequeo r√°pido de clave (evita silencio si falta)
     if not (os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY_1") or os.getenv("OPENAI_API_BASE")):
-        logger.error("OPENAI_API_KEY no est· configurada en el servidor")
-        return JSONResponse({"respuesta": "No puedo responder porque falta la configuraciÛn del proveedor de IA (OPENAI_API_KEY). Avis· al admin."}, status_code=503)
+        logger.error("OPENAI_API_KEY no est√° configurada en el servidor")
+        return JSONResponse({"respuesta": "No puedo responder porque falta la configuraci√≥n del proveedor de IA (OPENAI_API_KEY). Avis√° al admin."}, status_code=503)
 
     respuesta = await _call_chat_llm(mensaje, usuario_actual)
     return JSONResponse({"respuesta": respuesta})
@@ -2239,11 +2239,11 @@ async def api_chat_openai(request: Request, payload: dict = Body(default={})):
     usuario_actual = request.session.get("usuario", "Desconocido")
 
     if not mensaje:
-        return JSONResponse({"reply": "Decime quÈ necesit·s revisar del pliego ??"})
+        return JSONResponse({"reply": "Decime qu√© necesit√°s revisar del pliego ??"})
 
     if not (os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY_1") or os.getenv("OPENAI_API_BASE")):
-        logger.error("OPENAI_API_KEY no est· configurada en el servidor (API)")
-        return JSONResponse({"reply": "No puedo responder porque falta la configuraciÛn del proveedor de IA (OPENAI_API_KEY)."}, status_code=503)
+        logger.error("OPENAI_API_KEY no est√° configurada en el servidor (API)")
+        return JSONResponse({"reply": "No puedo responder porque falta la configuraci√≥n del proveedor de IA (OPENAI_API_KEY)."}, status_code=503)
 
     respuesta = await _call_chat_llm(mensaje, usuario_actual)
     return JSONResponse({"reply": respuesta})
@@ -2253,7 +2253,7 @@ async def api_chat_openai(request: Request, payload: dict = Body(default={})):
 @app.get("/chat_openai_embed", response_class=HTMLResponse)
 async def chat_openai_embed(request: Request):
     if not request.session.get("usuario"):
-        return HTMLResponse("<div style='padding:12px'>Inici· sesiÛn para usar el chat.</div>")
+        return HTMLResponse("<div style='padding:12px'>Inici√° sesi√≥n para usar el chat.</div>")
 
     html = """<!doctype html><html><head>
  <meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
@@ -2279,7 +2279,7 @@ async def chat_openai_embed(request: Request):
     const v = ta.value.trim();
     if(!v) return;
     busy = true; btn.disabled = true;
-    add('<div><b>T˙:</b> '+esc(v)+'</div>');
+    add('<div><b>T√∫:</b> '+esc(v)+'</div>');
     ta.value=''; autosize();
     try{
       const r = await fetch('/chat-openai', {
@@ -2376,7 +2376,7 @@ async def api_buscar_usuarios(request: Request, term: str = "", limit: int = 8):
         return {"items": [{"id": u["id"], "nombre": u["nombre"], "email": u["email"]} for u in norm]}
     except Exception as e:
         print("? Error api_buscar_usuarios:", repr(e))
-        return JSONResponse({"error": "No se pudo completar la b˙squeda"}, status_code=500)
+        return JSONResponse({"error": "No se pudo completar la b√∫squeda"}, status_code=500)
 
 
 @app.post("/chat/enviar")
@@ -2406,7 +2406,7 @@ async def chat_enviar(request: Request):
     except Exception as e:
         if _is_no_table_error(e):
             ensure_chat_tables()
-            return JSONResponse({"ok": False, "error": "InicialicÈ las tablas de chat, intent· de nuevo."}, status_code=503)
+            return JSONResponse({"ok": False, "error": "Inicialic√© las tablas de chat, intent√° de nuevo."}, status_code=503)
         print("? Error chat_enviar:", repr(e))
         return JSONResponse({"error": "No se pudo enviar el mensaje"}, status_code=500)
 
@@ -2424,7 +2424,7 @@ async def chat_enviar_archivos(
     de = request.session.get("usuario")
     files = [a for a in archivos if a and a.filename]
     if len(files) > CHAT_MAX_FILES:
-        return JSONResponse({"error": f"M·ximo {CHAT_MAX_FILES} archivos por mensaje"}, status_code=400)
+        return JSONResponse({"error": f"M√°ximo {CHAT_MAX_FILES} archivos por mensaje"}, status_code=400)
 
     actor_user_id, ip = _actor_info(request)
     try:
@@ -2438,7 +2438,7 @@ async def chat_enviar_archivos(
     except Exception as e:
         if _is_no_table_error(e):
             ensure_chat_tables()
-            return JSONResponse({"ok": False, "error": "InicialicÈ las tablas de chat, intent· de nuevo."}, status_code=503)
+            return JSONResponse({"ok": False, "error": "Inicialic√© las tablas de chat, intent√° de nuevo."}, status_code=503)
         print("? Error creando mensaje:", repr(e))
         return JSONResponse({"error": "No se pudo crear el mensaje"}, status_code=500)
 
@@ -2456,13 +2456,13 @@ async def chat_enviar_archivos(
         written = await _save_upload_stream(archivo, path)
         total_bytes += written
 
-        # LÌmite correcto del chat
+        # L√≠mite correcto del chat
         if (total_bytes / (1024 * 1024)) > CHAT_MAX_TOTAL_MB:
             try:
                 os.remove(path)
             except Exception:
                 pass
-            return JSONResponse({"error": f"TamaÒo total supera {CHAT_MAX_TOTAL_MB} MB"}, status_code=400)
+            return JSONResponse({"error": f"Tama√±o total supera {CHAT_MAX_TOTAL_MB} MB"}, status_code=400)
 
         try:
             guardar_adjunto(
@@ -2526,7 +2526,7 @@ async def chat_mensajes(request: Request, con: str, limit: int = 100):
 
     yo = request.session.get("usuario")
     if not con:
-        return JSONResponse({"error": "Falta par·metro 'con' (email del contacto)"}, status_code=400)
+        return JSONResponse({"error": "Falta par√°metro 'con' (email del contacto)"}, status_code=400)
 
     limit = max(1, min(int(limit or 100), 500))
 
@@ -2561,7 +2561,7 @@ async def chat_marcar_leidos(request: Request):
             ensure_chat_tables()
             return JSONResponse({"ok": True})
         print("? Error chat_marcar_leidos:", repr(e))
-        return JSONResponse({"error": "No se pudo marcar como leÌdos"}, status_code=500)
+        return JSONResponse({"error": "No se pudo marcar como le√≠dos"}, status_code=500)
 
 
 @app.get("/chat/no-leidos")
@@ -2652,11 +2652,11 @@ async def chat_abrir(request: Request):
         print("? Error chat_abrir:", repr(e))
         return JSONResponse({"error": "No se pudo abrir el hilo"}, status_code=500)
 # =========================
-# main.py ó PARTE 5 / 6
-# (AuditorÌa, Admin, endpoints legacy + **Incidencias (vista GET)**
+# main.py ‚Äî PARTE 5 / 6
+# (Auditor√≠a, Admin, endpoints legacy + **Incidencias (vista GET)**
 # =========================
 
-# ---------- Vista mÌnima de Incidencias (evita 404 al hacer clic en el botÛn) ----------
+# ---------- Vista m√≠nima de Incidencias (evita 404 al hacer clic en el bot√≥n) ----------
 @app.get("/incidencias", response_class=HTMLResponse)
 async def incidencias_view(request: Request):
     if not request.session.get("usuario"):
@@ -2664,7 +2664,7 @@ async def incidencias_view(request: Request):
 
     # Intentamos renderizar templates/incidencias.html si existe; si no, devolvemos un HTML simple
     try:
-        # forzamos carga para verificar existencia; si no existe, get_template lanza excepciÛn
+        # forzamos carga para verificar existencia; si no existe, get_template lanza excepci√≥n
         templates.env.get_template("incidencias.html")
         return templates.TemplateResponse("incidencias.html", {"request": request})
     except Exception:
@@ -2676,8 +2676,8 @@ async def incidencias_view(request: Request):
           <div class="container">
             <h1 class="h4 mb-3">Incidencias</h1>
             <div class="alert alert-info">
-              La vista <code>templates/incidencias.html</code> no existe a˙n. <br>
-              Creala para personalizar el mÛdulo. Mientras tanto, esta vista placeholder evita el 404.
+              La vista <code>templates/incidencias.html</code> no existe a√∫n. <br>
+              Creala para personalizar el m√≥dulo. Mientras tanto, esta vista placeholder evita el 404.
             </div>
             <a class="btn btn-secondary" href="/">Volver al inicio</a>
           </div>
@@ -2689,7 +2689,7 @@ async def incidencias_view(request: Request):
 async def incidencias_trailing():
     return RedirectResponse("/incidencias", status_code=307)
 
-# ================== AuditorÌa (vista audit_logs) ==================
+# ================== Auditor√≠a (vista audit_logs) ==================
 @app.get("/auditoria", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def ver_auditoria(request: Request):
     logs = obtener_auditoria()
@@ -2698,23 +2698,23 @@ async def ver_auditoria(request: Request):
 
 @app.post("/auditoria/eliminar", dependencies=[Depends(require_admin)])
 async def auditoria_eliminar_disabled(request: Request):
-    return JSONResponse({"error": "OperaciÛn no permitida: la auditorÌa es inmutable"}, status_code=405)
+    return JSONResponse({"error": "Operaci√≥n no permitida: la auditor√≠a es inmutable"}, status_code=405)
 
 
 @app.post("/auditoria/eliminar-masivo", dependencies=[Depends(require_admin)])
 async def auditoria_eliminar_masivo_disabled(request: Request):
-    return JSONResponse({"error": "OperaciÛn no permitida: la auditorÌa es inmutable"}, status_code=405)
+    return JSONResponse({"error": "Operaci√≥n no permitida: la auditor√≠a es inmutable"}, status_code=405)
 
 
 @app.post("/auditoria/purgar", dependencies=[Depends(require_admin)])
 async def auditoria_purgar_disabled(request: Request):
-    return JSONResponse({"error": "OperaciÛn no permitida: la auditorÌa es inmutable"}, status_code=405)
+    return JSONResponse({"error": "Operaci√≥n no permitida: la auditor√≠a es inmutable"}, status_code=405)
 
 
-# ========= Panel de AdministraciÛn =========
+# ========= Panel de Administraci√≥n =========
 @app.get("/admin", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def admin_panel(request: Request):
-    # Renderiza el panel de administraciÛn (botÛn del topbar apunta aquÌ)
+    # Renderiza el panel de administraci√≥n (bot√≥n del topbar apunta aqu√≠)
     return templates.TemplateResponse("admin.html", {"request": request})
 
 
@@ -2778,7 +2778,7 @@ async def admin_users_create(request: Request, payload: AdminUserCreate):
     # Si existe inactivo, intentamos restaurar; si no, crear nuevo.
     try:
         if row and not bool(row[5]):
-            # Restaurar con helpers disponibles; si falla, activar y actualizar datos b·sicos.
+            # Restaurar con helpers disponibles; si falla, activar y actualizar datos b√°sicos.
             try:
                 # Si tu database.crear_o_restaurar_usuario soporta kwargs:
                 _ = crear_o_restaurar_usuario(
@@ -2828,7 +2828,7 @@ async def admin_users_password(request: Request, payload: AdminPasswordIn):
         return {"ok": True}
     except Exception as e:
         print("? admin_users_password:", repr(e))
-        return JSONResponse({"error": "No se pudo actualizar la contraseÒa"}, status_code=500)
+        return JSONResponse({"error": "No se pudo actualizar la contrase√±a"}, status_code=500)
 
 
 @app.post("/api/admin/users/toggle")
@@ -2907,7 +2907,7 @@ async def legacy_admin_create_user(request: Request):
 @app.post("/admin/blanquear-password")
 async def legacy_admin_password(request: Request):
     data = await _json_or_form(request)
-    # Si no llega contraseÒa, usar DEFAULT_NEW_USER_PASSWORD
+    # Si no llega contrase√±a, usar DEFAULT_NEW_USER_PASSWORD
     new_pwd = (data.get("password") or data.get("nueva") or data.get("new") or "").strip() or DEFAULT_NEW_USER_PASSWORD
     payload = AdminPasswordIn(
         email=(data.get("email") or "").strip(),
@@ -2920,7 +2920,7 @@ async def legacy_admin_password(request: Request):
 async def legacy_admin_toggle(request: Request):
     data = await _json_or_form(request)
     activo_raw = str(data.get("activo", "")).lower()
-    activo = activo_raw in ("1", "true", "t", "yes", "on", "si", "sÌ")
+    activo = activo_raw in ("1", "true", "t", "yes", "on", "si", "s√≠")
     payload = AdminToggleIn(
         email=(data.get("email") or "").strip(),
         activo=activo,
@@ -2950,7 +2950,7 @@ async def legacy_admin_delete_post(request: Request):
     data = await _json_or_form(request)
     email = (data.get("email") or "").strip()
     hard_raw = str(data.get("hard", "")).lower()
-    hard = hard_raw in ("1", "true", "t", "yes", "on", "si", "sÌ")
+    hard = hard_raw in ("1", "true", "t", "yes", "on", "si", "s√≠")
     return await admin_users_delete(request, email=email, hard=hard)
 
 
@@ -2994,11 +2994,11 @@ async def legacy_admin_reset_session(request: Request):
         return {"ok": True}
     except Exception as e:
         print("? legacy_admin_reset_session:", repr(e))
-        return JSONResponse({"error": "No se pudo reiniciar la sesiÛn"}, status_code=500)
+        return JSONResponse({"error": "No se pudo reiniciar la sesi√≥n"}, status_code=500)
 # =========================
-# main.py ó PARTE 6 / 6
-# (Calendario, Notificaciones, Presencia/Online, AuditorÌa de actividad + CSV,
-#  KB UI/APIs, diag rutas y fallbacks raÌz/login/health)
+# main.py ‚Äî PARTE 6 / 6
+# (Calendario, Notificaciones, Presencia/Online, Auditor√≠a de actividad + CSV,
+#  KB UI/APIs, diag rutas y fallbacks ra√≠z/login/health)
 # =========================
 
 # --- Compat: define logger y partial si no estaban definidos en partes previas ---
@@ -3072,7 +3072,7 @@ async def cal_create(request: Request):
             (evt_id, title, desc, start, end, all_day, color, created_by, now, now),
         )
 
-    await notify_async(created_by, "Evento creado", f"{title} ï {start}{(' ñ '+end) if end else ''}")
+    await notify_async(created_by, "Evento creado", f"{title} ‚Ä¢ {start}{(' ‚Äì '+end) if end else ''}")
 
     return {
         "id": evt_id,
@@ -3382,7 +3382,7 @@ async def usuarios_activos(request: Request):
 
 
 # =====================================================================
-# ===================== AUDITORÕA DE ACTIVIDAD (admins) ===============
+# ===================== AUDITOR√çA DE ACTIVIDAD (admins) ===============
 # =====================================================================
 
 def _parse_iso(ts: Optional[str]):
@@ -3530,7 +3530,7 @@ async def auditoria_actividad_csv(
     )
 
 # =========================
-# KB ó UI mÌnima + APIs
+# KB ‚Äî UI m√≠nima + APIs
 # =========================
 
 # Vista HTML (solo admins)
@@ -3582,7 +3582,7 @@ async def kb_sources():
 async def kb_source_create(name: str = Form(...)):
     """
     Crea (o garantiza) la carpeta para un rubro/fuente de KB y llama a utils.kb_create_or_get_source si existe.
-    Maneja m˙ltiples firmas posibles SIN kwargs problem·ticos.
+    Maneja m√∫ltiples firmas posibles SIN kwargs problem√°ticos.
     """
     f = _kb_funcs()
     name = (name or "").strip()
@@ -3651,7 +3651,7 @@ async def kb_upload(
     if not slug:
         return JSONResponse({"error": "Falta 'source' (rubro)"}, status_code=400)
     if not files:
-        return JSONResponse({"error": "SubÌ al menos un archivo"}, status_code=400)
+        return JSONResponse({"error": "Sub√≠ al menos un archivo"}, status_code=400)
 
     dst_dir = os.path.join(KB_STORAGE_DIR, slug)
     os.makedirs(dst_dir, exist_ok=True)
@@ -3664,14 +3664,14 @@ async def kb_upload(
         orig = fup.filename
         ext = os.path.splitext(orig)[1].lower()
         if ext not in KB_ALLOWED_EXT:
-            return JSONResponse({"error": f"ExtensiÛn no permitida: {ext}"}, status_code=400)
+            return JSONResponse({"error": f"Extensi√≥n no permitida: {ext}"}, status_code=400)
 
         safe = _safe_basename(orig) + ext
         path = os.path.join(dst_dir, safe)
         written = await _save_upload_stream(fup, path)
         saved.append({"file": safe, "bytes": written})
 
-        # ---- Ingesta con firma flexible (sin kwargs polÈmicos)
+        # ---- Ingesta con firma flexible (sin kwargs pol√©micos)
         ingester = funcs["ingest_file"]
         if callable(ingester):
             try:
@@ -3730,11 +3730,11 @@ async def kb_priorities_upsert(payload: KBPriorityIn):
 
     term = (payload.term or "").strip()
     if not term:
-        return JSONResponse({"error": "TÈrmino requerido"}, status_code=400)
+        return JSONResponse({"error": "T√©rmino requerido"}, status_code=400)
     weight = int(payload.weight or 1)
     source = (payload.source or "").strip() or None
 
-    # 1) Intentos vÌa utils (sin y con DB)
+    # 1) Intentos v√≠a utils (sin y con DB)
     if callable(up):
         try:
             try:
@@ -3771,13 +3771,13 @@ async def kb_priorities_upsert(payload: KBPriorityIn):
                         pass
 
         except Exception as e:
-            # Error tÌpico: "attempted relative import with no known parent package"
+            # Error t√≠pico: "attempted relative import with no known parent package"
             msg = str(e)
             if "attempted relative import" not in msg and "No module named" not in msg:
                 # otro error real: lo exponemos
                 return JSONResponse({"error": f"No se pudo guardar: {e}"}, status_code=500)
             # si fue error de import relativo, caemos al fallback local
-            print("∑ kb_upsert_priority via utils fallÛ por import relativo; usando fallback:", repr(e))
+            print("¬∑ kb_upsert_priority via utils fall√≥ por import relativo; usando fallback:", repr(e))
 
     # 2) Fallback local contra models.KBPriority
     ok, err = _fallback_kb_upsert_priority(term, weight, source)
@@ -3785,7 +3785,7 @@ async def kb_priorities_upsert(payload: KBPriorityIn):
         return {"ok": True}
     return JSONResponse({"error": f"No se pudo guardar: {err}"}, status_code=500)
 
-# (Opcional) diagnÛstico de rutas
+# (Opcional) diagn√≥stico de rutas
 @app.get("/__diag/routes")
 def _diag_routes():
     return {"routes": sorted({getattr(r, "path", "") for r in app.routes})}
@@ -3803,7 +3803,7 @@ def _fallback_kb_upsert_priority(term: str, weight: int, source: Optional[str] =
             insp = sa_inspect(engine)
 
             all_tables = insp.get_table_names()
-            # Preferencias de nombre, pero si no est·n, probamos cualquier tabla compatible
+            # Preferencias de nombre, pero si no est√°n, probamos cualquier tabla compatible
             preferred = ["kb_priorities", "kbpriority", "kb_priority", "priorities", "priority"] + all_tables
 
             term_cands   = ["term", "pattern", "patron", "keyword", "texto"]
@@ -3821,7 +3821,7 @@ def _fallback_kb_upsert_priority(term: str, weight: int, source: Optional[str] =
                     break
 
             if not chosen:
-                return False, f"No encontrÈ tabla compatible (disponibles: {all_tables})."
+                return False, f"No encontr√© tabla compatible (disponibles: {all_tables})."
 
             md = MetaData()
             T = Table(chosen, md, autoload_with=engine)
@@ -3864,7 +3864,7 @@ def _fallback_kb_upsert_priority(term: str, weight: int, source: Optional[str] =
         return False, str(e)
 
 
-# === Fallbacks raÌz/login/health para Render (pegar al final del archivo) ===
+# === Fallbacks ra√≠z/login/health para Render (pegar al final del archivo) ===
 from starlette.routing import Route
 
 def _route_exists(path: str, method: str = "GET") -> bool:
@@ -3881,7 +3881,7 @@ def _route_exists(path: str, method: str = "GET") -> bool:
 def _head_root_ok():
     return Response(status_code=200)
 
-# RaÌz de la app: si no existe, crea un fallback que redirige a /login o muestra index.html
+# Ra√≠z de la app: si no existe, crea un fallback que redirige a /login o muestra index.html
 if not _route_exists("/", "GET"):
     @app.get("/", include_in_schema=False)
     async def _root_fallback(request: Request):
@@ -3905,7 +3905,7 @@ if not _route_exists("/", "GET"):
 if not _route_exists("/login", "GET"):
     @app.get("/login", include_in_schema=False)
     async def _login_view(request: Request):
-        # Si tenÈs templates/login.html, lo usa; si no, muestra un form mÌnimo
+        # Si ten√©s templates/login.html, lo usa; si no, muestra un form m√≠nimo
         try:
             return templates.TemplateResponse("login.html", {"request": request, "error": None, "mensaje": None})
         except Exception:
@@ -3914,7 +3914,7 @@ if not _route_exists("/login", "GET"):
             <form method="post" action="/login" style="max-width:320px;margin:48px auto;font-family:sans-serif">
                 <h3>Ingresar</h3>
                 <div><input name="email" placeholder="email" style="width:100%;padding:8px;margin:6px 0"></div>
-                <div><input name="password" type="password" placeholder="contraseÒa" style="width:100%;padding:8px;margin:6px 0"></div>
+                <div><input name="password" type="password" placeholder="contrase√±a" style="width:100%;padding:8px;margin:6px 0"></div>
                 <label><input type="checkbox" name="remember"> Recordarme</label>
                 <div><button style="padding:8px 12px;margin-top:8px">Entrar</button></div>
             </form>"""
@@ -3925,7 +3925,7 @@ if not _route_exists("/login", "GET"):
 def _login_trailing():
     return RedirectResponse("/login", status_code=307)
 
-# Endpoint simple de health (˙til para pruebas manuales)
+# Endpoint simple de health (√∫til para pruebas manuales)
 @app.get("/healthz", include_in_schema=False)
 def _healthz():
     return {"ok": True, "ts": now_iso_utc()}

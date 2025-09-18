@@ -1,4 +1,4 @@
-# models.py
+﻿# models.py
 from sqlalchemy import (
     Column, Integer, String, Boolean, DateTime, Text, ForeignKey, JSON, Index,
     UniqueConstraint, Float
@@ -6,12 +6,12 @@ from sqlalchemy import (
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
-# 👉 Import robusto de Base: primero db_orm.Base, luego database.Base, y fallback declarative_base
+# ðŸ‘‰ Import robusto de Base: primero db_orm.Base, luego database.Base, y fallback declarative_base
 try:
     from db_orm import Base  # comparte metadata con AuditLog
 except Exception:
     try:
-        from database import Base  # compat si seguís usando Base ahí
+        from database import Base  # compat si seguÃ­s usando Base ahÃ­
     except Exception:
         from sqlalchemy.orm import declarative_base
         Base = declarative_base()
@@ -23,17 +23,17 @@ except Exception:
 
 class Usuario(Base):
     __tablename__ = "usuarios"
-    __table_args__ = {"extend_existing": True}  # ✅ tolera doble registro
+    __table_args__ = {"extend_existing": True}  # âœ… tolera doble registro
 
     id = Column(Integer, primary_key=True, index=True)
 
-    # Nombre visible (no necesariamente único; podés tener homónimos)
+    # Nombre visible (no necesariamente Ãºnico; podÃ©s tener homÃ³nimos)
     nombre = Column(String(120), nullable=False)
 
-    # Email para login: único y con índice
+    # Email para login: Ãºnico y con Ã­ndice
     email = Column(String(255), unique=True, index=True, nullable=False)
 
-    # Hash de contraseña (no guardes texto plano)
+    # Hash de contraseÃ±a (no guardes texto plano)
     contrasena = Column(String(255), nullable=False)
 
     # 'usuario' | 'admin'
@@ -60,13 +60,13 @@ class Evento(Base):
     Evento de calendario.
     - soporte all-day
     - color opcional (p.ej. #2f6adf)
-    - visibilidad: 'privado' | 'equipo' (por si luego querés compartir)
+    - visibilidad: 'privado' | 'equipo' (por si luego querÃ©s compartir)
     """
     __tablename__ = "eventos"
     __table_args__ = (
         Index("ix_eventos_usuario", "usuario_id"),
         Index("ix_eventos_inicio", "inicio"),
-        {"extend_existing": True},  # ✅
+        {"extend_existing": True},  # âœ…
     )
 
     id = Column(Integer, primary_key=True)
@@ -93,7 +93,7 @@ class Evento(Base):
 
 class Notificacion(Base):
     """
-    Notificación mostrada en el toast-center y/o campana.
+    NotificaciÃ³n mostrada en el toast-center y/o campana.
     - tipo: 'info' | 'success' | 'warning' | 'error'
     - link opcional para deep-link (p.ej. a una incidencia o historial)
     - metadata JSON para payload libre (ids, etc.)
@@ -102,7 +102,7 @@ class Notificacion(Base):
     __table_args__ = (
         Index("ix_notif_usuario_leida", "usuario_id", "leida"),
         Index("ix_notif_creado_en", "creado_en"),
-        {"extend_existing": True},  # ✅
+        {"extend_existing": True},  # âœ…
     )
 
     id = Column(Integer, primary_key=True)
@@ -116,9 +116,9 @@ class Notificacion(Base):
     leida = Column(Boolean, default=False, nullable=False)
     leida_en = Column(DateTime(timezone=True))
 
-    # ⚠️ 'metadata' es nombre reservado en SQLAlchemy. Usamos atributo 'meta'
-    #     pero la columna en BD sigue llamándose "metadata".
-    meta = Column("metadata", JSON, default=dict)  # ✅ nombre de columna preservado
+    # âš ï¸ 'metadata' es nombre reservado en SQLAlchemy. Usamos atributo 'meta'
+    #     pero la columna en BD sigue llamÃ¡ndose "metadata".
+    meta = Column("metadata", JSON, default=dict)  # âœ… nombre de columna preservado
 
     creado_en = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -134,11 +134,11 @@ class Notificacion(Base):
 
 class KBSource(Base):
     """
-    Fuente lógica de conocimiento. Agrupa archivos por rubro/organismo/ámbito
-    y define dónde se almacenan físicamente en el servidor (Render Disk).
+    Fuente lÃ³gica de conocimiento. Agrupa archivos por rubro/organismo/Ã¡mbito
+    y define dÃ³nde se almacenan fÃ­sicamente en el servidor (Render Disk).
     """
     __tablename__ = "kb_sources"
-    __table_args__ = {"extend_existing": True}  # ✅
+    __table_args__ = {"extend_existing": True}  # âœ…
 
     id = Column(Integer, primary_key=True)
     name = Column(String(128), unique=True, index=True)   # ej. "Salud-AR Base", "Normativa ANMAT"
@@ -159,7 +159,7 @@ class KBFile(Base):
     __tablename__ = "kb_files"
     __table_args__ = (
         Index("ix_kbfile_source_name", "source_id", "filename"),
-        {"extend_existing": True},  # ✅
+        {"extend_existing": True},  # âœ…
     )
 
     id = Column(Integer, primary_key=True)
@@ -168,8 +168,8 @@ class KBFile(Base):
     filename = Column(String(256), nullable=False)
     content_type = Column(String(64))                     # "text/plain", "application/pdf", etc.
     bytes = Column(Integer, default=0)
-    hash_sha256 = Column(String(64), index=True)          # deduplicación
-    stored_path = Column(String(512))                     # ruta absoluta donde quedó el archivo
+    hash_sha256 = Column(String(64), index=True)          # deduplicaciÃ³n
+    stored_path = Column(String(512))                     # ruta absoluta donde quedÃ³ el archivo
     meta = Column(JSON, default=dict)                     # {"rubro": "...", "tags": [...], ...}
     creado_en = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -187,7 +187,7 @@ class KBChunk(Base):
     __tablename__ = "kb_chunks"
     __table_args__ = (
         Index("ix_kbchunk_file_ord", "file_id", "ord"),
-        {"extend_existing": True},  # ✅
+        {"extend_existing": True},  # âœ…
     )
 
     id = Column(Integer, primary_key=True)
@@ -209,18 +209,18 @@ class KBChunk(Base):
 class KBPriority(Base):
     """
     Puntos/temas que 'no deben faltar' en el informe.
-    No es restrictivo: guía de prioridades por rubro.
+    No es restrictivo: guÃ­a de prioridades por rubro.
     """
     __tablename__ = "kb_priorities"
     __table_args__ = (
         UniqueConstraint("rubric", "label", name="uq_kbprio"),
-        {"extend_existing": True},  # ✅
+        {"extend_existing": True},  # âœ…
     )
 
     id = Column(Integer, primary_key=True)
     rubric = Column(String(128), index=True)              # ej. "salud", "medicamentos", "descartables"
     label = Column(String(256), index=True)               # ej. "Certificaciones ANMAT/PM", "Vencimientos"
-    details = Column(Text)                                # explicación breve/reglas suaves
+    details = Column(Text)                                # explicaciÃ³n breve/reglas suaves
     weight = Column(Float, default=1.0)
     creado_en = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

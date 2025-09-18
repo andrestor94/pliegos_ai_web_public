@@ -1,12 +1,12 @@
-# backend/services/ai_client.py
+﻿# backend/services/ai_client.py
 """
 Cliente unificado y robusto para llamadas a LLM usando el SDK oficial de OpenAI.
-Prioriza la Responses API; si no está disponible en el runtime/SDK, cae a Chat Completions.
+Prioriza la Responses API; si no estÃ¡ disponible en el runtime/SDK, cae a Chat Completions.
 Incluye:
 - Descubrimiento flexible de credenciales y base_url (OPENAI_API_KEY / OPENAI_API_KEY_1 / OPENAI_API_BASE).
 - Compatibilidad opcional con Azure OpenAI si existen AZURE_OPENAI_* (sin romper si el SDK no lo trae).
 - Retries exponenciales en rate limit/errores transitorios.
-- Límite de tokens configurable por env (OPENAI_MAX_OUTPUT_TOKENS).
+- LÃ­mite de tokens configurable por env (OPENAI_MAX_OUTPUT_TOKENS).
 - Firma estable: `chat(message, contexto=None, usuario=None, system=None, model=None, ...) -> str`.
 """
 
@@ -36,7 +36,7 @@ def _pick_api_key() -> str:
     return (
         os.getenv("OPENAI_API_KEY")
         or os.getenv("OPENAI_API_KEY_1")
-        or os.getenv("AZURE_OPENAI_API_KEY")  # por si sólo configuraron Azure
+        or os.getenv("AZURE_OPENAI_API_KEY")  # por si sÃ³lo configuraron Azure
         or ""
     )
 
@@ -44,8 +44,8 @@ def _pick_api_key() -> str:
 def _mk_openai_client() -> Any:
     """
     Construye el cliente adecuado:
-    - AzureOpenAI si hay endpoint/versión configurados.
-    - OpenAI clásico con base_url si se indicó OPENAI_API_BASE.
+    - AzureOpenAI si hay endpoint/versiÃ³n configurados.
+    - OpenAI clÃ¡sico con base_url si se indicÃ³ OPENAI_API_BASE.
     """
     # Azure (opcional)
     if AzureOpenAI and (os.getenv("AZURE_OPENAI_ENDPOINT") or os.getenv("AZURE_OPENAI_BASE_URL")):
@@ -59,7 +59,7 @@ def _mk_openai_client() -> Any:
                 api_version=api_version,
             )
 
-    # OpenAI estándar (u otro proveedor compatible vía base_url)
+    # OpenAI estÃ¡ndar (u otro proveedor compatible vÃ­a base_url)
     api_key = _pick_api_key()
     base = os.getenv("OPENAI_API_BASE") or None
     org = os.getenv("OPENAI_ORG") or os.getenv("OPENAI_ORGANIZATION") or None
@@ -81,7 +81,7 @@ def _get_client():
 
 
 # =======================
-# Helpers de extracción
+# Helpers de extracciÃ³n
 # =======================
 def _resp_to_text(resp) -> str:
     """
@@ -138,8 +138,8 @@ def _supports_responses_api(client) -> bool:
 # =======================
 def _is_retryable_error(err: Exception) -> bool:
     """
-    Heurística simple: errores 429/5xx/timeout son reintentos.
-    No dependemos de clases específicas para no romper con SDKs distintos.
+    HeurÃ­stica simple: errores 429/5xx/timeout son reintentos.
+    No dependemos de clases especÃ­ficas para no romper con SDKs distintos.
     """
     s = f"{type(err).__name__}: {err}".lower()
     return (
@@ -165,12 +165,12 @@ def _with_retries(func: Callable[[], Any], max_retries: int = 3, base_delay: flo
             # Exponencial con jitter leve
             sleep_s = base_delay * (2 ** attempt)
             time.sleep(sleep_s)
-    # Si llegamos acá, relanzamos el último error
+    # Si llegamos acÃ¡, relanzamos el Ãºltimo error
     raise last  # type: ignore[misc]
 
 
 # =======================
-# API pública
+# API pÃºblica
 # =======================
 def chat(
     message: str,
@@ -187,7 +187,7 @@ def chat(
     Params:
       - message: prompt del usuario.
       - contexto: texto adicional breve (historial resumido).
-      - usuario: se envía como metadata si el SDK/endpoint lo permite.
+      - usuario: se envÃ­a como metadata si el SDK/endpoint lo permite.
       - system: mensaje de sistema (instrucciones de comportamiento).
       - model: override del modelo (si no se pasa, usa OPENAI_RESPONSES_MODEL o sensible por defecto).
       - temperature / max_output_tokens: ajustes del muestreo.
@@ -205,11 +205,11 @@ def chat(
     chosen_model = model or model_responses
 
     sys = system or (
-        "Sos un asistente útil. Respondé en español. "
-        "Si no hay información suficiente en el contexto, decilo sin inventar."
+        "Sos un asistente Ãºtil. RespondÃ© en espaÃ±ol. "
+        "Si no hay informaciÃ³n suficiente en el contexto, decilo sin inventar."
     )
 
-    # Construcción de items/mensajes
+    # ConstrucciÃ³n de items/mensajes
     items: List[Dict[str, Any]] = [{"role": "system", "content": sys}]
     ctx = (contexto or "").strip()
     if ctx:
@@ -242,7 +242,7 @@ def chat(
             try:
                 return client.responses.create(**kwargs)
             except TypeError:
-                # SDK más viejo sin max_output_tokens/metadata
+                # SDK mÃ¡s viejo sin max_output_tokens/metadata
                 kwargs.pop("max_output_tokens", None)
                 kwargs.pop("metadata", None)
                 return client.responses.create(**kwargs)
@@ -251,7 +251,7 @@ def chat(
             resp = _with_retries(_call)
             return _resp_to_text(resp)
         except Exception as e:  # pragma: no cover - fallback a Chat
-            # Si falla por razón no recuperable, intentamos Chat Completions
+            # Si falla por razÃ³n no recuperable, intentamos Chat Completions
             pass
 
     # ===========================================================
@@ -259,7 +259,7 @@ def chat(
     # ===========================================================
     # Normalizamos a formato chat.completions (system + user messages)
     chat_msgs: List[Dict[str, str]] = []
-    # Convertimos 'items' al formato clásico
+    # Convertimos 'items' al formato clÃ¡sico
     for m in items:
         role = "user"
         if m.get("role") == "system":

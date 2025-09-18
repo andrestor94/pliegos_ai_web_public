@@ -1,4 +1,4 @@
-# utils/openai_client.py
+﻿# utils/openai_client.py
 import os
 from typing import List, Dict, Any
 from openai import OpenAI
@@ -28,7 +28,7 @@ def _responses(messages: List[Dict[str, str]], max_output_tokens: int) -> str:
     model = _model()
     print(f"[OPENAI] Responses API model={model} max_out={max_output_tokens}")  # <- traza clara
     client = _client()
-    # Flatten de mensajes a un solo prompt (system + user concatenado) — sencillo/robusto
+    # Flatten de mensajes a un solo prompt (system + user concatenado) â€” sencillo/robusto
     sys = "\n".join(m["content"] for m in messages if m["role"] == "system")
     usr = "\n".join(m["content"] for m in messages if m["role"] == "user")
     prompt = (sys + "\n\n" + usr).strip()
@@ -46,20 +46,20 @@ def _responses(messages: List[Dict[str, str]], max_output_tokens: int) -> str:
     except Exception:
         return ""
 
-# ------------- API pública usada por main.py -------------
+# ------------- API pÃºblica usada por main.py -------------
 def responder_chat_openai(mensaje: str, contexto: str = "") -> str:
     messages = [
-        {"role": "system", "content": (contexto or "Sos un asistente experto. Responde en español.")},
+        {"role": "system", "content": (contexto or "Sos un asistente experto. Responde en espaÃ±ol.")},
         {"role": "user", "content": mensaje},
     ]
     return _responses(messages, max_output_tokens=_max_out(800))
 
 def analizar_con_openai(texto: str, objetivo: str, lang: str = "es", max_out: int = 2200) -> str:
     sys = (
-        "Sos un analista experto en pliegos. Escribe claro, con subtítulos y bullets. "
+        "Sos un analista experto en pliegos. Escribe claro, con subtÃ­tulos y bullets. "
         "Si falta info, indicalo sin inventar."
     )
-    sys += " Responde SIEMPRE en español." if lang == "es" else " Answer in English."
+    sys += " Responde SIEMPRE en espaÃ±ol." if lang == "es" else " Answer in English."
     user = f"{objetivo}\n\n--- TEXTO DEL PLIEGO ---\n{texto}\n------------------------"
     messages = [
         {"role": "system", "content": sys},
@@ -67,7 +67,7 @@ def analizar_con_openai(texto: str, objetivo: str, lang: str = "es", max_out: in
     ]
     return _responses(messages, max_output_tokens=_max_out(max_out))
 
-# (opcional) embeddings pequeño y barato
+# (opcional) embeddings pequeÃ±o y barato
 def embed_text(texto: str) -> list:
     client = _client()
     model = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")

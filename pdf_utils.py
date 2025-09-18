@@ -1,4 +1,4 @@
-from weasyprint import HTML, CSS
+﻿from weasyprint import HTML, CSS
 
 def html_to_pdf_bytes(html: str) -> bytes:
     pdf = HTML(string=html).write_pdf(stylesheets=[CSS(string="""

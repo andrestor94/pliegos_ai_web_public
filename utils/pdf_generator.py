@@ -1,4 +1,4 @@
-# pdf_generator.py
+﻿# pdf_generator.py
 from fpdf import FPDF
 import os
 import re
@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 # ====== Config ======
-# Dónde guardar los PDFs. Por defecto usa ./generated_pdfs
+# DÃ³nde guardar los PDFs. Por defecto usa ./generated_pdfs
 PDF_DIR = os.getenv("PDF_DIR", "generated_pdfs")
 
 # Nombre base por defecto del PDF (se le agrega timestamp)
@@ -23,7 +23,7 @@ def _ensure_dir(path: str):
 
 
 def _strip_html(html: str) -> str:
-    """Quita tags HTML básicos para poder volcar texto en FPDF."""
+    """Quita tags HTML bÃ¡sicos para poder volcar texto en FPDF."""
     if not html:
         return ""
     # Reemplazos simples de bloques
@@ -47,7 +47,7 @@ def _safe_text(s: Any, latin1_fallback: bool) -> str:
 
 
 def _kv_to_lines(obj: Dict[str, Any]) -> List[str]:
-    """Convierte dict clave-valor en líneas legibles."""
+    """Convierte dict clave-valor en lÃ­neas legibles."""
     lines = []
     for k, v in (obj or {}).items():
         if isinstance(v, (dict, list, tuple)):
@@ -71,7 +71,7 @@ class ReportPDF(FPDF):
         self._font_bold = "Helvetica"
         self._setup_fonts()
 
-        # Márgenes cómodos
+        # MÃ¡rgenes cÃ³modos
         self.set_auto_page_break(auto=True, margin=15)
         self.set_margins(15, 18, 15)
 
@@ -144,9 +144,9 @@ class ReportPDF(FPDF):
         self.set_y(-15)
         self.set_font(self._font_body, "", 9)
         self.set_text_color(120, 120, 120)
-        page_str = f"Página {self.page_no()}/{{nb}}"
+        page_str = f"PÃ¡gina {self.page_no()}/{{nb}}"
         ts = datetime.now().strftime("%d/%m/%Y %H:%M")
-        txt = _safe_text(f"{page_str}  •  Generado: {ts}", self._latin1_fallback)
+        txt = _safe_text(f"{page_str}  â€¢  Generado: {ts}", self._latin1_fallback)
         self.cell(0, 10, txt, align="R")
 
     # Helpers de texto
@@ -169,7 +169,7 @@ class ReportPDF(FPDF):
     def bullets(self, items: List[str]):
         self.set_font(self._font_body, "", 10)
         for it in items or []:
-            line = f"• {it}"
+            line = f"â€¢ {it}"
             self.multi_cell(0, 5.5, _safe_text(line, self._latin1_fallback))
         self.ln(0.5)
 
@@ -189,7 +189,7 @@ class ReportPDF(FPDF):
                         self.multi_cell(0, 5.5, _safe_text(f"  - {x}", self._latin1_fallback))
             else:
                 val = _safe_text("" if v is None else str(v), self._latin1_fallback)
-                # clave en "bold" + valor normal en misma línea (simple)
+                # clave en "bold" + valor normal en misma lÃ­nea (simple)
                 self.set_font(self._font_bold, "B", 10)
                 self.cell(0, 5.5, key + ":", ln=1)
                 self.set_font(self._font_body, "", 10)
@@ -209,15 +209,15 @@ def _render_structured(pdf: ReportPDF, s: Dict[str, Any]):
     - minutes_awards (dict o list)
     """
     if not s:
-        pdf.h2("Análisis estructurado")
+        pdf.h2("AnÃ¡lisis estructurado")
         pdf.p("No hay datos estructurados para mostrar.")
         return
 
-    pdf.h2("Análisis estructurado")
+    pdf.h2("AnÃ¡lisis estructurado")
 
     basic = s.get("basic_info") or {}
     if basic:
-        pdf.h3("Datos básicos")
+        pdf.h3("Datos bÃ¡sicos")
         pdf.kv_block(basic)
 
     tl = s.get("timeline") or []
@@ -229,27 +229,27 @@ def _render_structured(pdf: ReportPDF, s: Dict[str, Any]):
             for it in tl:
                 fecha = it.get("fecha") or it.get("date") or ""
                 hito = it.get("hito") or it.get("event") or it.get("milestone") or ""
-                items.append(f"{fecha} — {hito}".strip(" —"))
+                items.append(f"{fecha} â€” {hito}".strip(" â€”"))
             pdf.bullets(items)
         else:
             pdf.bullets([str(x) for x in tl])
 
     reqs = s.get("min_requirements") or {}
     if reqs:
-        pdf.h3("Requisitos mínimos")
+        pdf.h3("Requisitos mÃ­nimos")
         pdf.kv_block(reqs)
 
     clauses = s.get("special_clauses") or []
     if clauses:
-        pdf.h3("Cláusulas especiales")
+        pdf.h3("ClÃ¡usulas especiales")
         if clauses and isinstance(clauses[0], dict):
-            pdf.kv_block({"Cláusulas": clauses})
+            pdf.kv_block({"ClÃ¡usulas": clauses})
         else:
             pdf.bullets([str(x) for x in clauses])
 
     amount = s.get("contract_amount_duration") or {}
     if amount:
-        pdf.h3("Monto y duración")
+        pdf.h3("Monto y duraciÃ³n")
         pdf.kv_block(amount)
 
     minutes = s.get("minutes_awards") or {}
@@ -268,20 +268,20 @@ def _render_deep(pdf: ReportPDF, deep_sections: List[Dict[str, Any]]):
     - content_html (o 'content')
     - section_key (opcional)
     """
-    pdf.h2("Análisis profundo")
+    pdf.h2("AnÃ¡lisis profundo")
 
     if not deep_sections:
-        pdf.p("No hay secciones de análisis profundo para mostrar.")
+        pdf.p("No hay secciones de anÃ¡lisis profundo para mostrar.")
         return
 
     for sec in deep_sections:
-        title = sec.get("title") or sec.get("section_key") or "Sección"
+        title = sec.get("title") or sec.get("section_key") or "SecciÃ³n"
         html = sec.get("content_html")
         raw = sec.get("content")
         body = _strip_html(html) if html else (raw or "")
         pdf.h3(str(title))
         if body:
-            # Dividir por párrafos para legibilidad
+            # Dividir por pÃ¡rrafos para legibilidad
             paragraphs = [p.strip() for p in body.split("\n") if p.strip()]
             for p in paragraphs:
                 pdf.p(p)
@@ -293,19 +293,19 @@ def _render_deep(pdf: ReportPDF, deep_sections: List[Dict[str, Any]]):
 def generate_pdf(
     data: Dict[str, Any],
     filename: Optional[str] = None,
-    title: str = "Informe de Licitación",
+    title: str = "Informe de LicitaciÃ³n",
     include_structured: bool = True,
     include_deep: bool = True,
 ) -> str:
     """
     Genera un PDF a partir de:
-      - data['análisis'] (texto plano legado)
+      - data['anÃ¡lisis'] (texto plano legado)
       - y/o data['structured'], data['deep_analysis'] (nuevo modelo)
 
     Params:
       - filename: nombre de salida (sin ruta). Si no se pasa, usa DEFAULT_BASENAME + timestamp.
-      - title: título de encabezado del PDF.
-      - include_structured / include_deep: qué secciones incluir (si existen).
+      - title: tÃ­tulo de encabezado del PDF.
+      - include_structured / include_deep: quÃ© secciones incluir (si existen).
 
     Return:
       Ruta (absoluta) del PDF generado.
@@ -327,14 +327,14 @@ def generate_pdf(
 
     # Metadatos
     pdf.set_title(_safe_text(title, pdf._latin1_fallback))
-    pdf.set_author("Sistema de Análisis")
-    pdf.set_creator("Suizo — Análisis de Pliegos")
+    pdf.set_author("Sistema de AnÃ¡lisis")
+    pdf.set_creator("Suizo â€” AnÃ¡lisis de Pliegos")
 
-    # 1) Si viene análisis plano (legacy)
-    legacy_text = data.get("análisis") or data.get("analisis") or data.get("resumen")
+    # 1) Si viene anÃ¡lisis plano (legacy)
+    legacy_text = data.get("anÃ¡lisis") or data.get("analisis") or data.get("resumen")
     if legacy_text:
         pdf.h2("Resumen")
-        # Dividimos por líneas/ párrafos
+        # Dividimos por lÃ­neas/ pÃ¡rrafos
         for line in str(legacy_text).splitlines():
             line = line.strip()
             if not line:
@@ -352,12 +352,12 @@ def generate_pdf(
     if include_deep and deep:
         _render_deep(pdf, deep)
 
-    # Si no hubo nada estructurado/ profundo y tampoco legacy, algo mínimo
+    # Si no hubo nada estructurado/ profundo y tampoco legacy, algo mÃ­nimo
     if not legacy_text and not s and not deep:
-        pdf.p("No se encontró información para renderizar.")
+        pdf.p("No se encontrÃ³ informaciÃ³n para renderizar.")
 
     # Guardar
     pdf.output(out_path)
 
-    # Devolver ruta absoluta (útil para servir desde FastAPI con StaticFiles)
+    # Devolver ruta absoluta (Ãºtil para servir desde FastAPI con StaticFiles)
     return os.path.abspath(out_path)
