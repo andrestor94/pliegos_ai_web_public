@@ -2239,8 +2239,14 @@ def init_presence_db():
         c.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_sessions_dates ON sessions(login_at, last_seen, logout_at)")
 
-
-init_presence_db()
+# ✅ inicializar presencia al arrancar la app
+@app.on_event("startup")
+async def _init_presence_on_startup():
+    try:
+        init_presence_db()
+        logger.info("Presence DB inicializada en startup.")
+    except Exception as e:
+        logger.warning("init_presence_db falló en startup: %r", e)
 
 
 @app.post("/presence/ping")
