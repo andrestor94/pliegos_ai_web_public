@@ -3,11 +3,14 @@ import os
 from typing import List, Dict, Any
 from openai import OpenAI
 
-print("[BOOT] utils.openai_client -> Responses API preferida (con fallback)")
+# Flag unificado: si está en 1, NO usamos /v1/responses en este módulo
+FORCE_CHAT = os.getenv("OPENAI_FORCE_CHAT", "0") == "1"
+
+print(f"[BOOT] utils.openai_client -> FORCE_CHAT={FORCE_CHAT}")
 
 def _client() -> OpenAI:
     api_key = os.getenv("OPENAI_API_KEY")
-    # Usar el nombre correcto de la env var (OPENAI_API_BASE)
+    # Nombre correcto de la env var:
     base_url = os.getenv("OPENAI_API_BASE") or None
     org = os.getenv("OPENAI_ORG") or os.getenv("OPENAI_ORGANIZATION") or None
     if base_url and org:
@@ -18,9 +21,11 @@ def _client() -> OpenAI:
         return OpenAI(api_key=api_key, organization=org)
     return OpenAI(api_key=api_key)
 
-def _model(default: str = "gpt-4.1-mini") -> str:
-    # Permite override por ENV
+def _resp_model(default: str = "gpt-4.1-mini") -> str:
     return os.getenv("OPENAI_RESPONSES_MODEL", default)
+
+def _chat_model(default: str = "gpt-4o-mini") -> str:
+    return os.getenv("OPENAI_CHAT_MODEL", default)
 
 def _max_out(default: int) -> int:
     try:
@@ -36,7 +41,6 @@ def _extract_responses_text(resp) -> str:
     except Exception:
         pass
     try:
-        # Recorrido defensivo del árbol
         parts = []
         for item in getattr(resp, "output", []) or []:
             if getattr(item, "type", "") == "message":
@@ -56,18 +60,33 @@ def _extract_chat_text(resp) -> str:
 
 def _responses(messages: List[Dict[str, str]], max_output_tokens: int) -> str:
     """
-    Intenta Responses API con input=[{role,content}, ...].
-    Si falla por compatibilidad de parámetros, reintenta sin max_output_tokens.
-    Si aún así falla, cae a Chat Completions.
+    Si FORCE_CHAT=1 -> usar SIEMPRE Chat Completions (evita 400 de /v1/responses).
+    Si no, intentamos Responses y caemos a chat como fallback.
     """
     client = _client()
-    model = _model()
-    print(f"[OPENAI] Responses API model={model} max_out={max_output_tokens}")
 
-    # Normalizamos a items role-based para Responses
+    # 0) ¿Forzado a chat?
+    if FORCE_CHAT:
+        chat_model = _chat_model()
+        print(f"[OPENAI] Chat-only (FORCE_CHAT=1) model={chat_model} max_tokens={max_output_tokens}")
+        try:
+            resp = client.chat.completions.create(
+                model=chat_model,
+                messages=[{"role": m.get("role","user"), "content": m.get("content","")} for m in messages],
+                temperature=0.2,
+                max_tokens=max_output_tokens,
+            )
+            return _extract_chat_text(resp)
+        except Exception as e:
+            print(f"[OPENAI][chat] error: {e}")
+            return ""
+
+    # 1) Responses API (si no forzado)
+    model = _resp_model()
+    print(f"[OPENAI] Responses API model={model} max_out={max_output_tokens}")
     items = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in messages]
 
-    # 1) Responses API (primer intento, con max_output_tokens si el SDK/endpoint lo permite)
+    # 1.a) Primer intento con max_output_tokens
     try:
         resp = client.responses.create(
             model=model,
@@ -79,16 +98,13 @@ def _responses(messages: List[Dict[str, str]], max_output_tokens: int) -> str:
         if txt:
             return txt
     except TypeError:
-        # SDK más viejo que no acepta max_output_tokens -> reintentar sin ese argumento
+        # SDK sin ese parámetro
         pass
     except Exception as e:
-        # Si es un 400 por argumentos, probamos sin max_output_tokens
         s = f"{type(e).__name__}: {e}".lower()
-        if "400" not in s and "bad request" not in s:
-            # no parece ser por argumentos -> intentemos igual fallback
-            pass
+        print(f"[OPENAI][responses] intento1 error: {s}")
 
-    # 2) Responses API (segundo intento, sin max_output_tokens)
+    # 1.b) Segundo intento sin max_output_tokens
     try:
         resp2 = client.responses.create(
             model=model,
@@ -98,28 +114,22 @@ def _responses(messages: List[Dict[str, str]], max_output_tokens: int) -> str:
         txt2 = _extract_responses_text(resp2)
         if txt2:
             return txt2
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[OPENAI][responses] intento2 error: {e}")
 
-    # 3) Fallback: Chat Completions
-    chat_msgs = []
-    for m in messages:
-        r = m.get("role", "user")
-        if r not in ("system", "user", "assistant"):
-            r = "user"
-        chat_msgs.append({"role": r, "content": m.get("content", "")})
-
+    # 2) Fallback chat
+    chat_model = _chat_model()
+    print(f"[OPENAI] Fallback -> chat.completions model={chat_model}")
     try:
-        chat_model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
         resp3 = client.chat.completions.create(
             model=chat_model,
-            messages=chat_msgs,
+            messages=[{"role": m.get("role","user"), "content": m.get("content","")} for m in messages],
             temperature=0.2,
-            max_tokens=max_output_tokens,  # si el SDK no lo acepta, ignorará
+            max_tokens=max_output_tokens,
         )
-        txt3 = _extract_chat_text(resp3)
-        return txt3 or ""
-    except Exception:
+        return _extract_chat_text(resp3)
+    except Exception as e:
+        print(f"[OPENAI][chat-fallback] error: {e}")
         return ""
 
 # -------- API pública usada por el backend --------
