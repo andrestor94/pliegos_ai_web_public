@@ -6,15 +6,8 @@ from sqlalchemy import (
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
-# ðŸ‘‰ Import robusto de Base: primero db_orm.Base, luego database.Base, y fallback declarative_base
-try:
-    from db_orm import Base  # comparte metadata con AuditLog
-except Exception:
-    try:
-        from database import Base  # compat si seguÃ­s usando Base ahÃ­
-    except Exception:
-        from sqlalchemy.orm import declarative_base
-        Base = declarative_base()
+from sqlalchemy.orm import declarative_base
+Base = declarative_base()
 
 
 # ============================

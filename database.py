@@ -19,7 +19,8 @@ except Exception:  # pragma: no cover
     ZoneInfo = None  # fallback simple si no está disponible
 
 # ORM para auditoría y join con email/nombre
-from db_orm import AuditLog, SessionLocal, Usuario
+from db_orm import AuditLog, SessionLocal
+from models import Usuario
 
 # -------------------------
 # Variables de entorno

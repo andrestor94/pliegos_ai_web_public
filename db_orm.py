@@ -1,7 +1,10 @@
 ﻿import os
 from datetime import datetime
 from sqlalchemy import create_engine, String, Integer, DateTime
-from sqlalchemy.orm import sessionmaker, DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import sessionmaker, Mapped, mapped_column
+
+# Usamos SIEMPRE Base y Usuario del módulo models
+from models import Base, Usuario  # <- IMPORTANTE: una sola Base y una sola Usuario
 
 # --- DATABASE_URL multi-entorno (SQLite local / Postgres en Render)
 raw_url = os.getenv("DATABASE_URL", "sqlite:///usuarios.db")
@@ -18,17 +21,7 @@ if DB_URL.startswith("sqlite"):
 engine = create_engine(DB_URL, echo=False, future=True, connect_args=connect_args)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
-class Base(DeclarativeBase):
-    pass
-
-# --- Modelo ligero de usuarios para JOIN (solo lo necesario para auditorÃ­a)
-class Usuario(Base):
-    __tablename__ = "usuarios"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    nombre: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    email: Mapped[str] = mapped_column(String(255), nullable=False)
-
-# --- AuditorÃ­a
+# --- Auditoría: se define aquí pero usando la MISMA Base
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -36,7 +29,7 @@ class AuditLog(Base):
     actor_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     action: Mapped[str] = mapped_column(String(50), nullable=False)
     entity: Mapped[str] = mapped_column(String(50), nullable=False)
-    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # ðŸ‘ˆ agregado
+    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     before_json: Mapped[str | None] = mapped_column(String, nullable=True)
     after_json: Mapped[str | None] = mapped_column(String, nullable=True)
     ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -61,7 +54,7 @@ def _ensure_sqlite_auditlog_columns():
             alters.append("ALTER TABLE audit_logs ADD COLUMN after_json TEXT")
         if "ip" not in cols:
             alters.append("ALTER TABLE audit_logs ADD COLUMN ip TEXT")
-        if "entity_id" not in cols:  # ðŸ‘ˆ nuevo
+        if "entity_id" not in cols:
             alters.append("ALTER TABLE audit_logs ADD COLUMN entity_id INTEGER")
         for sql in alters:
             conn.execute(sql)
@@ -71,6 +64,7 @@ def _ensure_sqlite_auditlog_columns():
         conn.close()
 
 def inicializar_bd_orm():
+    # Crea TODAS las tablas registradas en Base (models + AuditLog)
     Base.metadata.create_all(bind=engine)
-    _ensure_sqlite_auditlog_columns()  # mini-migraciÃ³n para SQLite
-    print(f"âœ… Tablas ORM verificadas/creadas en {DB_URL}")
+    _ensure_sqlite_auditlog_columns()
+    print(f"✅ Tablas ORM verificadas/creadas en {DB_URL}")
