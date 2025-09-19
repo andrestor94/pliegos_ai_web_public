@@ -659,7 +659,7 @@ def _leer_todo(file) -> bytes:
             raw = file.read()
         except Exception:
             raw = b""
-    return raw or b"""
+    return raw or b""
 
 def _ext_de_archivo(file) -> str:
     nombre = getattr(file, "filename", "") or ""
@@ -1905,7 +1905,7 @@ def generar_pdf_informe(texto_markdown: str, out_path: Optional[str] = None) -> 
     Devuelve la ruta del PDF generado.
     """
     # Normaliza a texto plano para PDF
-    contenido = preparar_texto_para_pdf(texto_markdown o "")
+    contenido = preparar_texto_para_pdf(texto_markdown or "")
 
     # Si no pasaron ruta, generamos una con el formato que espera /descargar:
     # resumen_YYYYMMDDHHMMSS.pdf  (SIN guión bajo entre fecha y hora)
