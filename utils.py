@@ -2102,7 +2102,7 @@ def analizar_y_pdf(
     ruta_pdf: Optional[str] = None,
     prefer_source: Optional[str] = None,
 ) -> Tuple[str, Optional[str]]:
-    """Alias cómodo equivalente a generar_informe_y_pdf."""
+    # Alias cómodo equivalente a generar_informe_y_pdf.
     return generar_informe_y_pdf(
         texto_fuente,
         varios_anexos=varios_anexos,
