@@ -1810,8 +1810,11 @@ async def analizar_pliego_ui(request: Request, archivos: List[UploadFile] = File
 
 
 # ===== Render (parcial) para tabs del modal =====
-from fastapi import Body, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi import Form
+
+def _parse_analysis_from_json(raw: str) -> AnalysisResponse:
+    data = json.loads(raw)
+    return AnalysisResponse(**data)
 
 @app.post("/render/structured", response_class=HTMLResponse)
 async def render_structured(
@@ -1823,21 +1826,15 @@ async def render_structured(
     if not raw:
         return HTMLResponse("<div class='text-danger'>No llegó analysis_json.</div>", status_code=400)
     try:
-        data = json.loads(raw)
-        analysis = AnalysisResponse(**data)
+        analysis = _parse_analysis_from_json(raw)
     except Exception as e:
         return HTMLResponse(f"<div class='text-danger'>Payload inválido: {e}</div>", status_code=400)
 
-    # ⚠️ IMPORTANTE: pasar request al template
-    return templates.TemplateResponse(
-        "analysis/structured.html",
-        {
-            "request": request,
-            "s": analysis.structured,
-            "deep": analysis.deep_analysis,
-            "analysis_id": analysis.analysis_id,
-        },
+    # Para el modal usamos el fragmento SIN base.html
+    html = templates.get_template("analysis/structured_result.html").render(
+        request=request, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
     )
+    return HTMLResponse(html)
 
 
 @app.post("/render/deep", response_class=HTMLResponse)
@@ -1850,58 +1847,50 @@ async def render_deep(
     if not raw:
         return HTMLResponse("<div class='text-danger'>No llegó analysis_json.</div>", status_code=400)
     try:
-        data = json.loads(raw)
-        analysis = AnalysisResponse(**data)
+        analysis = _parse_analysis_from_json(raw)
     except Exception as e:
         return HTMLResponse(f"<div class='text-danger'>Payload inválido: {e}</div>", status_code=400)
 
-    # ⚠️ IMPORTANTE: pasar request al template
-    return templates.TemplateResponse(
-        "analysis/deep.html",
-        {
-            "request": request,
-            "s": analysis.structured,
-            "deep": analysis.deep_analysis,
-            "analysis_id": analysis.analysis_id,
-        },
+    # Para el modal usamos el fragmento SIN base.html
+    html = templates.get_template("analysis/deep_result.html").render(
+        request=request, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
     )
+    return HTMLResponse(html)
 
-
-# ===== Exportar a PDF (estructurado / profundo) =====
+# ===== Export a PDF: también usar los fragmentos (evita url_for de base) =====
 @app.post("/export/pdf/estructurado")
 async def export_pdf_estructurado(
+    request: Request,
     analysis_json: Optional[str] = Body(default=None),
     analysis_json_form: Optional[str] = Form(default=None),
 ):
     raw = analysis_json or analysis_json_form
     if not raw:
-        return JSONResponse({"error": "Falta analysis_json"}, status_code=400)
-    data = json.loads(raw)
-    analysis = AnalysisResponse(**data)
-    html = templates.get_template("analysis/structured.html").render(
+        return PlainTextResponse("Falta analysis_json", status_code=400)
+    analysis = _parse_analysis_from_json(raw)
+
+    html = templates.get_template("analysis/structured_result.html").render(
         request=request, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
     )
-    pdf_bytes = html_to_pdf_bytes(html)
-    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=estructurado.pdf"})
+    # Usa tu util de PDF actual (no lo cambio)
+    return await generar_pdf_y_responder(html, nombre_sugerido="analisis_estructurado.pdf")
 
 
 @app.post("/export/pdf/profundo")
 async def export_pdf_profundo(
+    request: Request,
     analysis_json: Optional[str] = Body(default=None),
     analysis_json_form: Optional[str] = Form(default=None),
 ):
     raw = analysis_json or analysis_json_form
     if not raw:
-        return JSONResponse({"error": "Falta analysis_json"}, status_code=400)
-    data = json.loads(raw)
-    analysis = AnalysisResponse(**data)
-    html = templates.get_template("analysis/deep.html").render(
+        return PlainTextResponse("Falta analysis_json", status_code=400)
+    analysis = _parse_analysis_from_json(raw)
+
+    html = templates.get_template("analysis/deep_result.html").render(
         request=request, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
     )
-    pdf_bytes = html_to_pdf_bytes(html)
-    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=analisis_profundo.pdf"})
+    return await generar_pdf_y_responder(html, nombre_sugerido="analisis_profundo.pdf")
 
 
 # ===== Guardar feedback por sección (?/? + comentario) =====

@@ -1,218 +1,138 @@
-<!-- templates/analysis/structured_result.html -->
-<div class="sr-wrap">
-  <!-- ================= Resumen Ejecutivo / Cabecera ================= -->
-  <div class="row g-3">
-    <div class="col-12 col-lg-7">
-      <div class="sr-block">
-        <div class="sr-title">Resumen ejecutivo</div>
-        <div class="sr-body">{{ structured.headline or '—' }}</div>
-      </div>
+<!-- NO extends base.html: fragmento para el modal -->
+<div class="px-4 py-4">
+  <h2 class="text-xl font-semibold mb-3">Formato estructurado</h2>
 
-      <div class="sr-block">
-        <div class="sr-title">Información básica del proceso</div>
-        <div class="sr-kv">
-          <div>N° de proceso</div><div>{{ structured.nro_proceso or structured.proceso or '—' }}</div>
-          <div>Nombre de proceso</div><div>{{ structured.nombre_proceso or '—' }}</div>
-          <div>Objeto</div><div>{{ structured.objeto or '—' }}</div>
-          <div>Procedimiento de selección</div><div>{{ structured.procedimiento or '—' }}</div>
-          <div>Etapa</div><div>{{ structured.etapa or '—' }}</div>
-          <div>Alcance</div><div>{{ structured.alcance or '—' }}</div>
-          <div>Moneda</div><div>{{ structured.moneda or 'ARS - Peso Argentino' }}</div>
-          <div>Tipo de cotización</div><div>{{ structured.tipo_cotizacion or '—' }}</div>
-          <div>Tipo de adjudicación</div><div>{{ structured.tipo_adjudicacion or '—' }}</div>
-          <div>Documento del proceso</div><div>{{ structured.doc_proceso or structured.tipo_documento or '—' }}</div>
-        </div>
-      </div>
+  {% include "analysis/_fb_header.html" with context %}
+
+  <section class="mb-6 border rounded-xl">
+    <header class="flex justify-between items-center p-3 bg-gray-50 rounded-t-xl">
+      <h3 class="font-semibold">Información básica del proceso</h3>
+      {% set section_key = "basic_info" %}
+      {% include "analysis/_fb_controls.html" %}
+    </header>
+    <div class="p-3 overflow-x-auto">
+      <table>
+        <tbody>
+          <tr><th>N° de proceso</th><td>{{ s.basic_info.process_number or "-" }}</td>
+              <th>Nombre de proceso</th><td>{{ s.basic_info.process_name or "-" }}</td></tr>
+          <tr><th>Objeto</th><td colspan="3">{{ s.basic_info.object or "-" }}</td></tr>
+          <tr><th>Procedimiento</th><td>{{ s.basic_info.selection_method or "-" }}</td>
+              <th>Etapa</th><td>{{ s.basic_info.stage or "-" }}</td></tr>
+          <tr><th>Alcance</th><td>{{ s.basic_info.scope or "-" }}</td>
+              <th>Moneda</th><td>{{ s.basic_info.currency or "-" }}</td></tr>
+          <tr><th>Tipo de cotización</th><td>{{ s.basic_info.quote_type or "-" }}</td>
+              <th>Tipo de adjudicación</th><td>{{ s.basic_info.award_type or "-" }}</td></tr>
+          <tr><th>Tipo doc. del proceso</th><td>{{ s.basic_info.document_type or "-" }}</td>
+              <th>Ofertas</th><td>{{ s.basic_info.offers_limit or "-" }}</td></tr>
+          <tr><th>Lugar recepción</th><td colspan="3">{{ s.basic_info.reception_place or "-" }}</td></tr>
+          <tr><th>Plazo mantenimiento oferta</th><td>{{ s.basic_info.offer_validity_days or "-" }}</td>
+              <th>Encudre legal</th><td>{{ s.basic_info.legal_framework or "-" }}</td></tr>
+          <tr><th>Acepta ampliación</th><td>{{ s.basic_info.accepts_increase_pct or "-" }}%</td>
+              <th>Acepta prórroga</th><td>{{ "Sí" if s.basic_info.accepts_extension else "No" }}</td></tr>
+          <tr><th>Etapas del proceso</th><td colspan="3">{{ ", ".join(s.basic_info.process_steps or []) }}</td></tr>
+        </tbody>
+      </table>
     </div>
+  </section>
 
-    <div class="col-12 col-lg-5">
-      <div class="sr-block">
-        <div class="sr-title">Organismo / Expediente</div>
-        <div class="sr-kv">
-          <div>Organismo</div><div>{{ structured.organismo or '—' }}</div>
-          <div>Expediente</div><div>{{ structured.expediente or '—' }}</div>
-          <div>Modalidad</div><div>{{ structured.modalidad or '—' }}</div>
-        </div>
-      </div>
-
-      <div class="sr-block">
-        <div class="sr-title">Lugar y fecha de apertura</div>
-        <div class="sr-body">{{ structured.apertura or structured.lugar_apertura or '—' }}</div>
-      </div>
-
-      <!-- Renglón / Ítem destacado (si viene) -->
-      {% if structured.item %}
-      <div class="sr-block">
-        <div class="sr-title">Renglón destacado</div>
-        <div class="sr-table">
-          <div class="sr-thead">
-            <div>Cantidad</div><div>Descripción</div><div>Condición</div><div>Garantía</div>
-          </div>
-          <div class="sr-row">
-            <div>{{ structured.item.cantidad or '—' }}</div>
-            <div title="{{ structured.item.descripcion or '' }}">{{ structured.item.descripcion or '—' }}</div>
-            <div>{{ structured.item.condicion or '—' }}</div>
-            <div>{{ structured.item.garantia or '—' }}</div>
-          </div>
-        </div>
-      </div>
-      {% endif %}
+  <section class="mb-6 border rounded-xl">
+    <header class="flex justify-between items-center p-3 bg-gray-50 rounded-t-xl">
+      <h3 class="font-semibold">Cronograma</h3>
+      {% set section_key = "timeline" %}
+      {% include "analysis/_fb_controls.html" %}
+    </header>
+    <div class="p-3 overflow-x-auto">
+      <table>
+        <thead><tr><th>Hito</th><th>Fecha y hora</th></tr></thead>
+        <tbody>
+          {% for t in s.timeline %}
+          <tr><td>{{ t.label }}</td><td>{{ t.datetime_iso or t.raw_text or "-" }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
-  </div>
+  </section>
 
-  <!-- ================= Cronograma / Entrega y Pago ================= -->
-  <div class="row g-3 mt-1">
-    <div class="col-12 col-lg-6">
-      <div class="sr-block">
-        <div class="sr-title">Cronograma y lugares clave</div>
-
-        {% if structured.cronograma_list %}
-          <div class="sr-table sr-table-2">
-            <div class="sr-thead"><div>Hito</div><div>Fecha / Detalle</div></div>
-            {% for it in structured.cronograma_list %}
-              <div class="sr-row">
-                <div>{{ it.label or it.hito or '—' }}</div>
-                <div>{{ it.value or it.fecha or '—' }}</div>
-              </div>
-            {% endfor %}
-          </div>
-        {% else %}
-          <div class="sr-body">{{ structured.cronograma or '—' }}</div>
-        {% endif %}
-      </div>
+  {% for k, title in {"economic_financial":"Requisitos económicos y financieros","technical":"Requisitos técnicos","administrative":"Requisitos administrativos"}.items() %}
+  <section class="mb-6 border rounded-xl">
+    <header class="flex justify-between items-center p-3 bg-gray-50 rounded-t-xl">
+      <h3 class="font-semibold">{{ title }}</h3>
+      {% set section_key = "min_requirements." + k %}
+      {% include "analysis/_fb_controls.html" %}
+    </header>
+    <div class="p-3 overflow-x-auto">
+      <table>
+        <thead><tr><th>N°</th><th>Descripción</th><th>Adjunta doc.</th><th>Canal</th></tr></thead>
+        <tbody>
+          {% for r in s.min_requirements.get(k, []) %}
+            <tr>
+              <td>{{ r.id or loop.index }}</td>
+              <td>{{ r.description }}</td>
+              <td>{{ "Sí" if r.requires_upload else "No" }}</td>
+              <td>{{ r.delivery_channel or "-" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
+  </section>
+  {% endfor %}
 
-    <div class="col-12 col-lg-6">
-      <div class="sr-block">
-        <div class="sr-title">Entrega y pago</div>
-        {% if structured.entrega_pago_kv %}
-          <div class="sr-kv">
-            {% for k,v in structured.entrega_pago_kv.items() %}
-              <div>{{ k }}</div><div>{{ v }}</div>
-            {% endfor %}
-          </div>
-        {% else %}
-          <div class="sr-body">{{ structured.entrega_pago or '—' }}</div>
-        {% endif %}
-      </div>
+  <section class="mb-6 border rounded-xl">
+    <header class="flex justify-between items-center p-3 bg-gray-50 rounded-t-xl">
+      <h3 class="font-semibold">Cláusulas particulares / Garantías</h3>
+      {% set section_key = "special_clauses" %}
+      {% include "analysis/_fb_controls.html" %}
+    </header>
+    <div class="p-3 overflow-x-auto">
+      <table>
+        <thead><tr><th>Tipo</th><th>Requerida</th><th>%</th><th>Contragarantía</th><th>Notas</th></tr></thead>
+        <tbody>
+          {% for g in s.special_clauses %}
+          <tr>
+            <td>{{ g.type }}</td>
+            <td>{{ "Sí" if g.required else "No" }}</td>
+            <td>{{ g.percentage if g.percentage is not none else "-" }}</td>
+            <td>{{ "Sí" if g.counter_guarantee else "No" }}</td>
+            <td>{{ g.notes or "-" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
-  </div>
+  </section>
 
-  <!-- ================= Requisitos mínimos ================= -->
-  {% if structured.requisitos or structured.requisitos_minimos or structured.requisitos_economicos or structured.requisitos_tecnicos or structured.requisitos_administrativos %}
-  <div class="sr-block mt-2">
-    <div class="sr-title">Requisitos mínimos de participación</div>
-
-    <div class="row g-3">
-      <div class="col-12 col-lg-4">
-        <div class="sr-subtitle">I. Económicos y financieros</div>
-        {% set reqs = structured.requisitos_economicos or (structured.requisitos_minimos and structured.requisitos_minimos.economicos) %}
-        {% if reqs %}
-          <ul class="sr-ul">
-            {% for r in reqs %}<li>{{ r }}</li>{% endfor %}
-          </ul>
-        {% else %}
-          <div class="text-muted">—</div>
-        {% endif %}
-      </div>
-      <div class="col-12 col-lg-4">
-        <div class="sr-subtitle">II. Técnicos</div>
-        {% set reqs = structured.requisitos_tecnicos or (structured.requisitos_minimos and structured.requisitos_minimos.tecnicos) %}
-        {% if reqs %}
-          <ul class="sr-ul">
-            {% for r in reqs %}<li>{{ r }}</li>{% endfor %}
-          </ul>
-        {% else %}
-          <div class="text-muted">—</div>
-        {% endif %}
-      </div>
-      <div class="col-12 col-lg-4">
-        <div class="sr-subtitle">III. Administrativos</div>
-        {% set reqs = structured.requisitos_administrativos or (structured.requisitos_minimos and structured.requisitos_minimos.administrativos) %}
-        {% if reqs %}
-          <ul class="sr-ul">
-            {% for r in reqs %}<li>{{ r }}</li>{% endfor %}
-          </ul>
-        {% else %}
-          <div class="text-muted">—</div>
-        {% endif %}
-      </div>
+  <section class="mb-2 border rounded-xl">
+    <header class="flex justify-between items-center p-3 bg-gray-50 rounded-t-xl">
+      <h3 class="font-semibold">Monto y duración del contrato</h3>
+      {% set section_key = "contract_amount_duration" %}
+      {% include "analysis/_fb_controls.html" %}
+    </header>
+    <div class="p-3">
+      <table>
+        <tbody>
+          <tr><th>Monto</th><td>${{ "{:,.2f}".format(s.contract_amount_duration.amount_ars or 0) }}</td>
+              <th>Periodicidad recepción</th><td>{{ s.contract_amount_duration.receipt_frequency or "-" }}</td></tr>
+          <tr><th>Inicio estimado</th><td>{{ s.contract_amount_duration.estimated_start_text or "-" }}</td>
+              <th>Duración</th><td>{{ s.contract_amount_duration.duration_text or "-" }}</td></tr>
+        </tbody>
+      </table>
     </div>
-  </div>
-  {% endif %}
+  </section>
 
-  <!-- ================= Cláusulas / Garantías ================= -->
-  {% if structured.garantias or structured.clausulas %}
-  <div class="sr-block">
-    <div class="sr-title">Cláusulas y garantías</div>
-    {% set g = structured.garantias or {} %}
-    <div class="sr-kv">
-      <div>Garantía de impugnación al pliego</div><div>{{ g.impugnacion_pliego or g.garantia_impugnacion_pliego or '—' }}</div>
-      <div>Garantía de impugnación a la preadjudicación</div><div>{{ g.impugnacion_preadj or g.garantia_impugnacion_preadjudicacion or '—' }}</div>
-      <div>Garantía de mantenimiento de oferta</div><div>{{ g.mantenimiento_oferta or '—' }}</div>
-      <div>Garantía de cumplimiento de contrato</div><div>{{ g.cumplimiento_contrato or '—' }}</div>
-      <div>Moneda habilitada</div><div>{{ g.moneda or structured.moneda or '—' }}</div>
+  <section class="mb-2 border rounded-xl">
+    <header class="flex justify-between items-center p-3 bg-gray-50 rounded-t-xl">
+      <h3 class="font-semibold">Actas y Dictámenes</h3>
+      {% set section_key = "minutes_awards" %}
+      {% include "analysis/_fb_controls.html" %}
+    </header>
+    <div class="p-3">
+      <table>
+        <tbody>
+          <tr><th>Acta de apertura</th><td>{{ s.minutes_awards.opening_minutes_date or "-" }}</td>
+              <th>Dictamen de preadjudicación</th><td>{{ s.minutes_awards.award_opinion_date or "-" }} — {{ s.minutes_awards.award_opinion_status or "-" }}</td></tr>
+        </tbody>
+      </table>
     </div>
-  </div>
-  {% endif %}
-
-  <!-- ================= Monto y duración del contrato ================= -->
-  {% if structured.contrato or structured.monto or structured.duracion %}
-  <div class="sr-block">
-    <div class="sr-title">Monto y duración del contrato</div>
-    <div class="sr-kv">
-      <div>Monto</div><div>{{ (structured.contrato and structured.contrato.monto) or structured.monto or '—' }}</div>
-      <div>Moneda</div><div>{{ (structured.contrato and structured.contrato.moneda) or structured.moneda or '—' }}</div>
-      <div>Periodicidad recepción</div><div>{{ (structured.contrato and structured.contrato.periodicidad) or structured.periodicidad or '—' }}</div>
-      <div>Fecha estimada inicio</div><div>{{ (structured.contrato and structured.contrato.inicio) or structured.inicio or '—' }}</div>
-      <div>Duración</div><div>{{ (structured.contrato and structured.contrato.duracion) or structured.duracion or '—' }}</div>
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- ================= Renglones (tabla) ================= -->
-  {% if structured.renglones %}
-  <div class="sr-block">
-    <div class="sr-title">Renglones</div>
-    <div class="sr-table sr-table-rows">
-      <div class="sr-thead">
-        <div>#</div><div>Descripción</div><div>Cantidad</div><div>Unidad</div><div>Observaciones</div>
-      </div>
-      {% for r in structured.renglones %}
-      <div class="sr-row">
-        <div>{{ r.nro or loop.index }}</div>
-        <div>{{ r.descripcion or '—' }}</div>
-        <div>{{ r.cantidad or '—' }}</div>
-        <div>{{ r.unidad or '—' }}</div>
-        <div>{{ r.obs or r.observaciones or '—' }}</div>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
+  </section>
 </div>
-
-<style>
-/* ====== Scoped styles (sr-*) ====== */
-.sr-wrap .sr-block{background:#f7f8fa;border:1px solid #e6e8eb;border-radius:12px;padding:12px 14px;margin-bottom:12px}
-.sr-wrap .sr-title{font-weight:700;margin-bottom:8px}
-.sr-wrap .sr-subtitle{font-weight:600;margin:4px 0 6px}
-.sr-wrap .sr-body{white-space:pre-wrap}
-.sr-wrap .sr-ul{margin:0;padding-left:16px}
-.sr-wrap .sr-ul li{margin-bottom:4px}
-.sr-wrap .sr-kv{display:grid;grid-template-columns:220px 1fr;gap:6px 12px}
-.sr-wrap .sr-kv>div:nth-child(odd){color:#475569}
-.sr-wrap .sr-table{border:1px solid #e6e8eb;border-radius:12px;overflow:hidden}
-.sr-wrap .sr-thead,.sr-wrap .sr-row{display:grid;grid-template-columns:90px 1fr 120px 110px;gap:0}
-.sr-wrap .sr-thead>div{font-weight:700;background:#eef2f6;padding:8px 10px;border-right:1px solid #e6e8eb}
-.sr-wrap .sr-row>div{padding:8px 10px;border-top:1px solid #e6e8eb;border-right:1px solid #e6e8eb}
-.sr-wrap .sr-thead>div:last-child,.sr-wrap .sr-row>div:last-child{border-right:none}
-.sr-wrap .sr-table-2 .sr-thead,.sr-wrap .sr-table-2 .sr-row{grid-template-columns:220px 1fr}
-.sr-wrap .sr-table-rows .sr-thead,.sr-wrap .sr-table-rows .sr-row{grid-template-columns:60px 1fr 120px 110px 1fr}
-@media (max-width: 992px){
-  .sr-wrap .sr-kv{grid-template-columns:160px 1fr}
-  .sr-wrap .sr-thead,.sr-wrap .sr-row{grid-template-columns:80px 1fr 100px 90px}
-  .sr-wrap .sr-table-2 .sr-thead,.sr-wrap .sr-table-2 .sr-row{grid-template-columns:160px 1fr}
-  .sr-wrap .sr-table-rows .sr-thead,.sr-wrap .sr-table-rows .sr-row{grid-template-columns:48px 1fr 90px 80px 1fr}
-}
-</style>
