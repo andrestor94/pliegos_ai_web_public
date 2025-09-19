@@ -1810,7 +1810,8 @@ async def analizar_pliego_ui(request: Request, archivos: List[UploadFile] = File
 
 
 # ===== Render (parcial) para tabs del modal =====
-from fastapi import Form  # (arriba ya lo tenés importado)
+from fastapi import Body, Form, Request
+from fastapi.responses import HTMLResponse
 
 @app.post("/render/structured", response_class=HTMLResponse)
 async def render_structured(
@@ -1827,10 +1828,16 @@ async def render_structured(
     except Exception as e:
         return HTMLResponse(f"<div class='text-danger'>Payload inválido: {e}</div>", status_code=400)
 
-    html = templates.get_template("analysis/structured.html").render(
-        request=None, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
+    # ⚠️ IMPORTANTE: pasar request al template
+    return templates.TemplateResponse(
+        "analysis/structured.html",
+        {
+            "request": request,
+            "s": analysis.structured,
+            "deep": analysis.deep_analysis,
+            "analysis_id": analysis.analysis_id,
+        },
     )
-    return HTMLResponse(html)
 
 
 @app.post("/render/deep", response_class=HTMLResponse)
@@ -1848,10 +1855,16 @@ async def render_deep(
     except Exception as e:
         return HTMLResponse(f"<div class='text-danger'>Payload inválido: {e}</div>", status_code=400)
 
-    html = templates.get_template("analysis/deep.html").render(
-        request=None, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
+    # ⚠️ IMPORTANTE: pasar request al template
+    return templates.TemplateResponse(
+        "analysis/deep.html",
+        {
+            "request": request,
+            "s": analysis.structured,
+            "deep": analysis.deep_analysis,
+            "analysis_id": analysis.analysis_id,
+        },
     )
-    return HTMLResponse(html)
 
 
 # ===== Exportar a PDF (estructurado / profundo) =====
@@ -1866,7 +1879,7 @@ async def export_pdf_estructurado(
     data = json.loads(raw)
     analysis = AnalysisResponse(**data)
     html = templates.get_template("analysis/structured.html").render(
-        request=None, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
+        request=request, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
     )
     pdf_bytes = html_to_pdf_bytes(html)
     return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
@@ -1884,7 +1897,7 @@ async def export_pdf_profundo(
     data = json.loads(raw)
     analysis = AnalysisResponse(**data)
     html = templates.get_template("analysis/deep.html").render(
-        request=None, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
+        request=request, s=analysis.structured, deep=analysis.deep_analysis, analysis_id=analysis.analysis_id
     )
     pdf_bytes = html_to_pdf_bytes(html)
     return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
