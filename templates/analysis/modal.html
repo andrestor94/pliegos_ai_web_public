@@ -1,12 +1,12 @@
 <!-- templates/analysis/modal.html -->
 <div id="modalAnalysis" class="sa-modal-overlay" aria-modal="true" role="dialog">
   <div class="sa-modal sa-modal-lg" role="document" tabindex="-1">
-    <!-- 🔧 1) cambiar onclick por data-close (el JS del paso 3 lo maneja) -->
+    <!-- 🔧 usa data-close (lo maneja analysis-modal.js) -->
     <button class="sa-modal-close" type="button" aria-label="Cerrar" data-close>✕</button>
 
     <h2 class="sa-modal-title">Resultado del análisis</h2>
 
-    <!-- 🔧 2) evitar doble JSON: en main.py ya envías un string JSON; usar |safe -->
+    <!-- 🔧 analysis_json llega como string JSON; usamos |safe -->
     <textarea id="analysis-json" name="analysis_json" hidden>{{ analysis_json | safe }}</textarea>
 
     <!-- Tabs -->
@@ -17,7 +17,7 @@
 
     <!-- Contenido -->
     <div class="sa-tabpanes">
-      <!-- Pane: Estructurado (auto-carga) -->
+      <!-- Pane: Estructurado (el JS global lo llena al abrir) -->
       <div id="pane-structured" class="sa-pane active" role="tabpanel" aria-labelledby="tab-structured">
         <div class="sa-skel">
           <div class="sa-skel-line w-30"></div>
@@ -38,7 +38,6 @@
       <button type="button" class="btn btn-light" data-export="structured">Exportar PDF (estructurado)</button>
       <button type="button" class="btn btn-light" data-export="deep">Exportar PDF (profundo)</button>
       <div class="flex-grow-1"></div>
-      <!-- 🔧 3) botón cerrar también con data-close -->
       <button type="button" class="btn btn-outline-secondary" data-close>Cerrar</button>
     </div>
   </div>
@@ -72,81 +71,3 @@
 /* ===== Actions ===== */
 .sa-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 </style>
-
-<script>
-(function(){
-  const modal = document.getElementById('modalAnalysis');
-  if (!modal) return;
-
-  // 🔧 4) NO auto-abrir acá; el JS global (analysis-modal.js) se encarga de abrir/cerrar.
-  //     Solo cableamos tabs y cargas de contenido.
-
-  const json = modal.querySelector('#analysis-json')?.value || '{}';
-
-  // Auto-cargar Estructurado en cuanto el modal exista (no hace falta que esté abierto)
-  (async function loadStructured(){
-    const pane = modal.querySelector('#pane-structured');
-    try{
-      const fd = new FormData(); fd.append('analysis_json', json);
-      const r = await fetch('/render/structured', { method:'POST', body:fd, headers:{'X-Requested-With':'fetch'} });
-      pane.innerHTML = await r.text();
-    }catch(e){
-      pane.innerHTML = '<div class="alert alert-danger">No se pudo cargar la vista estructurada.</div>';
-    }
-  })();
-
-  // Tabs + carga perezosa del profundo
-  modal.querySelectorAll('.sa-tab').forEach(btn=>{
-    btn.addEventListener('click', async ()=>{
-      const tab = btn.dataset.tab;
-      modal.querySelectorAll('.sa-tab').forEach(b=>{
-        const active = b.dataset.tab===tab;
-        b.classList.toggle('active', active);
-        b.setAttribute('aria-selected', active ? 'true' : 'false');
-      });
-      modal.querySelectorAll('.sa-pane').forEach(p=>p.classList.remove('active'));
-      const pane = modal.querySelector(`#pane-${tab}`);
-      pane.classList.add('active');
-
-      if (tab==='deep' && pane.dataset.loaded!=='true'){
-        // skeleton
-        pane.innerHTML = `
-          <div class="sa-skel">
-            <div class="sa-skel-line w-50"></div>
-            <div class="sa-skel-line w-90"></div>
-            <div class="sa-skel-line w-85"></div>
-            <div class="sa-skel-line w-70"></div>
-          </div>`;
-        try{
-          const fd = new FormData(); fd.append('analysis_json', json);
-          const r = await fetch('/render/deep', { method:'POST', body:fd, headers:{'X-Requested-With':'fetch'} });
-          pane.innerHTML = await r.text();
-          pane.dataset.loaded = 'true';
-        }catch(e){
-          pane.innerHTML = '<div class="alert alert-danger">No se pudo cargar el análisis profundo.</div>';
-        }
-      }
-    });
-  });
-
-  // Export PDF (si existen endpoints)
-  const jsonInput = modal.querySelector('#analysis-json');
-  function exportPdf(kind){
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = (kind==='structured') ? '/export/pdf/estructurado' : '/export/pdf/profundo';
-    form.target = '_blank';
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = 'analysis_json';
-    input.value = jsonInput?.value || '{}';
-    form.appendChild(input);
-    document.body.appendChild(form);
-    form.submit();
-    form.remove();
-  }
-  modal.querySelectorAll('[data-export]').forEach(btn=>{
-    btn.addEventListener('click', ()=> exportPdf(btn.getAttribute('data-export')));
-  });
-})();
-</script>
