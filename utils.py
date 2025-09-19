@@ -1865,7 +1865,7 @@ def analizar_y_generar_informe(
 # ==================== Exportar a PDF (ReportLab) ====================
 def _wrap_lines(s: str, max_chars: int = 110) -> List[str]:
     """
-    Wrap simple por caracteres (word-wrap), suficiente para A4 con márgenes y 10pt.
+    # Wrap simple por caracteres (word-wrap), suficiente para A4 con márgenes y 10pt.
     """
     out: List[str] = []
     for ln in (s or "").splitlines():
