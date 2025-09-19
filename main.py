@@ -3,7 +3,12 @@
 # (imports, helpers base, app init, WS, utils, + KB bootstrap)
 # =========================
 
+# main.py (arriba del todo, antes de importar servicios que usen OpenAI)
 import os
+# Habilitado por defecto; podés apagarlo con OPENAI_PATCH_RESPONSES=0
+os.environ.setdefault("OPENAI_PATCH_RESPONSES", "1")
+import patches.openai_hardening  # noqa: F401
+
 import sqlite3
 import uuid
 import asyncio
@@ -2297,7 +2302,7 @@ async def chat_openai_embed(request: Request):
     }
   }
   ta.addEventListener('keydown', (e)=>{
-    if(e.key==='Enter' and !e.shiftKey){ e.preventDefault(); send(); }
+    if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); }
   });
   btn.addEventListener('click', (e)=>{ e.preventDefault(); send(); });
  </script>
