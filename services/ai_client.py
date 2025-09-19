@@ -16,6 +16,9 @@ import os
 import time
 from typing import Optional, List, Dict, Any, Callable
 
+# Forzar Chat Completions (evita /v1/responses) si OPENAI_FORCE_CHAT=1
+FORCE_CHAT = os.getenv("OPENAI_FORCE_CHAT", "0") == "1"
+
 # SDK OpenAI (Responses API y/o Chat Completions)
 from openai import OpenAI
 
@@ -217,9 +220,9 @@ def chat(
     items.append({"role": "user", "content": message})
 
     # ===========================================================
-    # 1) Responses API (preferida)
-    # ===========================================================
-    if _supports_responses_api(client):
+# 1) Responses API (preferida) — SALTAR si FORCE_CHAT está activo
+# ===========================================================
+if (not FORCE_CHAT) and _supports_responses_api(client):
         kwargs: Dict[str, Any] = {
             "model": chosen_model,
             "input": items,
