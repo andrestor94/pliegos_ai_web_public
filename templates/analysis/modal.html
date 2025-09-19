@@ -1,13 +1,13 @@
 <!-- templates/analysis/modal.html -->
 <div id="modalAnalysis" class="sa-modal-overlay" aria-modal="true" role="dialog">
   <div class="sa-modal sa-modal-lg" role="document" tabindex="-1">
-    <button class="sa-modal-close" type="button" aria-label="Cerrar"
-            onclick="this.closest('#modalAnalysis')?.remove();document.body.style.overflow='';">✕</button>
+    <!-- 🔧 1) cambiar onclick por data-close (el JS del paso 3 lo maneja) -->
+    <button class="sa-modal-close" type="button" aria-label="Cerrar" data-close>✕</button>
 
     <h2 class="sa-modal-title">Resultado del análisis</h2>
 
-    <!-- JSON para backend / export -->
-    <textarea id="analysis-json" name="analysis_json" hidden>{{ analysis_json|tojson }}</textarea>
+    <!-- 🔧 2) evitar doble JSON: en main.py ya envías un string JSON; usar |safe -->
+    <textarea id="analysis-json" name="analysis_json" hidden>{{ analysis_json | safe }}</textarea>
 
     <!-- Tabs -->
     <div class="sa-tabs mb-3" role="tablist" aria-label="Tipos de vista">
@@ -38,7 +38,8 @@
       <button type="button" class="btn btn-light" data-export="structured">Exportar PDF (estructurado)</button>
       <button type="button" class="btn btn-light" data-export="deep">Exportar PDF (profundo)</button>
       <div class="flex-grow-1"></div>
-      <button type="button" class="btn btn-outline-secondary" onclick="this.closest('#modalAnalysis')?.remove();document.body.style.overflow='';">Cerrar</button>
+      <!-- 🔧 3) botón cerrar también con data-close -->
+      <button type="button" class="btn btn-outline-secondary" data-close>Cerrar</button>
     </div>
   </div>
 </div>
@@ -77,14 +78,12 @@
   const modal = document.getElementById('modalAnalysis');
   if (!modal) return;
 
-  // Asegurar que cuelgue del <body>
-  if (modal.parentElement !== document.body) document.body.appendChild(modal);
-  modal.style.display = 'flex';
-  document.body.style.overflow = 'hidden';
+  // 🔧 4) NO auto-abrir acá; el JS global (analysis-modal.js) se encarga de abrir/cerrar.
+  //     Solo cableamos tabs y cargas de contenido.
 
   const json = modal.querySelector('#analysis-json')?.value || '{}';
 
-  // Auto-cargar estructurado al abrir
+  // Auto-cargar Estructurado en cuanto el modal exista (no hace falta que esté abierto)
   (async function loadStructured(){
     const pane = modal.querySelector('#pane-structured');
     try{
@@ -96,13 +95,14 @@
     }
   })();
 
-  // Tab switching + carga perezosa del profundo
+  // Tabs + carga perezosa del profundo
   modal.querySelectorAll('.sa-tab').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const tab = btn.dataset.tab;
       modal.querySelectorAll('.sa-tab').forEach(b=>{
-        b.classList.toggle('active', b.dataset.tab===tab);
-        b.setAttribute('aria-selected', b.dataset.tab===tab ? 'true' : 'false');
+        const active = b.dataset.tab===tab;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
       });
       modal.querySelectorAll('.sa-pane').forEach(p=>p.classList.remove('active'));
       const pane = modal.querySelector(`#pane-${tab}`);
@@ -129,7 +129,7 @@
     });
   });
 
-  // Export PDF (opcional)
+  // Export PDF (si existen endpoints)
   const jsonInput = modal.querySelector('#analysis-json');
   function exportPdf(kind){
     const form = document.createElement('form');
@@ -148,8 +148,5 @@
   modal.querySelectorAll('[data-export]').forEach(btn=>{
     btn.addEventListener('click', ()=> exportPdf(btn.getAttribute('data-export')));
   });
-
-  // Esc para cerrar
-  modal.addEventListener('keydown', (ev)=>{ if(ev.key==='Escape'){ modal.remove(); document.body.style.overflow=''; }});
 })();
 </script>

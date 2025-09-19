@@ -1,64 +1,104 @@
 // static/js/analysis-modal.js
-(function () {
-  // --- Util: mover el modal al <body> si llega inyectado
-  function moveToBodyIfNeeded(root) {
-    const el = (root?.id === "modalAnalysis")
-      ? root
-      : root?.querySelector?.("#modalAnalysis");
-    if (el && el.parentElement !== document.body) document.body.appendChild(el);
+(() => {
+  // ====== Utilidad: asegurar que el modal viva en <body> y sea ÚNICO ======
+  function moveModalToBody(newRoot) {
+    const found =
+      newRoot?.id === "modalAnalysis"
+        ? newRoot
+        : newRoot?.querySelector?.("#modalAnalysis");
+
+    if (!found) return;
+
+    // Si existe un modal anterior, eliminarlo (evita "anclaje" y listeners duplicados)
+    if (window.__analysisModal && window.__analysisModal !== found) {
+      try {
+        window.__analysisModal.remove();
+      } catch (_) {}
+      window.__analysisModal = null;
+    }
+
+    if (found.parentElement !== document.body) {
+      document.body.appendChild(found);
+    }
+
+    // Accesibilidad y foco
+    found.setAttribute("role", "dialog");
+    if (!found.hasAttribute("tabindex")) found.setAttribute("tabindex", "-1");
+
+    window.__analysisModal = found;
+    wireModal(found); // cablear una sola vez por instancia
   }
 
-  const mo = new MutationObserver((muts) => {
-    for (const m of muts) for (const n of m.addedNodes)
-      if (n.nodeType === 1) moveToBodyIfNeeded(n);
+  // Observa DOM para cuando inyectás el modal por fetch (HTML)
+  const bootstrapMO = new MutationObserver((list) => {
+    for (const m of list) {
+      for (const n of m.addedNodes) {
+        if (n.nodeType === 1) moveModalToBody(n);
+      }
+    }
   });
-  mo.observe(document.documentElement, { childList: true, subtree: true });
-  moveToBodyIfNeeded(document);
+  bootstrapMO.observe(document.documentElement, { childList: true, subtree: true });
 
-  // --- Cableado del nuevo modal con tabs
+  // Cubre el caso en el que ya estuviera en el DOM
+  moveModalToBody(document);
+
+  // ====== Cableado del modal ======
   function wireModal(modal) {
     if (!modal || modal.dataset.wired === "1") return;
     modal.dataset.wired = "1";
 
-    // Cerrar por botón con data-close o por ✕ (ya viene en el HTML)
-    modal.querySelectorAll("[data-close]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        modal.remove();
-        document.body.style.overflow = "";
-      });
-    });
+    // Guardar estado de scroll para restaurar al cerrar
+    let lastScrollY = 0;
 
-    // Cerrar con ESC
-    modal.addEventListener("keydown", (ev) => {
-      if (ev.key === "Escape") {
-        modal.remove();
-        document.body.style.overflow = "";
-      }
-    });
+    function lockScroll() {
+      lastScrollY = window.scrollY || document.documentElement.scrollTop || 0;
+      document.body.style.overflow = "hidden";
+    }
+    function unlockScroll() {
+      document.body.style.overflow = "";
+      window.scrollTo({ top: lastScrollY });
+    }
 
-    // Apertura programática
+    // API pública para abrir/cerrar (usada por index.html tras inyectar el HTML)
     function open() {
       modal.style.display = "flex";
-      document.body.style.overflow = "hidden";
-      // foco seguro para accesibilidad
-      const firstTab = modal.querySelector('.sa-tab');
-      firstTab?.focus?.();
+      lockScroll();
+      // Foco al primer "tab" o elemento accionable
+      (modal.querySelector(".sa-tab, [data-close], button, [href], input, select, textarea") || modal).focus?.();
+      // Listener de Escape a nivel documento mientras esté abierto
+      document.addEventListener("keydown", onEsc, { once: true });
     }
-    window.AnalysisModalOpen = open;
+    function close() {
+      try {
+        modal.remove();
+      } catch (_) {}
+      unlockScroll();
+      // Limpieza de referencias globales
+      if (window.__analysisModal === modal) window.__analysisModal = null;
+      if (window.AnalysisModalOpen) window.AnalysisModalOpen = null;
+      if (window.AnalysisModalClose) window.AnalysisModalClose = null;
+    }
 
-    // --- Exportar a PDF (opcional)
-    // Si tu plantilla incluye botones:
-    //   <button data-export="structured">Exportar PDF</button>
-    //   <button data-export="deep">Exportar PDF</button>
-    // y un input hidden con el JSON:
-    //   <input type="hidden" id="analysis-json" value="{}">
+    function onEsc(ev) {
+      if (ev.key === "Escape") close();
+    }
+
+    // Cerrar por click en backdrop (si el HTML del modal usa el propio contenedor como backdrop)
+    modal.addEventListener("click", (ev) => {
+      if (ev.target === modal) close();
+    });
+
+    // Cerrar por botones con data-close
+    modal.querySelectorAll("[data-close]").forEach((btn) => {
+      btn.addEventListener("click", close);
+    });
+
+    // Exportar PDF (opcional si existen esos botones y el hidden con JSON)
     const jsonInput = modal.querySelector("#analysis-json");
     function exportPdf(kind) {
       const form = document.createElement("form");
       form.method = "POST";
-      form.action = (kind === "structured")
-        ? "/export/pdf/estructurado"
-        : "/export/pdf/profundo";
+      form.action = kind === "structured" ? "/export/pdf/estructurado" : "/export/pdf/profundo";
       form.target = "_blank";
       const input = document.createElement("input");
       input.type = "hidden";
@@ -69,20 +109,20 @@
       form.submit();
       form.remove();
     }
-
-    modal.querySelectorAll("[data-export]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const kind = btn.getAttribute("data-export"); // 'structured' | 'deep'
-        exportPdf(kind);
-      });
+    modal.querySelectorAll("[data-export]").forEach((btn) => {
+      btn.addEventListener("click", () => exportPdf(btn.getAttribute("data-export")));
     });
+
+    // Exponer funciones globales (usadas por tu index.html al terminar de insertar el modal)
+    window.AnalysisModalOpen = open;
+    window.AnalysisModalClose = close;
   }
 
+  // Reintenta cablear si el modal aparece tardíamente
   function tryWire() {
     const modal = document.getElementById("modalAnalysis");
-    if (modal) wireModal(modal);
+    if (modal) moveModalToBody(modal);
   }
-
   document.addEventListener("DOMContentLoaded", tryWire);
   const lateMO = new MutationObserver(tryWire);
   lateMO.observe(document.body, { childList: true, subtree: true });

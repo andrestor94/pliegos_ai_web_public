@@ -408,6 +408,23 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("app")
+# --- Versión de assets para cache-busting ---
+ASSET_VERSION = os.getenv("ASSET_VERSION", "v2025-09-19-1")
+
+# --- StaticFiles sin caché (para que el navegador no use JS/CSS viejos) ---
+from starlette.staticfiles import StaticFiles
+from starlette.responses import Response
+
+class NoCacheStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        try:
+            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+        except Exception:
+            pass
+        return resp
 
 # === Feature flags por defecto (se pueden sobreescribir por ENV) ===
 os.environ.setdefault("EXPAND_SECTIONS_213_216", "1")
@@ -579,12 +596,17 @@ def _ensure_pdf_in_serve_dir(filename: str) -> Optional[str]:
             return str(target)
     return None
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
-# Montamos /generated_pdfs apuntando al directorio CANÓNICO
+# Montamos /static sin caché
+app.mount("/static", NoCacheStaticFiles(directory="static"), name="static")
+
+# Montamos /generated_pdfs (dejá igual el directorio canónico que ya calculaste)
 app.mount("/generated_pdfs", StaticFiles(directory=str(PDF_SERVE_DIR)), name="generated_pdfs")
 
+# Templates y variables globales
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["os"] = os
+templates.env.globals["ASSET_VERSION"] = ASSET_VERSION  # <- para usar ?v={{ ASSET_VERSION }}
+
 
 # desactivar cache de Jinja y forzar FileSystemLoader (evita plantillas viejas en Render/CDN)
 try:
@@ -1751,40 +1773,39 @@ async def analizar_pliego(request: Request, archivos: List[UploadFile] = File(..
     }
 
 
-# ===== Modal UI: corre análisis y abre el modal con 2 opciones =====
+# ===== Modal UI: corre análisis y devuelve el modal con 2 pestañas =====
 @app.post("/analizar-pliego-ui", response_class=HTMLResponse)
 async def analizar_pliego_ui(request: Request, archivos: List[UploadFile] = File(...)):
     """
-    Envía los archivos, corre el pipeline (reutilizando /analizar-pliego) y devuelve
-    el modal con las opciones: Formato estructurado / Análisis profundo.
+    Reusa tu pipeline de /analizar-pliego, arma AnalysisResponse mínimo (si hace falta)
+    y devuelve el HTML del modal (templates/analysis/modal.html) con analysis_json embebido.
     """
-    # Reutilizamos la lógica ya probada llamando al endpoint existente:
+    # 1) Ejecutar tu flujo existente (no tocar analizar_pliego)
     result = await analizar_pliego(request, archivos=archivos)
-    # Si /analizar-pliego devolvió un Response de error, lo propagamos tal cual.
-    if isinstance(result, Response):
+
+    # Si devolvió un Response de error, propagar tal cual
+    if isinstance(result, Response) and result.status_code >= 400:
         return result
 
-    # Esperamos un dict con 'resumen' y 'analisis_id'
-    resumen = (result or {}).get("resumen", "")
-    analisis_id = (result or {}).get("analisis_id", uuid.uuid4().hex)
+    # 2) Normalizar salida
+    # Esperamos un dict con 'resumen' (texto) y 'analisis_id' (string)
+    resumen = (result or {}).get("resumen", "") if isinstance(result, dict) else ""
+    analisis_id = (result or {}).get("analisis_id", uuid.uuid4().hex) if isinstance(result, dict) else uuid.uuid4().hex
 
-    analysis = _make_minimal_analysis_response(resumen, analisis_id)
+    # 3) Construir AnalysisResponse mínimo (compatible con structured.html / deep.html)
+    analysis: AnalysisResponse = _make_minimal_analysis_response(resumen, analisis_id)
+
+    # 4) Pasar analysis como STRING JSON (¡no tojson en la plantilla! usamos |safe)
     analysis_json_str = json.dumps(analysis.dict(), ensure_ascii=False)
 
-    # Soporte para ambos nombres de template
-    tpl_name = "analysis/analysis_modal.html"
-    try:
-        templates.env.get_template(tpl_name)
-    except Exception:
-        tpl_name = "analysis/modal.html"
-
-    # Render del modal
+    # 5) Renderizar SIEMPRE el modal nuevo
     return templates.TemplateResponse(
-        tpl_name,
+        "analysis/modal.html",
         {
             "request": request,
-            "analysis_json": analysis_json_str,   # 👈 ahora es string JSON
-        }
+            "analysis_json": analysis_json_str,  # ← string JSON; la plantilla usa {{ analysis_json | safe }}
+        },
+        status_code=200,
     )
 
 
