@@ -3251,6 +3251,15 @@ async def notif_delete(request: Request):
 # ========================== PRESENCIA / ONLINE =======================
 # =====================================================================
 
+# --- conexión liviana sqlite para calendario/presencia/notificaciones ---
+import sqlite3, os
+SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", "usuarios.db")
+
+def cal_conn():
+    conn = sqlite3.connect(SQLITE_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
 SESSION_TIMEOUT_MIN = 10
 
 def init_presence_db():
