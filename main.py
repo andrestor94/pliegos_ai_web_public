@@ -1896,7 +1896,7 @@ async def export_pdf_profundo(
     )
     return await generar_pdf_y_responder(html, nombre_sugerido="analisis_profundo.pdf")
 
- --- helper PDF reutilizable ---
+ # --- helper PDF reutilizable ---
 async def generar_pdf_y_responder(html: str, nombre_sugerido: str = "analisis.pdf"):
     base_dir = Path(__file__).parent
     out_dir = Path("/opt/render/project/generated_pdfs")
